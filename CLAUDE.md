@@ -6,7 +6,7 @@
 
 **核心认知：本项目的产品是平台本身，不是电机控制器。** 平台 = 确定性控制任务调度 + 外设抽象 + 参数整定/数据示波 + 保护。FOC 电机控制只是跑在平台上的第一个示例应用，兼做平台验收测试。
 
-**性能锚点：示波器最终指标 = 100 kHz × 8 通道全速率无损连续流**（int16，净载荷 1.6 MB/s ≈ 12.8 Mbps，含开销链路需 ≥16 Mbps）。这个数字以排除法决定了物理层选型（见「通信架构」）。
+**性能锚点：20–100 kHz（待定）× 8ch × f32 无损，0.64–3.2 MB/s**。这个数字以排除法决定了物理层选型（见「通信架构」）。
 
 **仓库边界：本 repo 只做固件**（烧进 F28P65x 的部分）。上位机复用既有 myway_viewer 的前端（Rust + egui），其通讯层拆分为 `DataSource` trait：`SimSource`（L2 FFI 仿真）/ `MywaySource`（既有私有协议）/ `V2kSource`（本项目）。前端与中立数据模型共用一套代码持续演进，本项目对接 V2k 一侧。
 
@@ -101,9 +101,7 @@ EtherCAT 要点：
 用户代码 API 草案：
 
 ```c
-// 用户应用 init 中声明，平台自动进描述符表
-param_register("vel_kp", &pi_vel.kp, 0.0f, 100.0f);
-scope_register("iq_meas", &iq_meas);
+// 用户无需声明监控变量，platform自动注册可用参数表
 
 // The only user-owned slot, called by the L1 executor every tick
 void user_step(const plat_in_t *in, plat_out_t *out);

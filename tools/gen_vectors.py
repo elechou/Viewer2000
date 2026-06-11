@@ -109,11 +109,19 @@ def desc_entry(name, type_, kind, addr, vmin, vmax, scale, offset, presc, group)
                        type_, kind, addr, vmin, vmax, scale, offset, presc, group)
 
 
-def block(start_tick, block_seq, group_id, samples_2d):
-    n_ticks, n_ch = len(samples_2d), len(samples_2d[0])
-    hdr = struct.pack("<IHHHH", start_tick, block_seq, group_id, n_ticks, n_ch)
-    flat = [s for row in samples_2d for s in row]   # tick-major 交错
-    return hdr + struct.pack(f"<{len(flat)}h", *flat)
+# V2K_TYPE_* → (struct 格式码, 样本 octet 宽度)；样本按原生宽度无损直拷
+_TYPE_FMT = {0: ("h", 2), 1: ("H", 2), 2: ("i", 4), 3: ("I", 4), 4: ("f", 4)}
+
+
+def block(start_tick, block_seq, group_id, bind_seq, ch_types, samples_2d):
+    """block = 16 octet 头 + 样本区（tick-major，每 tick 内按绑定顺序原生宽度排列）"""
+    n_ticks, n_ch = len(samples_2d), len(ch_types)
+    stride = sum(_TYPE_FMT[t][1] for t in ch_types)
+    hdr = struct.pack("<IHHHHHH", start_tick, block_seq, group_id,
+                      n_ticks, n_ch, bind_seq, stride)
+    body = b"".join(struct.pack("<" + _TYPE_FMT[t][0], v)
+                    for row in samples_2d for t, v in zip(ch_types, row))
+    return hdr + body
 
 
 BUILD_HASH = 0x08CCB6EB  # 样本固定值（取自本 repo initial commit 短哈希）
@@ -143,7 +151,7 @@ def build_cases():
                     2,            # sys_state = RUNNING
                     0,            # fault_code
                     0,            # status_flags
-                    0,            # reserved
+                    0,            # cal_unguarded（无护栏写入累计）
                     123456789,    # tick
                     4567,         # cpu1_heartbeat
                     4566,         # cpu2_heartbeat
@@ -170,11 +178,13 @@ def build_cases():
 
     # ---- 4.4 CAL ----
     add("cal_write",
-        "CAL_WRITE：2 条暂存（idx0=F32 3.5 的位模式, idx5=I16 -7 符号扩展）",
+        "CAL_WRITE：2 条暂存，按 (addr,type) 寻址"
+        "（0xA012=F32 写 3.5；0xA044=I16 写 -7 符号扩展）",
         0x10, 0x0005,
         struct.pack("<BB", 2, 0)
-        + struct.pack("<HHI", 0, 0, struct.unpack("<I", struct.pack("<f", 3.5))[0])
-        + struct.pack("<HHI", 5, 0, 0xFFFFFFF9))
+        + struct.pack("<IIHH", 0x0000A012,
+                      struct.unpack("<I", struct.pack("<f", 3.5))[0], 4, 0)
+        + struct.pack("<IIHH", 0x0000A044, 0xFFFFFFF9, 0, 0))
     add("cal_commit", "CAL_COMMIT：空 payload", 0x11, 0x0006, b"")
     add("ack_cal_commit", "ACK(CAL_COMMIT)：OK，data=commit_seq=8",
         0x91, 0x0006, struct.pack("<BBHI", 0, 0x11, 0, 8))
@@ -187,20 +197,41 @@ def build_cases():
                       struct.unpack("<I", struct.pack("<f", 3.5))[0],
                       0x00000064, 0xFFFFFFF9))
 
-    # ---- 4.5 DAQ_CTRL ----
+    # ---- 4.5 DAQ_CTRL / DAQ_BIND ----
     add("daq_ctrl_snapshot",
-        "DAQ_CTRL：组 0 进 SNAP_ARMED，触发源 idx1 上升沿过 2.5，pre-trigger 30%",
+        "DAQ_CTRL：组 0 进 SNAP_ARMED，触发源=通道槽位 1 上升沿过 2.5，pre-trigger 30%",
         0x20, 0x0008,
         struct.pack("<BBHfBBH", 0, 2, 1, 2.5, 0, 30, 0))
+    add("daq_bind_2ch",
+        "DAQ_BIND：组 0 绑 2 通道（0xA044=I16 原生 2 octets；"
+        "0xC120=F32 原生 4 octets 无损——地址可来自描述符表或 DWARF）",
+        0x22, 0x000C,
+        struct.pack("<BB", 0, 2)
+        + struct.pack("<IHH", 0x0000A044, 0, 0)    # I16 源
+        + struct.pack("<IHH", 0x0000C120, 4, 0))   # F32 源（如 DWARF 来）
+    add("ack_daq_bind", "ACK(DAQ_BIND)：OK，data=bind_seq=3",
+        0xA2, 0x000C, struct.pack("<BBHI", 0, 0x22, 0, 3))
+    add("ack_daq_bind_badstate",
+        "ACK(DAQ_BIND) 负例语义：组非 OFF → BAD_STATE（须先 DAQ_CTRL(OFF)）",
+        0xA2, 0x000D, struct.pack("<BBHI", 3, 0x22, 0, 4))
 
     # ---- 4.6 BLOCK ----
     add("block_req", "BLOCK_REQ：组 0 最多取 2 块", 0x21, 0x0009,
         struct.pack("<BB", 0, 2))
     add("block_data_1blk",
-        "BLOCK_DATA：1 块（N=4×M=2，样本含 0 与负值——COBS 含零路径覆盖）",
+        "BLOCK_DATA：1 块（N=4×M=2 全 I16，stride=4，样本含 0 与负值"
+        "——COBS 含零路径覆盖）",
         0xA1, 0x0009,
         struct.pack("<BBBBHH", 0, 1, 1, 0, 0, 5)   # group0, count1, LIVE, overrun0, remain5
-        + block(1000, 17, 0, [[0, 100], [-100, 0], [200, -200], [0, 300]]))
+        + block(1000, 17, 0, 3, (0, 0),
+                [[0, 100], [-100, 0], [200, -200], [0, 300]]))
+    add("block_data_mixed",
+        "BLOCK_DATA：1 块混合宽度（N=2，通道=[F32, I16]，stride=6——"
+        "钉死原生宽度交错布局：每 tick 内 F32 4 octets 后接 I16 2 octets）",
+        0xA1, 0x000E,
+        struct.pack("<BBBBHH", 1, 1, 1, 0, 0, 0)   # group1, count1, LIVE
+        + block(2000, 5, 1, 2, (4, 0),
+                [[1.5, -7], [-0.25, 32767]]))
     add("block_data_empty",
         "BLOCK_DATA 边界：count=0（环空，合法响应）",
         0xA1, 0x000A,

@@ -15,23 +15,24 @@
 // │ 区块    │ 属主  │ 内容                                         │
 // ├────────┼──────┼─────────────────────────────────────────────┤
 // │ GS0    │ CPU1 │ v2k_desc_table_t（描述符表）   (1928 words)   │
-// │        │      │ v2k_param_status_t            ( 134 words)   │
-// │        │      │ v2k_scope_prod_t ×4           (  64 words)   │
+// │        │      │ v2k_param_status_t            ( 136 words)   │
+// │        │      │ v2k_scope_prod_t ×4           (  72 words)   │
 // │        │      │ → 合计 ~2.1K / 8K words，余量大               │
 // │ GS1-3  │ CPU1 │ 示波环数据区 24K words（分配见下）              │
-// │ GS4    │ CPU2 │ v2k_param_shadow_t            (  68 words)   │
+// │ GS4    │ CPU2 │ v2k_param_shadow_t            ( 100 words)   │
 // │        │      │ v2k_scope_cfg_t ×4            (  32 words)   │
+// │        │      │ v2k_scope_bind_t ×4           ( 136 words)   │
 // │        │      │ v2k_scope_cons_t ×4           (   8 words)   │
-// │        │      │ 余量 ~7.9K words 留 CPU2（EtherCAT 缓冲等）    │
+// │        │      │ 余量 ~7.7K words 留 CPU2（EtherCAT 缓冲等）    │
 // │ MSGRAM │ 硬件  │ 1→2: v2k_cpu1_status_t                       │
 // │        │ 单向  │ 2→1: v2k_cmd_req_t + v2k_cpu2_status_t       │
 // └────────┴──────┴─────────────────────────────────────────────┘
 //
-// 环深度核算（快组锚点）：
-//   EtherCAT 档 N=50×8ch：block=406 words → GS1-3 容 60 块；
-//   容量取 2 的幂 = 32 块（13K words）= 1600 tick = 16 ms @100kHz 抖动吸收；
-//   余 11K words 给慢组环 + 将来加深（再不够时启用 RAMD2-5，接口不变）。
-//   SCI 档 N=10×8ch：block=86 words，容量 64 块绰绰有余。
+// 环深度核算（快组锚点；样本原生宽度，f32 8ch = stride 16 words/tick）：
+//   GS1-3 = 24K words ≈ 1500 tick 缓冲（与 N 无关的总量），
+//   即 75 ms @20kHz / 15 ms @100kHz 的 master 抖动吸收余量；
+//   N=50 f32 8ch：block=808 words → 容量 2 的幂取 16 块（800 tick）；
+//   i16 8ch 时减半占用，余量给慢组环 + 将来加深（不够时启用 RAMD2-5，接口不变）。
 //
 // Phase 1 落地方式：两核各自 .cmd 按本文件划分 GSx 归属与 SECTION；
 // 共享结构体用 #pragma DATA_SECTION 钉进下列命名 section，地址由链接器分配，

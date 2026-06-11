@@ -1,21 +1,27 @@
 //=============================================================================
-// v2k_descriptor.h — 共享内存接口：描述符表
+// v2k_descriptor.h — 共享内存接口：描述符表（平台防呆面）
 //
-// CPU1 启动时把全部可调参数 / 可观测信号注册成表写入共享 RAM（CPU1 属主区，
-// 见 v2k_memmap.h），此后只读。CPU2 与上位机通过"枚举"消费该表，
-// 不预先知道任何变量——上位机的唯一变量来源就是这张表（取代 myway 的 .def 文件）。
+// 角色定位（2026-06-11 变量发现架构决策）：
+// 本表**只登记 L1 自动注册的平台量**（plat_in/plat_out 物理量、占空比、
+// 状态字、平台参数）——用户/学生永远不调用注册 API、永远不手打名字字符串
+// （FreeRTOS 式双命名是明确要规避的反模式）。应用变量的发现走 viewer 解析
+// .out(DWARF) 符号树，按地址绑定示波通道 / 参数写入，C 符号是唯一命名来源。
+// 因此本表的三重职责：
+//   1. 防呆面：表内参数带 min/max，写入路径对命中地址强制护栏（v2k_param.h）；
+//   2. 开箱即用：host 不解析 .out 也能枚举到全部平台量并立即出波形；
+//   3. 默认绑定来源：L1 开机把组 0 绑成平台经典 8 通道（v2k_scope.h）。
+//
+// CPU1 启动时写表（CPU1 属主区，见 v2k_memmap.h），此后只读。
 //
 // 关键语义：
 // * entry.addr 是 CPU1 数据空间的 word 地址，可能指向 CPU1 私有 RAM。
 //   只有 CPU1 允许解引用它（采样、参数应用都在 CPU1 侧完成）；
 //   CPU2 / host 仅把 addr 当不透明 id 透传或忽略。
-// * 注册顺序即 desc_idx（0..count-1），是参数写入与值镜像的索引键。
+// * 注册顺序即 desc_idx（0..count-1），是值镜像的索引键。
 // * 表写入完成后由 CPU1 填 hdr.entry_count 并最后写 hdr.magic（发布屏障），
 //   CPU2 见 magic 有效才允许读表。
 //
-// 注册 API（L1 平台层，Phase 3 实现，此处仅约定语义）：
-//   param_register("vel_kp", &pi_vel.kp, min, max);        // kind |= PARAM
-//   scope_register("iq_meas", &iq_meas, group, prescaler); // kind |= SCOPE
+// 注册 API 为 L1 内部函数（Phase 3 实现），不暴露给 L3 用户代码。
 //=============================================================================
 #ifndef V2K_DESCRIPTOR_H
 #define V2K_DESCRIPTOR_H
@@ -59,9 +65,9 @@ typedef struct {
     float    max_val;            // 参数上限（同上）
     float    scale;              // 物理量换算：physical = raw * scale + offset
     float    offset;
-    uint16_t prescaler;          // 降采样比：该通道每 prescaler 个 ISR tick 采 1 点
-                                 //   （kind&SCOPE 时有效；快通道=1，慢通道如 100=1kHz）
-    uint16_t group;              // 所属通道组 id（0..V2K_SCOPE_MAX_GROUPS-1）
+    uint16_t prescaler;          // 默认降采样比（L1 开机默认绑定用；运行时
+                                 //   实际速率以 DAQ_BIND/DAQ_CTRL 为准）
+    uint16_t group;              // 默认通道组 id（同上，仅作默认绑定提示）
 } v2k_desc_entry_t;
 
 V2K_ASSERT_SIZE_BITS(v2k_desc_entry_t, V2K_NAME_BITS(V2K_NAME_LEN) + 224u);

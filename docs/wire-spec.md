@@ -43,6 +43,11 @@
   这与 EtherCAT 的 master 轮询模型同构——Phase 3.5 验证的就是 Phase 6 的语义。
 - `value_bits`（参数值位模式）约定见 `v2k_common.h`：F32 原位模式，
   I16 符号扩展 / U16 零扩展到 32 bit。
+- **变量寻址的通用键 = `(addr, type)`**（CPU1 数据空间 word 地址 + 类型码）。
+  地址有两个来源，固件不区分：① ENUM 枚举的描述符表（**只含 L1 自动注册的
+  平台量**，作为防呆面与开箱即用面）；② viewer 解析与固件同构建的 .out
+  （ELF/DWARF）得到的完整符号树（一切应用变量，含任意 struct 成员/数组元素；
+  配对正确性由 build_hash 校验）。用户/学生不写注册代码、不手打名字字符串。
 
 ## 3. 帧适配器
 
@@ -108,11 +113,12 @@ off  sz  字段
 | 0x01 | HELLO_REQ | H→F | 0 | 0x81 HELLO_RESP |
 | 0x02 | STATUS_REQ | H→F | 0 | 0x82 STATUS_RESP |
 | 0x03 | ENUM_REQ | H→F | 4 | 0x83 ENUM_RESP |
-| 0x10 | CAL_WRITE | H→F | 2+8k | 0x90 ACK |
+| 0x10 | CAL_WRITE | H→F | 2+12k | 0x90 ACK |
 | 0x11 | CAL_COMMIT | H→F | 0 | 0x91 ACK（data=commit_seq） |
 | 0x12 | CAL_READ | H→F | 4 | 0x92 CAL_READ_RESP |
 | 0x20 | DAQ_CTRL | H→F | 12 | 0xA0 ACK |
 | 0x21 | BLOCK_REQ | H→F | 2 | 0xA1 BLOCK_DATA |
+| 0x22 | DAQ_BIND | H→F | 2+8k | 0xA2 ACK（data=bind_seq） |
 | 0x30 | CMD | H→F | 8 | 0xB0 ACK（data=ack_seq） |
 | 0x60–0x6F | （预留）固件升级 | — | — | Phase 6+ 定稿 |
 | 0x70 | （预留）LOG 拉取 | — | — | CPU2 诊断日志 |
@@ -149,7 +155,7 @@ off sz 字段
 0   2  sys_state      V2K_STATE_*（v2k_command.h）
 2   2  fault_code
 4   2  status_flags   V2K_SF_*（含 CPU2 视角的 CPU1 心跳停走位，运行时扩展）
-6   2  reserved
+6   2  cal_unguarded  无护栏写入累计计数（未命中描述符表的地址写，防呆可观测性）
 8   4  tick           CPU1 当前 ISR tick
 12  4  cpu1_heartbeat
 16  4  cpu2_heartbeat
@@ -162,6 +168,9 @@ off sz 字段
 
 ### 4.3 ENUM（0x03 / 0x83）
 
+枚举对象 = 描述符表 = **平台量防呆面**（L1 自动注册的物理量/占空比/状态/
+平台参数）。应用变量不在此表，经 DWARF 路径发现（§2 约定）。
+
 请求（4 octets）：`{0:2 start_idx, 2:1 max_count(≤8), 3:1 reserved}`
 响应（6 + 44×count octets）：
 
@@ -173,24 +182,30 @@ off sz 字段
 6  …  count × 描述符条目（44 octets，逐字段镜像 v2k_desc_entry_t）:
       0:16 name | 16:2 type | 18:2 kind | 20:4 addr | 24:4 min(f32)
       28:4 max | 32:4 scale | 36:4 offset | 40:2 prescaler | 42:2 group
+      （prescaler/group 为开机默认绑定提示，运行时以 DAQ_BIND/CTRL 为准）
 ```
 
 `start_idx ≥ total_count` → `count=0`（合法的"读完了"信号）。
 
 ### 4.4 CAL_WRITE / CAL_COMMIT / CAL_READ（0x10/0x11/0x12）
 
-`CAL_WRITE` 请求（2 + 8k octets）：
+`CAL_WRITE` 请求（2 + 12k octets）：
 
 ```
 0  1  count   本帧条数 k（累计暂存不得超 V2K_PARAM_BATCH_MAX=16）
 1  1  reserved
-2  …  k × {0:2 desc_idx, 2:2 reserved, 4:4 value_bits}   （镜像 v2k_param_write_t）
+2  …  k × {0:4 addr, 4:4 value_bits, 8:2 type, 10:2 reserved}（镜像 v2k_param_write_t）
 ```
 
-语义：CPU2 写入参数平面 shadow 暂存区**但不置 commit**；多帧累计；
-超上限回 ACK(BAD_PARAM)。`CAL_COMMIT`（payload 空）→ CPU2 置
-`commit_seq+1`、`commit_flag=1`，回 ACK(OK, data=commit_seq)。
-应用结果经 STATUS 的 `applied_seq/cal_result` 对账（§5.2）。
+语义：CPU2 写入参数平面 shadow 暂存区**但不发布**；多帧累计，**同 addr
+覆盖已暂存条目**（重发幂等的依据）；超上限回 ACK(BAD_PARAM)。
+`CAL_COMMIT`（payload 空）→ CPU2 填 count 后最后写 `commit_seq+1`（发布），
+回 ACK(OK, data=commit_seq)。应用结果经 STATUS 的 `applied_seq/cal_result`
+对账（§5.2）。
+
+护栏语义（guard-if-registered，详见 v2k_param.h）：CPU1 对每条写入查描述符
+表——addr 命中注册参数则强制 min/max 检查（越界整批拒绝）；未命中（应用变量）
+放行并累计 `cal_unguarded`（STATUS 可见），防呆责任移交 viewer 确认 UI。
 
 `CAL_READ` 请求（4 octets）：`{0:2 start_idx, 2:1 count(≤32), 3:1 reserved}`
 响应（8 + 4×count）：
@@ -203,22 +218,41 @@ off sz 字段
 8  …  count × value_bits(4)    （读自参数平面 value_mirror，≈10Hz 新鲜度）
 ```
 
-### 4.5 DAQ_CTRL（0x20）
+### 4.5 DAQ_CTRL / DAQ_BIND（0x20 / 0x22）
 
-请求（12 octets），逐字段镜像 `v2k_scope_cfg_t`：
+`DAQ_CTRL` 请求（12 octets），逐字段镜像 `v2k_scope_cfg_t`：
 
 ```
 0  1  group
 1  1  mode_req      V2K_SCOPE_OFF / LIVE / SNAP_ARMED
-2  2  trig_desc_idx
-4  4  trig_level    f32，物理量纲
+2  2  trig_ch_slot  触发源 = 本组绑定的通道槽位 0..n_ch-1
+4  4  trig_level    f32，**源值域**（f32 变量=值本身，ADC 计数=计数值；
+                    固件无物理换算知识，host 按显示元数据折算后下发）
 8  1  trig_edge     V2K_TRIG_*
 9  1  pre_trig_pct  0..100
-10 2  prescaler     0 = 维持注册值
+10 2  prescaler     0 = 维持当前值
 ```
 
-CPU2 写组 cfg + 置 `commit_flag`，回 ACK(OK)=已受理；
+CPU2 写组 cfg 并发布 `cfg_seq`，回 ACK(OK)=已受理；
 模式实际跃迁经 STATUS 的 `scope_mode[group]` 确认。
+
+`DAQ_BIND` 请求（2 + 8k octets）——**运行时选通道，不重烧**：
+
+```
+0  1  group
+1  1  n_ch          1..8
+2  …  k × 通道绑定（8 octets，逐字段镜像 v2k_scope_ch_bind_t）:
+      0:4 addr | 4:2 type | 6:2 reserved
+```
+
+语义：addr 来源任意（描述符表或 DWARF）；样本按**原生宽度无损直拷**
+（I16/U16→2 octets，I32/U32/F32→4 octets，位模式原样，固件零转换零量化
+——准确性优先）。物理量换算（如 ADC 计数→安培）是纯 host 侧显示元数据，
+不上线、不进固件。**仅组 mode==OFF 时可绑**。
+CPU2 写组 bind 区并发布 `bind_seq`，然后短暂等待（≤1 ms）CPU1 的
+`bind_ack_seq/bind_result`，把最终结果放进 ACK：OK / BAD_STATE（非 OFF，
+先 DAQ_CTRL(OFF)）/ BAD_PARAM（n_ch 或 type 非法），data=bind_seq；
+超时回 INTERNAL（CPU1 ISR 未运行）。
 
 ### 4.6 BLOCK_REQ / BLOCK_DATA（0x21 / 0xA1）
 
@@ -239,10 +273,18 @@ block = 示波平面内存布局原样上线（**热路径零重编码**）：
 
 ```
 0  4  start_tick | 4:2 block_seq | 6:2 group_id | 8:2 n_ticks | 10:2 n_ch
-12 …  int16 × n_ticks × n_ch（tick-major 交错：t0ch0 t0ch1 … t1ch0 …）
+12 2  bind_seq      产生本块的绑定代号（host 换绑后丢弃不匹配旧块）
+14 2  stride_octets 每 tick 样本区宽度 = Σ 通道原生宽度（块自描述定界）
+16 …  样本区 n_ticks × stride_octets：tick-major，每 tick 内按绑定顺序，
+      各通道按原生宽度连续排列（I16/U16=2，I32/U32/F32=4，LE 位模式无损）
 ```
 
 host 凭组内 `block_seq` 跳变检测丢块 → 画断口，**不存在重传**（基本规则 1）。
+
+带宽参考（ISR 周期 20–100 kHz 待定）：20kHz×8ch×f32 = 640 KB/s；
+100kHz×8ch×f32 = 3.2 MB/s——均在 EtherCAT 实用吞吐内，物理层结论不变。
+EtherCAT 档 N 由单帧过程数据上限（~1486 octets）在 Phase 6 定
+（f32 8ch：N=20×2 块或 N=40×1 块量级）。
 
 ### 4.7 CMD（0x30）
 
@@ -267,22 +309,32 @@ host                          firmware(CPU2)
 host 缓存描述符表，键 = `build_hash`。任何时刻（HELLO 或 STATUS 中）
 发现 `build_hash` 变化 → **作废全部缓存并重新枚举**。杜绝拿旧表读新固件。
 
+应用变量发现（DWARF 路径，viewer 侧 Phase 3.5+）：viewer 加载用户构建出的
+.out（ELF+DWARF，cl2000 EABI 标准产物），解析符号树供 GUI 浏览/勾选；
+加载时校验 .out 内嵌的 build_hash 与固件 HELLO 报告值一致，不一致即拒载
+（杜绝拿旧符号表算新固件的地址）。固件对此路径零感知。
+
 ### 5.2 参数事务（两阶段 + 异步对账）
 
 ```
 host                     CPU2                      CPU1 ISR 安全点
  │ ─ CAL_WRITE ×m ─────→ │ 暂存 shadow              │
  │ ←─ ACK(OK) ×m ─────── │                          │
- │ ─ CAL_COMMIT ───────→ │ commit_seq=s, flag=1 ──→ │ 校验→整组应用→
- │ ←─ ACK(OK,data=s) ─── │                          │ applied_seq=s, flag=0
- │ ─ STATUS 轮询 ───────→ │ 读参数状态块              │
+ │ ─ CAL_COMMIT ───────→ │ 发布 commit_seq=s ──────→ │ 见 s≠applied_seq:
+ │ ←─ ACK(OK,data=s) ─── │                          │ 护栏校验→整组应用→
+ │ ─ STATUS 轮询 ───────→ │ 读参数状态块              │ 写 applied_seq=s
  │ ←─ applied_seq==s? ── │  ←──────────────────────  │
 ```
 
-要点：批内**全有效或全拒绝**（同一拍生效，cal_result/cal_fail_idx 报因）；
+要点：批内**全有效或全拒绝**（同一拍生效，cal_result/cal_fail_idx 报因；
+未注册地址的写入不拦但计数，见 §4.4 护栏语义）；
 host 在 applied_seq 追上 commit_seq 前不得发起下一批 COMMIT。
 
 ### 5.3 示波流
+
+通道选择（任何模式开始前）：`DAQ_CTRL(OFF)` → `DAQ_BIND(group, 通道列表)`
+→ ACK(OK) 后方可启动。开机时 L1 已写入默认绑定（组 0 = 平台经典 8 通道），
+host 不发 BIND 也能直接看波形（防呆默认）。
 
 **Live**：`DAQ_CTRL(mode=LIVE)` → host 持续 `BLOCK_REQ` 轮询（SCI 阶段
 即"软 PDO"；频率按 `remain_hint` 自适应）。环满生产者丢新块 + overrun_cnt++，
@@ -294,12 +346,17 @@ FROZEN（STATUS.scope_mode 可见）→ host `BLOCK_REQ` 慢速排空（remain_h
 递减到 0）→ host 重新 ARM。pre-trigger 历史由环形结构天然保存；
 block 顺序由 host 按 `start_tick` 重建。
 
+应用变量的"watch 窗口"= 把变量绑到慢速组（prescaler 大，如 1 kHz/10 Hz）
+跑 Live——自带 tick 时间戳且原生位模式无损（f32 看到的就是精确值），
+取代 myway inspector 轮询。
+
 ### 5.4 错误处理与重同步
 
 - 损坏帧静默丢弃（§3.1）。host 对每请求设超时（建议 100 ms）+ 重发。
-- **全部请求幂等**：重复 CAL_WRITE 覆盖同 desc_idx 暂存条目；重复 COMMIT
-  被 `commit_seq` 对账吸收；重复 BLOCK_REQ 返回新数据（丢响应 = 丢块，
-  由 block_seq 断口机制兜底，符合基本规则 1 的"丢了就丢了"）。
+- **全部请求幂等**：重复 CAL_WRITE 覆盖同 addr 暂存条目；重复 COMMIT
+  被 `commit_seq` 对账吸收；重复 DAQ_BIND 整区覆盖；重复 BLOCK_REQ 返回
+  新数据（丢响应 = 丢块，由 block_seq 断口机制兜底，符合基本规则 1 的
+  "丢了就丢了"）。
 - host 凭帧 seq 回显丢弃迟到/错配响应。
 - 失步恢复：host 发任意请求，固件解码器自动在 0x00 边界重同步。
 
@@ -344,6 +401,23 @@ golden vectors 双端 conformance + 版本字段），针对的正是 myway 协�
 已写进流程：本文档变更流程（文首）、以 vectors 为准的规则、消息目录新增不改旧、
 版本字段三层（wire/contract/build_hash）各管一段。
 
+### ADR-2：变量发现架构（2026-06-11 定稿）
+
+**决策**：描述符表只承载 L1 自动注册的平台量（防呆面 + 开箱即用面 + 默认
+绑定来源）；应用变量一律走"viewer 解析 .out(DWARF) → 按 (addr,type) 下发"
+路径，示波经 DAQ_BIND、参数写经 CAL_WRITE（guard-if-registered 护栏）。
+
+**否决的中间形态**：① L2 组件 init 自注册（`pi_init(&pi, "vel")`）与
+② 用户侧字符串化注册宏——两者都要求用户为变量维护第二个名字字符串
+（FreeRTOS 式双命名反模式）或手动逐个注册；C 符号本身是唯一可接受的
+命名来源，而 DWARF 恰好免费提供它。
+
+**代价与对策**：viewer 必须实现 ELF/DWARF 解析（Rust `gimli`/`object`，
+Phase 3.5+）；.out 与固件的配对靠 build_hash 双向校验；未注册地址的
+参数写入无 min/max 护栏——以 `cal_unguarded` 计数暴露 + viewer 确认 UI
+兜底。换得：学生零注册代码、零命名负担、任意 struct 成员/数组元素可观测，
+且通道选择完全运行时化（不重烧）。
+
 ## 附录 B：上位机 `DataSource` trait 草案（Phase 3.5 落地）
 
 目标：myway_viewer 前端与中立数据模型复用，通讯层拆为三个数据源。
@@ -352,16 +426,22 @@ golden vectors 双端 conformance + 版本字段），针对的正是 myway 协�
 
 ```rust
 /// 中立命令（GUI → 数据源）
+/// VarRef = 变量引用 { addr: u32, ty: VarType }——来源由 GUI 决定：
+/// 描述符表枚举（平台量）或 .out/DWARF 符号树（应用变量），源内部不区分。
 pub enum SourceCommand {
     Connect(String), Disconnect,
-    Enumerate,                                  // V2k: ENUM; Myway: 解析 .def
-    WriteParams(Vec<(VarId, f64)>),             // 暂存
+    Enumerate,                                  // V2k: ENUM(平台量); Myway: 解析 .def
+    WriteParams(Vec<(VarRef, f64)>),            // 暂存（V2k: CAL_WRITE 按地址）
     CommitParams,                               // V2k: CAL_COMMIT; Myway: inspector_write 逐条
-    ReadValues { ids: Vec<VarId> },             // V2k: CAL_READ; Myway: inspector_read
+    ReadValues { ids: Vec<VarRef> },            // V2k: CAL_READ(平台镜像)/慢速组绑定; Myway: inspector_read
+    BindChannels { group: u8, ch: Vec<VarRef> },// V2k: DAQ_BIND; Myway: wave_start 通道段
     ScopeConfig(ScopeConfig),                   // V2k: DAQ_CTRL; Myway: wave_start/end
     RequestBlocks { group: u8, max: u8 },       // V2k 专属拉流（Myway 内部自驱）
     SystemCmd(SysCmd),                          // Start/Stop/ClearFault ↔ execute/stop
 }
+
+/// 样本原生宽度无损上线；物理量换算（scale/offset）是 GUI 侧显示元数据，
+/// 由前端按变量来源（描述符表字段 / 用户在符号树上配置）自行管理，不下发。
 
 /// 中立事件（数据源 → GUI）
 pub enum SourceEvent {

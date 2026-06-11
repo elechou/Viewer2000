@@ -33,17 +33,22 @@ V2K_ASSERT_OFFSET_BITS(v2k_desc_table_hdr_t, build_hash, 64u);
 // ---- 示波 block 头与控制块 ----
 V2K_ASSERT_OFFSET_BITS(v2k_block_hdr_t, block_seq, 32u);
 V2K_ASSERT_OFFSET_BITS(v2k_block_hdr_t, n_ch,      80u);
+V2K_ASSERT_OFFSET_BITS(v2k_block_hdr_t, stride_octets, 112u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_prod_t, ring_base, 96u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_prod_t, wr_idx,   128u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_prod_t, trig_tick, 160u);
+V2K_ASSERT_OFFSET_BITS(v2k_scope_prod_t, bind_ack_seq, 240u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_cfg_t,  trig_level, 32u);
+V2K_ASSERT_OFFSET_BITS(v2k_scope_ch_bind_t, type,    32u);
+V2K_ASSERT_OFFSET_BITS(v2k_scope_bind_t,  ch,        32u);
 
 // ---- 参数 shadow 与状态 ----
 V2K_ASSERT_OFFSET_BITS(v2k_param_write_t,  value_bits, 32u);
+V2K_ASSERT_OFFSET_BITS(v2k_param_write_t,  type,       64u);
 V2K_ASSERT_OFFSET_BITS(v2k_param_shadow_t, commit_seq, 32u);
 V2K_ASSERT_OFFSET_BITS(v2k_param_shadow_t, writes,     64u);
-V2K_ASSERT_OFFSET_BITS(v2k_param_status_t, mirror_seq, 64u);
-V2K_ASSERT_OFFSET_BITS(v2k_param_status_t, value_mirror, 96u);
+V2K_ASSERT_OFFSET_BITS(v2k_param_status_t, mirror_seq, 96u);
+V2K_ASSERT_OFFSET_BITS(v2k_param_status_t, value_mirror, 128u);
 
 // ---- 命令/状态平面 ----
 V2K_ASSERT_OFFSET_BITS(v2k_cmd_req_t,      cmd_code,  32u);

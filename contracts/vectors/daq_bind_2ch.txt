@@ -1,0 +1,6 @@
+# vector: daq_bind_2ch
+# DAQ_BIND：组 0 绑 2 通道（0xA044=I16 原生 2 octets；0xC120=F32 原生 4 octets 无损——地址可来自描述符表或 DWARF）
+# raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
+# wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
+raw: 5122000c001200000244a000000000000020c10000040000008e9c5ed1
+wire: 035122020c021201040244a001010101010320c10102040101058e9c5ed100

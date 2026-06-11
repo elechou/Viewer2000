@@ -41,11 +41,13 @@
 
 //-----------------------------------------------------------------------------
 // 静态断言（C99 兼容：负数组尺寸技巧；cl2000 与 gcc/clang 均可用）
+// 用 extern 声明而非 typedef：不同头文件撞 __LINE__ 时，同名同类型的
+// 重复 extern 声明在 C99 合法（typedef 重定义则非法）；不占存储。
 //-----------------------------------------------------------------------------
 #define V2K_CONCAT_(a, b) a##b
 #define V2K_CONCAT(a, b)  V2K_CONCAT_(a, b)
 #define V2K_STATIC_ASSERT(cond) \
-    typedef char V2K_CONCAT(v2k_static_assert_, __LINE__)[(cond) ? 1 : -1]
+    extern char V2K_CONCAT(v2k_static_assert_, __LINE__)[(cond) ? 1 : -1]
 
 // 跨平台尺寸断言：以 bit 为单位表达。
 // C28x: sizeof 计 16-bit word，CHAR_BIT=16；PC: sizeof 计 octet，CHAR_BIT=8。
