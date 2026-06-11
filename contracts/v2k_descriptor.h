@@ -1,0 +1,97 @@
+//=============================================================================
+// v2k_descriptor.h — 共享内存接口：描述符表
+//
+// CPU1 启动时把全部可调参数 / 可观测信号注册成表写入共享 RAM（CPU1 属主区，
+// 见 v2k_memmap.h），此后只读。CPU2 与上位机通过"枚举"消费该表，
+// 不预先知道任何变量——上位机的唯一变量来源就是这张表（取代 myway 的 .def 文件）。
+//
+// 关键语义：
+// * entry.addr 是 CPU1 数据空间的 word 地址，可能指向 CPU1 私有 RAM。
+//   只有 CPU1 允许解引用它（采样、参数应用都在 CPU1 侧完成）；
+//   CPU2 / host 仅把 addr 当不透明 id 透传或忽略。
+// * 注册顺序即 desc_idx（0..count-1），是参数写入与值镜像的索引键。
+// * 表写入完成后由 CPU1 填 hdr.entry_count 并最后写 hdr.magic（发布屏障），
+//   CPU2 见 magic 有效才允许读表。
+//
+// 注册 API（L1 平台层，Phase 3 实现，此处仅约定语义）：
+//   param_register("vel_kp", &pi_vel.kp, min, max);        // kind |= PARAM
+//   scope_register("iq_meas", &iq_meas, group, prescaler); // kind |= SCOPE
+//=============================================================================
+#ifndef V2K_DESCRIPTOR_H
+#define V2K_DESCRIPTOR_H
+
+#include "v2k_common.h"
+
+//-----------------------------------------------------------------------------
+// 容量与尺寸常量
+//-----------------------------------------------------------------------------
+#define V2K_NAME_LEN   16u   // 名字定长（含 NUL 填充）；ASCII，每字符 1 octet 上线
+#define V2K_DESC_MAX   64u   // 表容量上限（64 × 30 words ≈ 1.9K words，预算见 memmap）
+
+// 线上一条描述符的 octet 数（wire-spec §4.3 ENUM_RESP；与 struct 字段一一镜像）
+#define V2K_DESC_WIRE_OCTETS 44u
+
+//-----------------------------------------------------------------------------
+// kind 标志位（可调与可观测不互斥，同一变量可两者皆是）
+//-----------------------------------------------------------------------------
+#define V2K_KIND_PARAM  0x0001u  // 可调参数：参与参数平面写入路径（v2k_param.h），min/max 有效
+#define V2K_KIND_SCOPE  0x0002u  // 可观测信号：参与示波采样路径（v2k_scope.h），group/prescaler 有效
+// bit2..15 保留，置 0
+
+//-----------------------------------------------------------------------------
+// 描述符条目
+//
+// 物理量还原（host 端）: physical = raw * scale + offset
+// 示波通道默认 V2K_TYPE_I16 上行（带宽节约，见 CLAUDE.md），scale/offset
+// 由注册方给出（如 ADC LSB→安培）；F32 通道 scale=1, offset=0。
+//
+// C28x 布局（word 偏移）: name@0..15, type@16, kind@17, addr@18, min@20,
+//   max@22, scale@24, offset@26, prescaler@28, group@29 → 共 30 words，无填充
+// PC 布局（octet 偏移）:  name@0..15, type@16, kind@18, addr@20, min@24,
+//   max@28, scale@32, offset@36, prescaler@40, group@42 → 共 44 octets，无填充
+//-----------------------------------------------------------------------------
+typedef struct {
+    char     name[V2K_NAME_LEN]; // ASCII，NUL 填充；不保证 NUL 结尾（恰好 16 字符时）
+    uint16_t type;               // V2K_TYPE_*
+    uint16_t kind;               // V2K_KIND_* 位或
+    uint32_t addr;               // CPU1 数据空间 word 地址（CPU2/host 视为不透明）
+    float    min_val;            // 参数下限（kind&PARAM 时有效，物理量纲）
+    float    max_val;            // 参数上限（同上）
+    float    scale;              // 物理量换算：physical = raw * scale + offset
+    float    offset;
+    uint16_t prescaler;          // 降采样比：该通道每 prescaler 个 ISR tick 采 1 点
+                                 //   （kind&SCOPE 时有效；快通道=1，慢通道如 100=1kHz）
+    uint16_t group;              // 所属通道组 id（0..V2K_SCOPE_MAX_GROUPS-1）
+} v2k_desc_entry_t;
+
+V2K_ASSERT_SIZE_BITS(v2k_desc_entry_t, V2K_NAME_BITS(V2K_NAME_LEN) + 224u);
+
+//-----------------------------------------------------------------------------
+// 表头（位于表数组之前，同一共享 RAM 区）
+//
+// 发布协议：CPU1 先填 entries[] 与其余头字段，最后写 magic；
+// CPU2 轮询 magic == V2K_DESC_MAGIC 即视为表就绪（单写者单方向，无需锁）。
+//-----------------------------------------------------------------------------
+#define V2K_DESC_MAGIC 0x564B4454u   /* "VKDT" */
+
+typedef struct {
+    uint32_t magic;              // V2K_DESC_MAGIC；最后写入=发布
+    uint16_t contract_ver;       // = V2K_CONTRACT_VER，CPU2 握手时校验
+    uint16_t entry_count;        // 已注册条目数 ≤ V2K_DESC_MAX
+    v2k_build_hash_t build_hash; // 固件 build hash（host 重枚举依据）
+    uint16_t entry_stride_words; // = sizeof(v2k_desc_entry_t)（C28x words），
+                                 //   供 CCS 脚本/调试工具自描述遍历
+    uint16_t reserved;           // 置 0
+} v2k_desc_table_hdr_t;
+
+V2K_ASSERT_SIZE_BITS(v2k_desc_table_hdr_t, 128u);
+
+//-----------------------------------------------------------------------------
+// 整表（共享 RAM 实体，CPU1 属主）
+//-----------------------------------------------------------------------------
+typedef struct {
+    v2k_desc_table_hdr_t hdr;
+    v2k_desc_entry_t     entries[V2K_DESC_MAX];
+} v2k_desc_table_t;
+
+#endif // V2K_DESCRIPTOR_H

@@ -1,0 +1,6 @@
+# vector: status_req
+# STATUS_REQ：空 payload（兼任链路心跳）
+# raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
+# wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
+raw: 510200020000003b383a51
+wire: 03510202020101053b383a5100

@@ -1,0 +1,6 @@
+# vector: enum_req
+# ENUM_REQ：从 0 开始要 8 条
+# raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
+# wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
+raw: 5103000300040000000800bdf62dbf
+wire: 035103020302040101020805bdf62dbf00

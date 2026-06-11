@@ -1,0 +1,6 @@
+# vector: cmd_app_start
+# CMD：APP_START
+# raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
+# wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
+raw: 5130000b0008000100000000000000f9179ee3
+wire: 035130020b0208020101010101010105f9179ee300

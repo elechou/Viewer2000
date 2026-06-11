@@ -1,0 +1,6 @@
+# vector: block_data_empty
+# BLOCK_DATA 边界：count=0（环空，合法响应）
+# raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
+# wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
+raw: 51a1000a0008000000010000000000ae5e53e8
+wire: 0351a1020a0208010102010101010105ae5e53e800

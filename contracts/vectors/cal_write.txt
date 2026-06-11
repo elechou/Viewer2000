@@ -1,0 +1,6 @@
+# vector: cal_write
+# CAL_WRITE：2 条暂存（idx0=F32 3.5 的位模式, idx5=I16 -7 符号扩展）
+# raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
+# wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
+raw: 511000050012000200000000000000604005000000f9ffffff23c99938
+wire: 03511002050212020201010101010104604005010109f9ffffff23c9993800
