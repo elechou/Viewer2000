@@ -2,6 +2,7 @@
 .theia/
 .vscode/
 .metadata/
+.claude/ccs.settings.md
 
 # clangd generated data
 **/.clangd/.cache/
