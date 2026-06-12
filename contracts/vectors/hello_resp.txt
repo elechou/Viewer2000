@@ -1,0 +1,6 @@
+# vector: hello_resp
+# HELLO_RESP：proto/contract 版本 + build_hash + 固件名
+# raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
+# wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
+raw: 51810001001c0001000100ebb6cc080a00000076326b2d666f632d64656d6f00000000bb2c955b
+wire: 0351810201021c0201020106ebb6cc080a01010d76326b2d666f632d64656d6f01010105bb2c955b00

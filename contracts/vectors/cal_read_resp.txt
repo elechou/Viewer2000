@@ -1,0 +1,6 @@
+# vector: cal_read_resp
+# CAL_READ_RESP：镜像第 42 轮的 3 个 value_bits
+# raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
+# wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
+raw: 519200070014002a000000000003000000604064000000f9ffffff072dca7f
+wire: 03519202070214022a010101010203010104604064010109f9ffffff072dca7f00

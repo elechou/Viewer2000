@@ -1,0 +1,60 @@
+//=============================================================================
+// check_contracts.c — 接口头文件 PC 端编译检查
+//
+// 目的：在 CHAR_BIT=8 的 PC 编译器上编译全部接口头文件，
+// 触发头文件内的 V2K_ASSERT_SIZE_BITS 静态断言（断言以 bit 计，双平台通用），
+// 并额外断言关键字段的 bit 偏移（防止隐式填充破坏"内存布局=线上格式"映射）。
+//
+// 用法: gcc -std=c99 -Wall -Wextra -Werror -c check_contracts.c
+// （cl2000 侧同一文件可直接编译，断言同样生效——Phase 1 接入 CCS 工程后验证）
+//=============================================================================
+#include <stddef.h>
+
+#include "../contracts/v2k_common.h"
+#include "../contracts/v2k_descriptor.h"
+#include "../contracts/v2k_scope.h"
+#include "../contracts/v2k_param.h"
+#include "../contracts/v2k_command.h"
+#include "../contracts/v2k_memmap.h"
+
+// bit 偏移断言（offsetof 以 char 计 → ×CHAR_BIT 得 bit，双平台通用）
+#define V2K_ASSERT_OFFSET_BITS(t, field, bits) \
+    V2K_STATIC_ASSERT((uint32_t)offsetof(t, field) * (uint32_t)CHAR_BIT == (bits))
+
+// ---- 描述符条目（name 之后不得有隐式填充）----
+V2K_ASSERT_OFFSET_BITS(v2k_desc_entry_t, type,      V2K_NAME_BITS(V2K_NAME_LEN));
+V2K_ASSERT_OFFSET_BITS(v2k_desc_entry_t, addr,      V2K_NAME_BITS(V2K_NAME_LEN) + 32u);
+V2K_ASSERT_OFFSET_BITS(v2k_desc_entry_t, min_val,   V2K_NAME_BITS(V2K_NAME_LEN) + 64u);
+V2K_ASSERT_OFFSET_BITS(v2k_desc_entry_t, prescaler, V2K_NAME_BITS(V2K_NAME_LEN) + 192u);
+
+// ---- 描述符表头 ----
+V2K_ASSERT_OFFSET_BITS(v2k_desc_table_hdr_t, build_hash, 64u);
+
+// ---- 示波 block 头与控制块 ----
+V2K_ASSERT_OFFSET_BITS(v2k_block_hdr_t, block_seq, 32u);
+V2K_ASSERT_OFFSET_BITS(v2k_block_hdr_t, n_ch,      80u);
+V2K_ASSERT_OFFSET_BITS(v2k_block_hdr_t, stride_octets, 112u);
+V2K_ASSERT_OFFSET_BITS(v2k_scope_prod_t, ring_base, 96u);
+V2K_ASSERT_OFFSET_BITS(v2k_scope_prod_t, wr_idx,   128u);
+V2K_ASSERT_OFFSET_BITS(v2k_scope_prod_t, trig_tick, 160u);
+V2K_ASSERT_OFFSET_BITS(v2k_scope_prod_t, bind_ack_seq, 240u);
+V2K_ASSERT_OFFSET_BITS(v2k_scope_cfg_t,  trig_level, 32u);
+V2K_ASSERT_OFFSET_BITS(v2k_scope_ch_bind_t, type,    32u);
+V2K_ASSERT_OFFSET_BITS(v2k_scope_bind_t,  ch,        32u);
+
+// ---- 参数 shadow 与状态 ----
+V2K_ASSERT_OFFSET_BITS(v2k_param_write_t,  value_bits, 32u);
+V2K_ASSERT_OFFSET_BITS(v2k_param_write_t,  type,       64u);
+V2K_ASSERT_OFFSET_BITS(v2k_param_shadow_t, commit_seq, 32u);
+V2K_ASSERT_OFFSET_BITS(v2k_param_shadow_t, writes,     64u);
+V2K_ASSERT_OFFSET_BITS(v2k_param_status_t, mirror_seq, 96u);
+V2K_ASSERT_OFFSET_BITS(v2k_param_status_t, value_mirror, 128u);
+
+// ---- 命令/状态平面 ----
+V2K_ASSERT_OFFSET_BITS(v2k_cmd_req_t,      cmd_code,  32u);
+V2K_ASSERT_OFFSET_BITS(v2k_cpu1_status_t,  ack_seq,   32u);
+V2K_ASSERT_OFFSET_BITS(v2k_cpu1_status_t,  heartbeat, 128u);
+V2K_ASSERT_OFFSET_BITS(v2k_cpu1_status_t,  tick,      160u);
+
+// 防"空 TU"告警
+typedef int v2k_check_contracts_nonempty;

@@ -1,0 +1,6 @@
+# vector: ack_cal_commit
+# ACK(CAL_COMMIT)：OK，data=commit_seq=8
+# raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
+# wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
+raw: 519100060008000011000008000000710ca3b8
+wire: 03519102060208010211010208010105710ca3b800

@@ -1,0 +1,6 @@
+# vector: ack_daq_bind_badstate
+# ACK(DAQ_BIND) 负例语义：组非 OFF → BAD_STATE（须先 DAQ_CTRL(OFF)）
+# raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
+# wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
+raw: 51a2000d00080003220000040000005a8a0420
+wire: 0351a2020d02080303220102040101055a8a042000

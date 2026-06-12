@@ -1,0 +1,7 @@
+# vector: neg_bad_crc
+# 负例：STATUS_REQ 帧 CRC 末 octet 翻转——解码器必须静默丢弃，不回 NAK
+# raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
+# wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
+# 本帧 CRC 故意损坏，wire 行仍按损坏后内容编码
+raw: 510200ff000000f8f35e39
+wire: 03510202ff010105f8f35e3900
