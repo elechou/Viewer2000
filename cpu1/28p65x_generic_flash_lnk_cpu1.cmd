@@ -79,9 +79,9 @@ SECTIONS
    .esysmem         : > RAMLS5
 #endif
 
-   ramgs0 : > RAMGS0, type=NOINIT
-   ramgs1 : > RAMGS1, type=NOINIT
-   ramgs2 : > RAMGS2, type=NOINIT
+/* Viewer2000 共享内存平面（基准 contracts/v2k_memmap.h, 与 RAM .cmd 同步） */
+   v2k_gs0_cpu1  : > RAMGS0, type=NOINIT                    /* 描述符表+参数状态+示波生产块 (CPU1 属主) */
+   v2k_gs13_ring : >> RAMGS1 | RAMGS2 | RAMGS3, type=NOINIT /* 示波环数据区 24K words, Phase 3 启用 */
 
    MSGRAM_CPU1_TO_CPU2 > CPU1TOCPU2RAM, type=NOINIT
    MSGRAM_CPU2_TO_CPU1 > CPU2TOCPU1RAM, type=NOINIT

@@ -15,7 +15,9 @@ MEMORY
    RAMGS1           : origin = 0x012000, length = 0x002000
    RAMGS2           : origin = 0x014000, length = 0x002000
    RAMGS3           : origin = 0x016000, length = 0x002000
-   RAMGS4           : origin = 0x018000, length = 0x002000
+   /* GS4 头部 0x200 words = v2k GS4 平面（基准 contracts/v2k_memmap.h；与 RAM .cmd 同步） */
+   RAMGS4_V2K       : origin = 0x018000, length = 0x000200
+   RAMGS4           : origin = 0x018200, length = 0x001E00
 
    /* Flash Banks (128 sectors each) */
    // FLASH_BANK0     : origin = 0x080000, length = 0x20000  // Can be mapped to either CPU1 or CPU2. User should comment/uncomment based on core selection
@@ -62,9 +64,8 @@ SECTIONS
    .esysmem         : > RAMGS4
 #endif
 
-   ramgs0 : > RAMGS0, type=NOINIT
-   ramgs1 : > RAMGS1, type=NOINIT
-   ramgs2 : > RAMGS2, type=NOINIT
+   /* Viewer2000 GS4 平面（基准 contracts/v2k_memmap.h；与 RAM .cmd 同步） */
+   v2k_gs4_cpu2 : > RAMGS4_V2K, type=NOINIT
 
    MSGRAM_CPU1_TO_CPU2 > CPU1TOCPU2RAM, type=NOINIT
    MSGRAM_CPU2_TO_CPU1 > CPU2TOCPU1RAM, type=NOINIT
