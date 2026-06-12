@@ -17,7 +17,8 @@
 #include <string.h>
 #include "driverlib.h"
 #include "device.h"
-#include "board.h"                 // sysconfig 生成：LED_CPU1 / LED_CPU2 引脚宏
+#include "board.h"   // sysconfig 生成：LED_CPU1_GPIO / LED_CPU2_GPIO 引脚宏
+                     //（board components LED 模块给嵌套 GPIO 实例加 _GPIO 后缀）
 #include "../common/v2k_planes.h"
 
 // 固件 build hash：Phase 3.5 起由构建注入 git 短哈希（-D 定义），当前占位
@@ -31,7 +32,7 @@
 #pragma DATA_SECTION(g_v2k_gs0, "v2k_gs0_cpu1")
 v2k_gs0_plane_t g_v2k_gs0;
 
-#pragma DATA_SECTION(g_v2k_msg_1to2, "MSGRAM_CPU1_TO_CPU2")
+#pragma DATA_SECTION(g_v2k_msg_1to2, "v2k_msg_1to2")
 v2k_msg_1to2_t g_v2k_msg_1to2;
 
 //-----------------------------------------------------------------------------
@@ -39,6 +40,26 @@ v2k_msg_1to2_t g_v2k_msg_1to2;
 //-----------------------------------------------------------------------------
 uint32_t g_ping_cnt;    // IPC ping-pong 完成轮数（持续递增 = 核间中断链路活着）
 uint16_t g_cpu2_alive;  // 1 = CPU2 心跳在走（CPU1 视角；0 仅置标志，不停机）
+
+//-----------------------------------------------------------------------------
+// NMI 兜底（boot master 职责，AGENTS.md 双核分工）。
+// 未处理的 NMI 会被 NMI 看门狗升级成整片复位（Phase 1 实测，BRINGUP.md
+// 2026-06-12：CPU2 放出复位后、.out 加载前在 M0 跑垃圾指令 → CPU2 看门狗
+// 复位事件 → CPU1 NMI → NMIWD 整片复位 → 从 flash 启动旧固件，现象="跑飞"）。
+// 处理只做三件事：计数、留痕、清标志——清标志即停止 NMIWD 计数；
+// 标志镜像留在变量里，不掩盖事件（规则 7）。
+//-----------------------------------------------------------------------------
+volatile uint32_t g_nmi_cnt;         // NMI 累计次数
+volatile uint32_t g_nmi_flags_last;  // 最近一次 NMIFLG（SYSCTL_NMI_* 位）
+volatile uint32_t g_nmi_shadow_last; // 最近一次 NMI shadow flags（历史并集）
+
+static __interrupt void v2k_nmi_isr(void)
+{
+    g_nmi_flags_last  = SysCtl_getNMIFlagStatus();
+    g_nmi_shadow_last = SysCtl_getNMIShadowFlagStatus();
+    g_nmi_cnt++;
+    SysCtl_clearAllNMIFlags();
+}
 
 //-----------------------------------------------------------------------------
 // 链接落位自检：实体地址 != memmap 基址属于构建错误（.cmd 与 v2k_memmap.h
@@ -92,7 +113,20 @@ void main(void)
     //
     Device_initGPIO();
     Board_init();
-    GPIO_setControllerCore(LED_CPU2, GPIO_CORE_CPU2);
+    GPIO_setControllerCore(LED_CPU2_GPIO, GPIO_CORE_CPU2);
+
+    //
+    // NMI 兜底必须先于引导 CPU2 就位——CPU2 放出复位到其 .out 加载完成的
+    // 窗口期内随时可能打来 NMI（流程对齐 TI 例程 nmi_ex1_cpu1handling）
+    //
+    Interrupt_initModule();
+    Interrupt_initVectorTable();
+    SysCtl_clearAllNMIFlags();
+    Interrupt_register(INT_NMI, &v2k_nmi_isr);
+    SysCtl_enableNMIGlobalInterrupt();
+    Interrupt_enable(INT_NMI);
+    EINT;   // PIE 内尚无使能源；为后续 CCS 实时模式与慢环中断打底
+    ERTM;
 
     //
     // 引导 CPU2。flash bank 划分未定稿（AGENTS.md 待决策），Phase 1 只支持
@@ -159,7 +193,7 @@ void main(void)
         // 闪灯 1 Hz（500 ms 翻转一次；低电平点亮）
         if ((loop % 500u) == 0u)
         {
-            GPIO_togglePin(LED_CPU1);
+            GPIO_togglePin(LED_CPU1_GPIO);
         }
     }
 }

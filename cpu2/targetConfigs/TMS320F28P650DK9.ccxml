@@ -15,6 +15,9 @@
                     <router HW_revision="1.0" XML_version="1.2" description="ICEPick_C router" id="IcePick_C_0" isa="ICEPICK_C">
                         <subpath id="Subpath_1">
                             <property Type="numericfield" Value="0x11" desc="Port Number_0" id="Port Number"/>
+                            <cpu XML_version="1.2" id="C28xx_CPU2" HW_revision="1.0" isa="TMS320C28xx" description="C28xxCPU">
+                                <property id="Slave Processor" Type="choicelist" Value="1"/>
+                            </cpu>
                         </subpath>
                     </router>
                 </device>

@@ -57,8 +57,8 @@ V2K_STATIC_ASSERT(sizeof(v2k_gs0_plane_t) == 2136u);
 V2K_STATIC_ASSERT(sizeof(v2k_gs4_plane_t) == 276u);
 V2K_STATIC_ASSERT(sizeof(v2k_gs0_plane_t) <= V2K_GSX_WORDS);
 V2K_STATIC_ASSERT(sizeof(v2k_gs4_plane_t) <= 0x200u);  // ≤ RAMGS4_V2K 子区（cpu2 .cmd）
-V2K_STATIC_ASSERT(sizeof(v2k_msg_1to2_t)  <= V2K_MSGRAM_WORDS);
-V2K_STATIC_ASSERT(sizeof(v2k_msg_2to1_t)  <= V2K_MSGRAM_WORDS);
+V2K_STATIC_ASSERT(sizeof(v2k_msg_1to2_t)  <= V2K_MSGRAM_V2K_WORDS);
+V2K_STATIC_ASSERT(sizeof(v2k_msg_2to1_t)  <= V2K_MSGRAM_V2K_WORDS);
 #endif
 
 //-----------------------------------------------------------------------------

@@ -16,37 +16,28 @@ linker/C 代码/契约 = 文本（有断言校验）**。
 
 ---
 
-## 0. 修复 cpu2 的 .syscfg（必做）
+## 0. 修复 cpu2 的 .syscfg —— ✅ 已完成
 
-`cpu2/sysconfig_cpu2.syscfg` 目前是 **0 字节空文件**（重命名后没保存过？），
-缺少 device/context 头，构建时 SysConfig CLI 大概率报错。
+（原为 0 字节空文件；现已带正确的 board/device/context=CPU2 头，无需再动。）
 
-1. 在 CCS 里双击 `sysconfig_cpu2.syscfg` 用 SysConfig 打开；
-2. 确认 **Device = F28P65x，Context = CPU2**，然后保存（头注释会自动补全）；
-3. 如果空文件打不开：用 CCS 文本编辑器把 `cpu1/sysconfig_cpu1.syscfg` 的头部
-   注释块拷过来，把其中两处 `"CPU1"` 改成 `"CPU2"`，保存后再用 SysConfig 打开。
+## 1. cpu1 的 SysConfig：两个 LED 实例（已配大半，剩 Core Select 对调）
 
-## 1. cpu1 的 SysConfig：添加两个 GPIO 实例
+你已用 board components 的 LED 模块配好 `LED_CPU1`（LED4 红）与 `LED_CPU2`
+（LED5 绿），$hardware 绑定 + 初值 1 都正确。**剩一处要修：Core Select 配反了**——
 
-打开 `cpu1/sysconfig_cpu1.syscfg`，添加 GPIO 模块实例两个。
-**实例名必须和下表完全一致**——`cpu1.c` 引用的是 board.h 按实例名生成的宏。
-
-| 配置项 | 实例 1 | 实例 2 |
+| 实例 | 现状 | 应为 |
 |---|---|---|
-| Name | `LED_CPU1` | `LED_CPU2` |
-| 引脚 | **GPIO12**（板上 LED4 红） | **GPIO13**（板上 LED5 绿） |
-| Direction | Output | Output |
-| Output Type | Push-pull | Push-pull |
-| Write Initial Value | 勾选，值 = **1** | 勾选，值 = **1** |
-| **Core Select** | CPU1（默认） | **CPU2** ← 关键 |
+| `LED_CPU1`（红，CPU1 用） | Core Select = CPU2 ← 错 | **CPU1**（默认） |
+| `LED_CPU2`（绿，CPU2 用） | 未设（默认 CPU1） | **CPU2** |
+
+不修的症状：红灯永远不亮（CPU1 写不动被划给 CPU2 的数据寄存器）；绿灯靠
+`cpu1.c` 里的 `GPIO_setControllerCore` 兜底能亮，但归属分配的正式位置在这里。
 
 说明：
 
 - 两个 LED 都是**低电平点亮**（这块板和多数 LaunchPad 相反），初值 1 = 上电灭；
-- 如果引脚选择支持按 Hardware 过滤，直接选 "LaunchPad LED Red / Green" 更稳；
-- `LED_CPU2` 的 Core Select = CPU2 是「pad 配置归 boot master、数据寄存器归
-  使用核」的正式落位（SysConfig 会在 board.c 里生成 `GPIO_setControllerCore`）。
-  `cpu1.c` 里另有一行兜底调用，所以这项漏了也能跑，但请配上；
+- board components LED 模块生成的 board.h 宏带 `_GPIO` 后缀
+  （`LED_CPU1_GPIO` / `LED_CPU2_GPIO`），`cpu1.c` 已按此引用——**实例名别再改**；
 - 避开 GPIO42/43（XDS110 串口背通道，Phase 3.5 要用）。
 
 ## 2. cpu2 的 SysConfig
@@ -63,12 +54,23 @@ flash bank 划分是未决项（AGENTS.md），Phase 1 只用 RAM 构建：
 2. 先 build cpu1，再 build cpu2，预期 0 error；
 3. 如果 `v2k_check_contracts.c` 报 *size of array ... is negative* —— 契约断言
    在 cl2000 上不成立，是真问题，把完整报错发我；
-4. 如果报 `LED_CPU1`/`LED_CPU2` 未定义 —— 实例名没对上，检查第 1 步；若名字
-   确认无误，打开生成的 `cpu1/RAM/syscfg/board.h` 看实际宏名告诉我。
+4. 如果报 `LED_CPU1_GPIO`/`LED_CPU2_GPIO` 未定义 —— 实例名没对上，检查第 1 步；
+   若名字确认无误，打开生成的 `cpu1/RAM/syscfg/board.h` 看实际宏名告诉我。
 
 ## 4. 双核调试会话（顺序关键，别换）
 
-1. Launch 目标配置（launch 后手动 connect，不要直接 Debug As 自动全连）；
+**前置（一次性）**：如果片上 flash 烧过旧固件，先擦掉——任何意外复位（看门狗、
+NMI 看门狗、XRS）都会让 CPU1 从 flash 启动跑进旧固件，现象是"跑飞到无源码
+地址 + CPU2 被按回 reset"（BRINGUP.md 2026-06-12 实测，PC 落 0x081A3A）。
+操作：CPU1 连接后 Tools → On-Chip Flash → 勾 Bank0–2 → Erase。
+bring-up 期间把 S3 左拨码拨 0（等待启动）作双保险也推荐。
+
+1. Launch 目标配置（launch 后手动 connect，**不要直接 Debug As 自动全连**——
+   自动流程会在 CPU1 还停在 main 时就去连 CPU2，而 CPU2 的复位要等 CPU1 跑过
+   `Device_bootCPU2` 才解除，于是 CPU2 侧报一串
+   *"Device is held in reset"* / GEL / load 失败。见到这个症状＝顺序错了，
+   救法：Resume CPU1 → 再 Connect CPU2 → Load → Resume，不必重启会话。
+   一劳永逸：Debug Configuration 里关掉 CPU2 核的自动程序加载）；
 2. **Connect CPU1 → Load `cpu1.out` → Resume**。
    CPU1 会跑到 `IPC_sync` 里阻塞等 CPU2——此时红灯不闪、看似卡死，**正常**；
 3. **Connect CPU2 → Load `cpu2.out` → Resume**。

@@ -11,6 +11,10 @@
 - Do NOT parallelize these steps with task work. Do NOT skip step 2 regardless of task complexity.
 - The ccs-* MCP servers proxy into a **running CCS IDE**. If a call fails to connect, ask the user to launch CCS instead of retrying. Plain file reads work without CCS.
 
+# Commit Rule
+
+在开发过程中的注释为方便进度可以以中文标注。commit 信息等后期难以一次性更改的信息切换为英文标注。
+
 # AGENTS.md — Viewer2000（C2000 RCP 平台）
 
 ## 项目定位

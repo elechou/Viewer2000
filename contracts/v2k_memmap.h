@@ -55,14 +55,20 @@
 #define V2K_MSGRAM_2TO1_BASE 0x03B000uL
 #define V2K_MSGRAM_WORDS     0x400uL
 
+// v2k 在每个 MSGRAM 区头部独占的 word 数（.cmd 切分 CPUxTOCPUyRAM_V2K 子区）。
+// 余下 0x3C0 words 划给 TI driverlib——其 ipc.c 把消息队列缓冲钉在惯例
+// section 名 "MSGRAM_CPU1_TO_CPU2"/"MSGRAM_CPU2_TO_CPU1" 里（ipc.obj 被
+// Device_bootCPU2 引入即出现），v2k 若复用该名会被挤离区基址（Phase 1 实测）。
+#define V2K_MSGRAM_V2K_WORDS 0x40uL
+
 //-----------------------------------------------------------------------------
 // 共享结构体 → 链接 section 名（Phase 1 在两核 .cmd 中建立同名 SECTION 映射）
 //-----------------------------------------------------------------------------
 #define V2K_SECT_DESC_TABLE   "v2k_gs0_cpu1"    /* GS0: 描述符表+参数状态+示波生产块 */
 #define V2K_SECT_SCOPE_RING   "v2k_gs13_ring"   /* GS1-3: 环数据区 */
 #define V2K_SECT_CPU2_PLANE   "v2k_gs4_cpu2"    /* GS4: 参数 shadow+示波 cfg/cons */
-#define V2K_SECT_MSG_1TO2     "MSGRAM_CPU1_TO_CPU2"
-#define V2K_SECT_MSG_2TO1     "MSGRAM_CPU2_TO_CPU1"
+#define V2K_SECT_MSG_1TO2     "v2k_msg_1to2"   /* 区头 V2K_MSGRAM_V2K_WORDS；勿用 TI惯例名 MSGRAM_*（driverlib 占用，见上）*/
+#define V2K_SECT_MSG_2TO1     "v2k_msg_2to1"
 
 //-----------------------------------------------------------------------------
 // 单核调试开关（基本规则 3：所有核间接口可单核运行）

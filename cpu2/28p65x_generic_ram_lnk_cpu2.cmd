@@ -30,8 +30,12 @@ MEMORY
 
 
 
-   CPU1TOCPU2RAM    : origin = 0x03A000, length = 0x000400
-   CPU2TOCPU1RAM    : origin = 0x03B000, length = 0x000400
+   /* MSGRAM 区头 0x40 words 切给 v2k（基址=契约值,见 contracts/v2k_memmap.h）,
+      余量给 TI driverlib 的 IPC 消息队列缓冲（ipc.obj 钉死在 MSGRAM_* section 名上） */
+   CPU1TOCPU2RAM_V2K : origin = 0x03A000, length = 0x000040
+   CPU1TOCPU2RAM     : origin = 0x03A040, length = 0x0003C0
+   CPU2TOCPU1RAM_V2K : origin = 0x03B000, length = 0x000040
+   CPU2TOCPU1RAM     : origin = 0x03B040, length = 0x0003C0
 
    CLATOCPURAM      : origin = 0x001480,   length = 0x000080
    CPUTOCLARAM      : origin = 0x001500,   length = 0x000080
@@ -70,6 +74,9 @@ SECTIONS
    /* Viewer2000 GS4 平面：section 内只有一个聚合对象（common/v2k_planes.h），
       对象基址 == 0x018000 == V2K_GS4_BASE；运行期 v2k_assert_layout 自检兜底 */
    v2k_gs4_cpu2 : > RAMGS4_V2K, type=NOINIT
+
+   v2k_msg_1to2 : > CPU1TOCPU2RAM_V2K, type=NOINIT
+   v2k_msg_2to1 : > CPU2TOCPU1RAM_V2K, type=NOINIT
 
    MSGRAM_CPU1_TO_CPU2 > CPU1TOCPU2RAM, type=NOINIT
    MSGRAM_CPU2_TO_CPU1 > CPU2TOCPU1RAM, type=NOINIT

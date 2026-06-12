@@ -27,7 +27,7 @@
 #pragma DATA_SECTION(g_v2k_gs4, "v2k_gs4_cpu2")
 v2k_gs4_plane_t g_v2k_gs4;
 
-#pragma DATA_SECTION(g_v2k_msg_2to1, "MSGRAM_CPU2_TO_CPU1")
+#pragma DATA_SECTION(g_v2k_msg_2to1, "v2k_msg_2to1")
 v2k_msg_2to1_t g_v2k_msg_2to1;
 
 //-----------------------------------------------------------------------------
@@ -35,6 +35,19 @@ v2k_msg_2to1_t g_v2k_msg_2to1;
 //-----------------------------------------------------------------------------
 uint32_t g_pong_cnt;          // 已应答的 ping 次数
 uint16_t g_handshake_state;   // 0=等sync 1=等描述符表 2=契约版本失败 3=运行中
+
+// NMI 兜底（与 cpu1.c 同一模式，理由见彼处注释）：计数、留痕、清标志
+volatile uint32_t g_nmi_cnt;
+volatile uint32_t g_nmi_flags_last;
+volatile uint32_t g_nmi_shadow_last;
+
+static __interrupt void v2k_nmi_isr(void)
+{
+    g_nmi_flags_last  = SysCtl_getNMIFlagStatus();
+    g_nmi_shadow_last = SysCtl_getNMIShadowFlagStatus();
+    g_nmi_cnt++;
+    SysCtl_clearAllNMIFlags();
+}
 
 static void v2k_assert_layout(void)
 {
@@ -54,6 +67,18 @@ void main(void)
 
     memset(&g_v2k_gs4, 0, sizeof(g_v2k_gs4));
     memset(&g_v2k_msg_2to1, 0, sizeof(g_v2k_msg_2to1));
+
+    //
+    // NMI 兜底（与 cpu1.c 对称）
+    //
+    Interrupt_initModule();
+    Interrupt_initVectorTable();
+    SysCtl_clearAllNMIFlags();
+    Interrupt_register(INT_NMI, &v2k_nmi_isr);
+    SysCtl_enableNMIGlobalInterrupt();
+    Interrupt_enable(INT_NMI);
+    EINT;
+    ERTM;
 
     //
     // 与 CPU1 会合
