@@ -9,9 +9,10 @@
 /**
  * Import the modules used in this configuration.
  */
-const led  = scripting.addModule("/driverlib/board_components/led", {}, false);
-const led1 = led.addInstance();
-const led2 = led.addInstance();
+const led            = scripting.addModule("/driverlib/board_components/led", {}, false);
+const led1           = led.addInstance();
+const led2           = led.addInstance();
+const device_support = scripting.addModule("/driverlib/device_support.js");
 
 /**
  * Write custom configuration values to the imported modules.
@@ -26,6 +27,9 @@ led2.$hardware              = system.deviceData.board.components.LED5;
 led2.gpio.writeInitialValue = true;
 led2.gpio.initialValue      = 1;
 led2.gpio.controllerCore    = "GPIO_CORE_CPU2";
+
+const divider8       = system.clockTree["EPWMCLKDIV"];
+divider8.divideValue = 1;
 
 /**
  * Pinmux solution for unlocked pins/peripherals. This ensures that minor changes to the automatic solver in a future

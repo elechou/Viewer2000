@@ -5,3 +5,8 @@
  * @v2CliArgs --board "/boards/LAUNCHXL_F28P65X" --device "TMS320F28P650DK" --package "169NMR" --variant "TMS320F28P650DK9" --context "CPU2" --product "C2000WARE@26.01.00.00"
  * @versions {"tool":"1.27.1+4634"}
  */
+
+/**
+ * Import the modules used in this configuration.
+ */
+const device_support = scripting.addModule("/driverlib/device_support.js");
