@@ -1,0 +1,42 @@
+# Local IDE/workspace state
+.theia/
+.vscode/
+.metadata/
+
+# clangd generated data
+**/.clangd/.cache/
+**/compile_commands.json
+
+# Code Composer Studio / Eclipse build output directories
+**/FLASH/
+**/RAM/
+**/Debug/
+**/Release/
+
+# CCS generated build files and artifacts
+**/makefile
+**/sources.mk
+**/objects.mk
+**/subdir_rules.mk
+**/subdir_vars.mk
+*.obj
+*.d
+*.o
+*.out
+*.map
+*.hex
+*.bin
+*.lst
+*.pp
+*.su
+*.opt
+*.cmd.genlibs
+
+# OS/editor temporary files
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.tmp
+*.bak
+*.orig
+*~
