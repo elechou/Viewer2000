@@ -9,14 +9,39 @@
 /**
  * Import the modules used in this configuration.
  */
-const led            = scripting.addModule("/driverlib/board_components/led", {}, false);
-const led1           = led.addInstance();
-const led2           = led.addInstance();
-const device_support = scripting.addModule("/driverlib/device_support.js");
+const adc              = scripting.addModule("/driverlib/adc.js", {}, false);
+const adc1             = adc.addInstance();
+const analog           = scripting.addModule("/driverlib/analog.js", {}, false);
+const analog1          = analog.addInstance();
+const asysctl          = scripting.addModule("/driverlib/asysctl.js");
+const led              = scripting.addModule("/driverlib/board_components/led", {}, false);
+const led1             = led.addInstance();
+const led2             = led.addInstance();
+const dac              = scripting.addModule("/driverlib/dac.js", {}, false);
+const dac1             = dac.addInstance();
+const device_support   = scripting.addModule("/driverlib/device_support.js");
+const epwm             = scripting.addModule("/driverlib/epwm.js", {}, false);
+const epwm1            = epwm.addInstance();
+const gpio             = scripting.addModule("/driverlib/gpio.js", {}, false);
+const gpio1            = gpio.addInstance();
+const gpio2            = gpio.addInstance();
+const inputxbar_input  = scripting.addModule("/driverlib/inputxbar_input.js", {}, false);
+const inputxbar_input1 = inputxbar_input.addInstance();
 
 /**
  * Write custom configuration values to the imported modules.
  */
+adc1.$name              = "myADC0";
+adc1.adcClockPrescaler  = "ADC_CLK_DIV_4_0";
+adc1.enabledSOCs        = ["ADC_SOC_NUMBER0"];
+adc1.soc0Trigger        = "ADC_TRIGGER_EPWM1_SOCA";
+adc1.soc0SampleWindow   = 20;
+adc1.useInterrupts      = false;
+adc1.enableTDMA         = false;
+adc1.enabledInts        = ["ADC_INT_NUMBER1"];
+adc1.enableInterrupt1   = true;
+adc1.interruptPulseMode = "ADC_PULSE_END_OF_CONV";
+
 led1.$hardware              = system.deviceData.board.components.LED4;
 led1.$name                  = "LED_CPU1";
 led1.gpio.writeInitialValue = true;
@@ -31,6 +56,61 @@ led2.gpio.controllerCore    = "GPIO_CORE_CPU2";
 const divider8       = system.clockTree["EPWMCLKDIV"];
 divider8.divideValue = 1;
 
+dac1.$name            = "myDAC0";
+dac1.referenceVoltage = "DAC_REF_ADC_VREFHI";
+dac1.enableOutput     = true;
+dac1.shadowValue      = 2048;
+scripting.suppress("The pin A0/DACA_OUT is also selected by the ADC module\\. The DAC output will be driving the ADC pin input\\. This is an acceptable use-case\\.", dac1, "dacDevicePinName");
+
+analog1.$name                            = "myANALOGPinMux0";
+adc1.analog                              = analog1;
+analog1.useCase                          = "CUSTOM";
+analog1.useInterfacePins                 = ["A0/DACA_OUT"];
+dac1.analog                              = analog1;
+analog1.analog["a0/daca_outPin"].$assign = "boosterpack1.30";
+
+epwm1.$name                                                      = "PWM_TB";
+epwm1.$hardware                                                  = system.deviceData.board.components.BP_SITE_2.subComponents.PWM_LOC2;
+epwm1.epwmTimebase_counterMode                                   = "EPWM_COUNTER_MODE_UP_DOWN";
+epwm1.epwmTimebase_hsClockDiv                                    = "EPWM_HSCLOCK_DIVIDER_1";
+epwm1.epwmTimebase_emulationMode                                 = "EPWM_EMULATION_FREE_RUN";
+epwm1.epwmActionQualifier_EPWM_AQ_OUTPUT_A_ON_TIMEBASE_UP_CMPA   = "EPWM_AQ_OUTPUT_HIGH";
+epwm1.epwmActionQualifier_EPWM_AQ_OUTPUT_A_ON_TIMEBASE_DOWN_CMPA = "EPWM_AQ_OUTPUT_LOW";
+epwm1.epwmDeadband_delayRED                                      = 200;
+epwm1.epwmDeadband_delayFED                                      = 200;
+epwm1.epwmDeadband_enableFED                                     = true;
+epwm1.epwmDeadband_polarityFED                                   = "EPWM_DB_POLARITY_ACTIVE_LOW";
+epwm1.epwmDeadband_enableRED                                     = true;
+epwm1.epwmDeadband_redShadowMode                                 = true;
+epwm1.epwmDeadband_fedShadowMode                                 = true;
+epwm1.epwmTripZone_EPWM_TZ_ACTION_EVENT_TZA                      = "EPWM_TZ_ACTION_LOW";
+epwm1.epwmTripZone_EPWM_TZ_ACTION_EVENT_TZB                      = "EPWM_TZ_ACTION_LOW";
+epwm1.epwmTripZone_oneShotSource                                 = ["EPWM_TZ_SIGNAL_OSHT1"];
+epwm1.epwmTripZone_cbcSource                                     = ["EPWM_TZ_SIGNAL_CBC6"];
+epwm1.epwmEventTrigger_EPWM_SOC_A_triggerEnable                  = true;
+epwm1.epwmEventTrigger_EPWM_SOC_A_triggerEventPrescalar          = "1";
+epwm1.epwmTimebase_period                                        = 5000;
+epwm1.epwm.$assign                                               = "EPWM1";
+epwm1.epwm.epwm_aPin.$assign                                     = "boosterpack2.78";
+epwm1.epwm.epwm_bPin.$assign                                     = "boosterpack2.77";
+
+gpio1.$name             = "ISR_PROBE";
+gpio1.direction         = "GPIO_DIR_MODE_OUT";
+gpio1.writeInitialValue = true;
+gpio1.gpioPin.$assign   = "boosterpack2.80";
+scripting.suppress("Connected to hardware,@@@.+?@@@ is connected to EPWM2 BP on the LaunchPad F28P65X\\. Consider selecting it in \'use hardware\' above\\. @@@.+?@@@", gpio1, "gpioPin");
+
+gpio2.$name             = "TZ_EXT";
+gpio2.padConfig         = "PULLUP";
+gpio2.qualMode          = "GPIO_QUAL_ASYNC";
+gpio2.writeInitialValue = true;
+gpio2.initialValue      = 1;
+gpio2.gpioPin.$assign   = "boosterpack2.79";
+scripting.suppress("Connected to hardware,@@@.+?@@@ is connected to EPWM2 BP on the LaunchPad F28P65X\\. Consider selecting it in \'use hardware\' above\\. @@@.+?@@@", gpio2, "gpioPin");
+
+inputxbar_input1.$name         = "myINPUTXBARINPUT0";
+inputxbar_input1.inputxbarGpio = "GPIO3";
+
 /**
  * Pinmux solution for unlocked pins/peripherals. This ensures that minor changes to the automatic solver in a future
  * version of the tool will not impact the pinmux you originally saw.  These lines can be completely deleted in order to
@@ -38,3 +118,4 @@ divider8.divideValue = 1;
  */
 led1.gpio.gpioPin.$suggestSolution = "boosterpack1.13";
 led2.gpio.gpioPin.$suggestSolution = "boosterpack2.53";
+analog1.analog.$suggestSolution    = "ANALOG";

@@ -46,6 +46,12 @@
 // 状态标志位（cpu1_status.status_flags）
 #define V2K_SF_CPU2_LOST  0x0001u  // CPU1 视角：CPU2 心跳停走（信息位，非故障）
 
+// 故障码（cpu1_status.fault_code；0=无，1..255 平台保留，256+ L3 自定义。
+// 新增号段只追加不复用——host 端按值显示故障源）
+#define V2K_FAULT_NONE     0u
+#define V2K_FAULT_TZ1_EXT  1u   // 外部 TZ1（INPUT X-BAR；Phase 2 = 跳线引脚，
+                                // 功率级后 = DRV8323 nFAULT 开漏）
+
 //-----------------------------------------------------------------------------
 // 命令请求（MSGRAM CPU2→CPU1；CCS 调试也可直接戳此结构）
 //

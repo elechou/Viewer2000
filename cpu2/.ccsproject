@@ -9,4 +9,6 @@
 	<templateProperties value="id=empty_c28x_dual_sysconfig.projectspec.empty_c28x_dual_sysconfig_cpu2"/>
 	<origin value="C:\ti\C2000Ware_26_01_00_00\driverlib\f28p65x\examples\c28x_dual\empty_projects\CCS\empty_c28x_dual_sysconfig.projectspec"/>
 	<filesToOpen value=""/>
+	<activeTargetConfiguration value="targetConfigs/TMS320F28P650DK9.ccxml"/>
+	<isTargetConfigurationManual value="true"/>
 </projectOptions>

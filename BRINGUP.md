@@ -32,25 +32,52 @@ CCS Graph 截图、Expressions 读数等）。验证知识不能只活在 commit
 
 ---
 
-## Phase 2 — 时基证明 + 保护（进行中，2026-06-12 开工）
+## Phase 2 — 时基证明 + 保护 ✅ 验收通过（2026-06-13，LAUNCHXL-F28P65X 实物）
 
 操作步骤见 `docs/phase2-bringup.md`。验证项清单：
 
 - [x] Device Support 迁移：两工程生成 device.c/h 取代模板、时钟树 EPWMCLKDIV=/1（errata 警告消失）、模板 device.c/h 排除
 - [x] 迁移后 Phase 1 全项回归（双灯/握手/ping-pong/心跳/NMI 计数）
-- [ ] SysConfig 配置完成并 review（EPWM1/ADCA/DACA/XBAR/GPIO 五模块）
-- [ ] cpu1 工程 0 error（新增 v2k_timebase.c / v2k_fault.c 自动入编译）；上电不停 v2k_tb_check 的 ESTOP0（syscfg 与 C 契约对账通过）
-- [ ] g_v2k_tick ≈ 20000/s；g_v2k_adc_a0 ≈ 2048（DACA 中位经 ADC 回读）；ovf 恒 0
-- [ ] 示波器：EPWM1A/B 互补 + 1 µs 死区（实测值：____）
-- [ ] 抖动：CH1(PWM) 触发余辉下 CH3(ISR 探针) 边沿散布 = ____ ns @20k / ____ ns @100k
-- [ ] ISR 耗时（CH3 脉宽）= ____ ns
-- [ ] halt CPU1 → 输出立即安全（TZ6 CBC）、resume 自动恢复 —— FREE_SOFT 决策实证
-- [ ] 命令全序列：START/STOP/trip→FAULT(fault_code=1)/带源 CLEAR 重入/清源 CLEAR→IDLE/BAD_STATE
-- [ ] 硬件 trip 延迟：GPIO3↓ → EPWM1A↓ = ____ ns（规则 2「不经过 CPU」实证）
-- [ ] 100 kHz 压测：tick ≈ 1e5/s、ovf==0、波形完好（两档数据都记录）
+- [x] SysConfig 配置完成并 review（EPWM1/ADCA/DACA/XBAR/GPIO 五模块）——SOC-A 源因 TI syscfg codegen bug 改由 C 拥有（v2k_tb_init 补 EPWM_setADCTriggerSource + v2k_tb_check 读回 SOCASEL，见记录区）
+- [x] cpu1 工程 0 error（新增 v2k_timebase.c / v2k_fault.c 自动入编译）；上电不停 v2k_tb_check 的 ESTOP0（syscfg 与 C 契约对账通过）
+- [x] g_v2k_tick ≈ 20000/s；g_v2k_adc_a0 ≈ 2048（DACA 中位经 ADC 回读）；ovf=2 后冻结（FREE_RUN+调试 halt 良性、非丢拍，判据修正见记录区）
+- [x] 示波器：EPWM1A/B 互补 + 1 µs 死区（实测：占空比 23% / 73%、交接处同低 1 µs ×2）
+- [x] 抖动：CH1(PWM) 触发余辉下 CH3(ISR 探针) 边沿散布 = 25 ns @20k；@100k 散布未单独记录（D 测的是 PWM↑→ISR↑ 相位 5.9 µs，非散布——见记录区末行）
+- [x] ISR 耗时（CH3 脉宽）= 1000 ns @20k / 1000 ns @100k（与频率无关、符合预期；@100k 即 10 µs 周期的 ~10% CPU——Phase 3 把示波采样塞进 ISR 时要计这笔预算）
+- [x] halt CPU1 → 输出立即安全（TZ6 CBC）、resume 自动恢复 —— FREE_SOFT 决策实证
+- [x] 命令全序列：START/STOP/trip→FAULT(fault_code=1)/带源 CLEAR 重入/清源 CLEAR→IDLE/BAD_STATE（修掉伪 trip 后整序通过，见记录区末两行）
+- [ ] 硬件 trip 延迟：GPIO3↓ → EPWM1A↓ = ____ ns（规则 2「不经过 CPU」实证）——**加分项，本轮未单独示波器测量**
+- [x] 100 kHz 压测：tick ≈ 1e5/s、波形完好（占空比 15%/65% @死区 1 µs、halt 安全）、ISR 1 µs；ovf 未单独读数，但 1 µs « 10 µs 周期、压测无丢拍
+
+> ⚠ **2026-06-13 订正**：验证 A/B 当时的“保护语义”是假的——`v2k_fault_arm()` 在 EPWM1
+> 外设时钟开启前写 TZFRC，OST 从未锁存，IDLE 不封输出、开机即带电自由跑。A 行
+> `sm_state=1` 读数没错但“IDLE 封锁”不成立；B 行波形是开机自由跑、非 START 放行。
+> **EPWM 配置类测量（占空比/死区/抖动/ISR 耗时）仍有效**；保护门控相关结论作废，
+> 修复后须重做 A（确认 IDLE 无波形）+ B（START 放行）+ C。详见记录区末行。
+>
+> **2026-06-13 续**：保护门控的两个 bug（OST 抢锁失败、以及随后暴露的伪 trip）均已
+> 修复，A/B/C/D 全部重做通过——Phase 2 收尾。详见记录区末两行。
 
 记录区：
 
 | 日期 | 验证项 | 方法 | 实测 | 结论 |
 |---|---|---|---|---|
 | 2026-06-12 | Device Support / 时钟树迁移回归 | 两工程 syscfg 加 Device Support，生成 device.c/h 取代手写模板（含 codestartbranch）；时钟树 SYSCLK=200MHz、EPWMCLKDIV=/1；系统工程 system.xml 接到 cpu1/cpu2（@match，活动配置切 RAM 治好"强制回退 FLASH"）；Phase 2 固件先 stash 隔离，纯迁移树 clean build 上板 | Phase 1 全项回归通过：双灯 1/2 Hz、ping/pong 同步递增、握手=3、心跳监视正常、窗口期 g_nmi_cnt=1（CPU2WDRS 照旧）；cpu1 侧 errata 警告消除，cpu2 侧"clocking functions"黄警告=规则 5 预期常驻 | **设备初始化与时钟收敛到 syscfg 单一来源**；EPWMCLKDIV=/1（errata）由时钟树生成代码落实，后续 v2k_tb_check 读回断言 |
+| 2026-06-13 | TI SysConfig SOC-A 源 codegen bug | review board.c 发现 EPWM_init 缺 EPWM_setADCTriggerSource；查 syscfg 元数据：源字段默认=枚举[0]=DCxEVT1（非 TBCTR_ZERO），等于默认即不生成代码；硬件 ETSEL 读回 SOCASEL=0x0（=DCxEVT1） | 选 TBCTR_ZERO 时 syscfg 不出代码、SOCASEL 停复位值 DCxEVT1 → SOC 永不触发、tick 卡 0；而 v2k_tb_check 原未读该字段、自检会误放行 | **绕过**：SOC 源改由 C 拥有——v2k_tb_init 显式 `EPWM_setADCTriggerSource(EPWM1_BASE, EPWM_SOC_A, V2K_TB_SOC_SRC)`（置于自检前），v2k_tb_check 增读回 SOCAEN/SOCASEL 断言。TI 修复后退化为无害重复设置 |
+| 2026-06-13 | 验证 A — 时基与 ISR | CPU1 会话 Expressions + Continuous Refresh，按 docs/phase2-bringup.md §4 逐项核对；g_v2k_isr_ovf_cnt 连续观察 10 min | g_v2k_tick 持续递增 ≈20000/s；g_v2k_adc_a0 ≈2048；g_v2k_sm_state=1(IDLE)；Phase 1 全项回归通过；**g_v2k_isr_ovf_cnt=2 后冻结**（10 min 不增长） | 时基链通，C 侧 SOC 源补写实证生效（TI bug 绕过成立）。ovf=2 **非丢拍**：FREE_RUN 下 CPU1 每被 halt 一段，ePWM 照走→ADC EOC 照置 ADCINTOVF（粘性），resume 时 ISR 计 +1；错开启动两核期间 CPU1 被 halt 2 次 = 2。**冻结即证 ISR 不超时**。判据修正：看"连续不 halt 窗口内是否增长"，非绝对值 |
+| 2026-06-13 | 验证 B — 示波器实测 | 先 START 出波形；CH1=EPWM1A(J8.78)、CH2=EPWM1B(J8.77)、CH3=ISR探针 GPIO2(J8.80)、GND J8.60/62；CH1↑ 触发 + 无限余辉 | CH1/CH2 互补 20 kHz；占空比 CH1 23% / CH2 73%（裸 25/75 各被死区削 1 µs）；交接处两路同低 1 µs ×2；CH1↑→CH3↑ = 30.9/30.875/30.9/30.9/30.9 µs（散布 25 ns p-p）；CH3 脉宽 = 1 µs ×5；halt CPU1→CH1/CH2 立即变低、resume 下一周期自动恢复、tick 续增 | 波形/死区/互补符合设计。CH1↑→CH3↑ 拆解 = 几何 30.25 µs（CH1↑@count 3950 → 下一谷 count 0）+ ~0.65 µs（ADC 采样转换 + EOC→PIE→ISR 入口延迟，与 g_v2k_isr_lat 同源）；25 ns p-p = 软硬合计中断抖动，余量极大。FREE_RUN「resume 第一拍即完整拍」成立。⚠ 注：此处“先 START 出波形”事后证伪——波形实为开机自由跑（见下行），但 EPWM 配置测量值不受影响 |
+| 2026-06-13 | **保护先行失效（订正 A/B，硬件确证）** | 做验证 C 时发现：双核一跑、未发任何命令，EPWM1A/B 即出波形。查 cpu1.c 调用序——`v2k_fault_arm()`（line 122）在 `Board_init`（line 130）之前，而 EPWM1 外设时钟要到 `Board_init→SYSCTL_init`（board.c:997）才开（`Device_init` 不含外设时钟使能——那在从未被调用的 `Device_enableAllPeripherals` 里） | arm() 在无 EPWM 时钟下写 TZFRC.OST，写被丢弃 → OST 从未锁存 → IDLE 形同虚设、上电输出带电自由跑。**A 行 sm_state=1 没错但“IDLE 封输出”不变量当时为假；B 行波形是开机自由跑、非 START 放行**（占空比/死区/抖动仍有效）。根因与 GPIO3 挂哪个核无关（那是 Obs2 上拉浮空的独立问题） | 修复（v2k_fault.c）：arm() 先 `SysCtl_enablePeripheral(EPWM1)`+`RPT #5\|\|NOP` 再 force OST；`v2k_fault_init` 在 Board_init 后**权威再 force 一次 + 读回断言 `TZFLG.OST` 否则 ESTOP0**。教训同 SOCASEL：保护态必须寄存器读回验证、不可假设“我以为封了”。**待重建后重做 A（IDLE 无波形）+ B（START 放行）+ C** |
+| 2026-06-13 | **状态机卡 RUNNING、命令全 BAD_STATE（伪 trip 根因）** | 验证 C 现象：插跳线前 fault_code 已=1；插跳线后 PWM 关但 sys_state 卡 2(RUNNING)；CLEAR/START 全 cmd_result=2(BAD_STATE)。判据：未插任何跳线，每发一次 START，g_v2k_tz_int_cnt 即 +1 | 双缺陷叠加：① v2k_fault_init 在 OST 锁存期间就开 EPWM 级 TZEINT.OST → latched-OST 持续把 TZFLG.INT 转发进 **PIEIFR 并锁存**（PIE 关着不触发、标志位攒着，EPWM_clearTripZoneFlag 清不掉 PIEIFR）→ 下次 START 的 Interrupt_enable 瞬间补发伪 trip；② 伪 ISR 置 FAULT 后，START 紧跟的 g_sm_state=RUNNING（写在 enable 之后）把 FAULT 覆写回 RUNNING、fault_code=1 残留、TZ 中断已被伪 ISR 关死 → 真插跳线只剩硬件 OST 封波形、状态机不动 | 修复（v2k_fault.c）：EPWM 级 TZEINT.OST 与 PIE 级两级同步、都只在 RUNNING 开（init 删 enable / START 开 / STOP+ISR 关）；START 改为先置 RUNNING 再开中断（带 trip 的 START 进 ISR 的 FAULT 不被覆写）。修正了此前“TZEINT 可常开、门控只放 PIE 级”的旧认知 |
+| 2026-06-13 | **验证 C/D 验收通过（Phase 2 收尾）** | C：经 CPU2 会话戳 cmd_req 跑 §6 命令全序列；D：syscfg Period=1000 + 编译器 -D V2K_ISR_HZ=100000 重建重载，重复 §4/§5 | C：START→RUNNING 出波形、STOP→IDLE 灭、START 后插跳线→FAULT(fault_code=1) 波形即灭、带源 CLEAR 仍 FAULT、清源 CLEAR→IDLE、再 START→RUNNING、IDLE 发 STOP→cmd_result=2；ack_seq 严格跟随 cmd_seq、tz_int_cnt 仅真插跳线 +1。D@100k：tick≈1e5/s、占空比 EPWMA 15%/EPWMB 65%（标称 25% 经 1 µs 死区，高频死区占比大）、死区 1 µs、PWM↑→ISR↑=5.9 µs（与 EPWMA↑@4.75µs → 下一谷 SOC@10µs + ~0.65µs ADC/中断延迟吻合）、ISR 脉宽 1 µs、halt CPU1→输出立即安全 + resume 自动恢复 | **Phase 2 验收通过**：时基链(ePWM→ADC→EOC ISR)、FREE_RUN halt 安全、TZ 硬件 trip + 故障锁存状态机、20k/100k 双档全部实证。遗留加分项：GPIO3↓→EPWM1A↓ 纯硬件 trip 延迟、100k 抖动散布均未单独测。下一步 Phase 3（执行器多速率调度 + 双模式 RAM 示波器 + 参数双缓冲 + 描述符表）|
+
+> **遗留 TODO（Phase 5，上功率级前必做）— `v2k_tb_check` 自检补全（code review #4）**：
+> 当前读回覆盖 EPWMCLKDIV / 周期 / TBCLK 分频器 / TZ 源 / TZ 动作 / SOC(ePWM 侧) /
+> FREE_SOFT，但**未覆盖**两项安全关键配置（当前实测均正确，仅缺读回兜底）：
+> ① **死区** `DBCTL`(极性/IN-MODE) + `DBRED`/`DBFED`(=200)——错配即 DRV8323 半桥
+>    shoot-through，上功率级前最硬的一道防线；
+> ② **ADC 侧 SOC 触发源** `ADCSOC0CTL.TRIGSEL`(=EPWM1_SOCA)——SOC 链的收端，漂了与
+>    ePWM 侧同样 tick 卡 0（SOCASEL 那条只补了发端）。
+> 实现 = 在 `v2k_tb_check` 加这两组寄存器读回断言，与现有项同模式。
+>
+> 另：本轮 code review 的 #2（APP_STOP 竞态丢 FAULT + START 防御性清码）与 #3（自检补
+> TBCLK 分频器）已在 v2k_fault.c / v2k_timebase.c 修复，**待重建 + 冒烟重验**（下条）。

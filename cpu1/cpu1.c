@@ -7,8 +7,11 @@
 //   3. 引导 CPU2 → IPC_sync 会合 → IPC ping-pong
 //   4. 闪灯 1 Hz（LED4 红 = GPIO12，低电平点亮）
 //
-// Phase 1 没有 ePWM 时基，主循环以 DEVICE_DELAY_US(1000) 充当 ~1 kHz 节拍；
-// Phase 2 起由 ePWM→ADC→EOC ISR 接管时间所有权（基本规则 5）。
+// Phase 2 追加（路线图「时基证明 + 保护」）：
+//   5. 时基：ePWM1→ADC SOC→EOC ISR（v2k_timebase.c），g_v2k_tick 接管时间所有权
+//   6. 保护：TZ trip + 故障锁存状态机（v2k_fault.c），保护先于 PWM 上引脚就位
+// 主循环的 DEVICE_DELAY_US(1000) 自此降级为慢环/后台节拍（心跳、命令受理、
+// 闪灯）；控制时间一律以 ISR tick 为准（基本规则 5）。
 //
 // 注意：启动序列中的 IPC_sync 是 init 阶段的一次性会合，不属于
 // "控制核不得阻塞等待通信核"（基本规则 1）约束的运行时路径。
@@ -20,6 +23,8 @@
 #include "board.h"   // sysconfig 生成：LED_CPU1_GPIO / LED_CPU2_GPIO 引脚宏
                      //（board components LED 模块给嵌套 GPIO 实例加 _GPIO 后缀）
 #include "../common/v2k_planes.h"
+#include "v2k_timebase.h"
+#include "v2k_fault.h"
 
 // 固件 build hash：Phase 3.5 起由构建注入 git 短哈希（-D 定义），当前占位
 #ifndef V2K_BUILD_HASH
@@ -108,8 +113,18 @@ void main(void)
     g_v2k_msg_1to2.cpu1_status.sys_state    = V2K_STATE_INIT;
 
     //
+    // Phase 2 保护先行（一）：放行前抢先封锁。不依赖 device 初始化是否
+    // 打开过 TBCLKSYNC（模板 device.c 会开，syscfg 生成版视配置而定），
+    // 一律先显式关掉；再抢先锁存 OST——下面 Board_init 落地 syscfg 配置
+    // （EPWM1/ADCA/DACA/X-BAR/探针与 trip 引脚）的全程，PWM 都不可能上引脚。
+    //
+    SysCtl_disablePeripheral(SYSCTL_PERIPH_CLK_TBCLKSYNC);
+    v2k_fault_arm();
+
+    //
     // GPIO：pad 配置（含 LED_CPU2 的 Core Select→CPU2）由 sysconfig 生成的
     // Board_init 完成；这里再显式设一次 CSEL 作兜底（重复设置无害）。
+    // Phase 2 起 Board_init 同时落地 EPWM1/ADCA/DACA/INPUTXBAR/GPIO2/3。
     //
     Device_initGPIO();
     Board_init();
@@ -129,6 +144,14 @@ void main(void)
     ERTM;
 
     //
+    // Phase 2 保护先行（二）：契约自检（syscfg 配置读回对账，含 EPWMCLKDIV
+    // errata 项）+ ISR 注册 + 状态机落 IDLE，最后才放行 TBCLKSYNC。
+    //
+    v2k_tb_init();
+    v2k_fault_init();
+    v2k_tb_start();
+
+    //
     // 引导 CPU2。flash bank 划分未定稿（AGENTS.md 待决策），Phase 1 只支持
     // RAM 构建；_FLASH 分支留 TI 模板默认值占位，定稿后修正。
     //
@@ -144,19 +167,22 @@ void main(void)
     IPC_clearFlagLtoR(IPC_CPU1_L_CPU2_R, IPC_FLAG_ALL);
     IPC_sync(IPC_CPU1_L_CPU2_R, IPC_FLAG31);
 
-    g_v2k_msg_1to2.cpu1_status.sys_state = V2K_STATE_IDLE;
+    // sys_state 自此由 v2k_fault_poll 同步（fault_init 已落 IDLE）
 
     // 发出第一记 ping（此后在主循环里见 ack 即续发）
     IPC_setFlagLtoR(IPC_CPU1_L_CPU2_R, IPC_FLAG0);
 
     for (;;)
     {
-        DEVICE_DELAY_US(1000);  // ~1 kHz 主循环节拍（Phase 2 起由 ISR tick 取代）
+        DEVICE_DELAY_US(1000);  // ~1 kHz 后台/慢环节拍（非控制时间，控制 tick = g_v2k_tick）
         loop++;
 
-        // 心跳与 tick 快照发布（Phase 1 以循环数充当 tick）
+        // 心跳与 ISR tick 快照发布（tick 唯一来源 = 控制 ISR，规则 5）
         g_v2k_msg_1to2.cpu1_status.heartbeat++;
-        g_v2k_msg_1to2.cpu1_status.tick = loop;
+        g_v2k_msg_1to2.cpu1_status.tick = g_v2k_tick;
+
+        // 命令受理 + 状态机同步（START/STOP/CLEAR_FAULT，见 v2k_fault.h）
+        v2k_fault_poll(&g_v2k_msg_1to2.cpu1_status);
 
         // ping-pong：CPU2 ack 后 flag 不再 busy → 计一轮并续发
         if (!IPC_isFlagBusyLtoR(IPC_CPU1_L_CPU2_R, IPC_FLAG0))
