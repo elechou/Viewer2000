@@ -4,7 +4,7 @@
 
 **CRITICAL - NO EXCEPTIONS**: Before ANY CCS/Texas Instruments-related task (even simple ones), you MUST complete these steps IN ORDER. Do NOT call any ccs-project, ccs-debug, ccs-sysconfig, or ccs-serial MCP tools until both steps are complete.
 
-1. Read `.claude/ccs.settings.md` to get the CCS installation directory
+1. The CCS installation directory is `/Applications/ti/ccs2051`
 2. Read `{installation_directory}/ccs/Code Composer Studio.app/Contents/Resources/ai/CCS.md` using the installation directory from step 1. This file includes information on how to interact with CCS as well as device-specific information (UART backchannel pins, LED setup, transmit best practices, etc.).
 3. ONLY THEN proceed with CCS MCP tool calls or any other task work
 
@@ -71,7 +71,7 @@ EtherCAT 要点：
 
 核分离的本质是**隔离故障域 + 隔离时间域**：控制域的确定性不被通信域的抖动/断连污染；保护在两个域之下的纯硬件层。
 
-驱动方式对称：**CPU1 时间驱动，CPU2 事件驱动。** CPU1 全片唯一时基：ePWM 主定时器（同步组锁相）→ ADC SOC → **EOC 中断**进控制 ISR（中断源挂 EOC 不挂周期事件，进 ISR 时数据已就绪），慢环软件分频；ISR tick 是**全平台唯一的时间**，示波时间戳、分频、心跳纪元全部由它派生。CPU2 不设自己的节拍、不采样任何东西——它消费的全是 CPU1 盖好时间戳的数据；其负载（环有新 block、SM 被 master 读走、mailbox 来命令、SSC 主循环）全是事件，结构 = ISR 收事件 + 超级循环干活。它的本职是 CPU1 晶振与 PC 时钟两个外部时钟域之间的**弹性联轴器**——给联轴器装节拍器没有意义，上 RTOS 同理（规则 6 不开口子）。
+驱动方式对称：**CPU1 时间驱动，CPU2 事件驱动。** CPU1 全片唯一控制时基：ePWM 主定时器（同步组锁相）→ ADC SOC → **EOC 中断**进控制 ISR（中断源挂 EOC 不挂周期事件，进 ISR 时数据已就绪），慢环软件分频；ISR tick 是**全平台唯一的控制/采样时间**，示波时间戳、分频、心跳纪元全部由它派生。CPU2 不采样任何东西，也不产生控制时间——它消费的全是 CPU1 盖好时间戳的数据；其负载（环有新 block、SM 被 master 读走、mailbox 来命令、SSC 主循环）全是事件，结构 = ISR 收事件 + 超级循环干活。CPU2 可以有低速本地诊断心跳/timeout，用来证明通信核自身活着或判断链路超时，但该本地时间不得进入采样、block 时间戳或控制调度。它的本职是 CPU1 晶振与 PC 时钟两个外部时钟域之间的**弹性联轴器**——给联轴器装控制节拍器没有意义，上 RTOS 同理（规则 6 不开口子）。
 
 ### 分层
 
@@ -160,9 +160,9 @@ void user_step(const plat_in_t *in, plat_out_t *out);
 
 1. **控制核在任何路径上都不阻塞等待通信核。** IPC 满则丢、示波缓冲满则覆盖或停采、链路丢块则丢块，控制 ISR 照跑。CPU2 死 → 电机继续稳定运行，只是"失联"；CPU1 死 → 关 PWM 靠硬件 trip 和各核独立看门狗，不靠 CPU2。
 2. **保护是纯硬件链路**：CMPSS → ePWM X-BAR → Trip Zone 关 PWM，不经过任何 CPU。**上功率之前保护必须就位。**
-3. **所有核间接口可单核运行**：编译开关可把消费端放回 CPU1 后台循环，调试时退回单核排除核间因素。移到 CPU2 是搬迁，不是重设计。
+3. **平台固定双核运行**：Viewer2000 固定面向 F28P65x 双 C28x 架构。CPU1/CPU2 分工是平台边界，不提供单核编译退路；调试问题通过缩小功能、关闭外设消费者或替换 host 数据源解决，不通过把通信核逻辑搬回 CPU1。
 4. **L2/L3 不碰寄存器**：输入相电流 [A]、角度 [rad]、母线电压 [V]；输出三相占空比。这个接口边界就是平台暴露给用户代码的边界。
-5. **时间所有权归控制核**：PWM 时基、ISR tick 由 CPU1 发布，CPU2 只消费。
+5. **控制时间所有权归 CPU1**：PWM 时基、ISR tick、采样时间戳与 block 时间由 CPU1 发布；CPU2 可有本地诊断心跳/timeout，但不得把本地时间写入控制调度或示波时间戳。
 6. **不用 RTOS**：采用典型裸机前后台架构——控制在 ISR，状态机/杂务在后台循环。
 7. **可观测性 day 0 就位**，不允许"遇到查不了的问题再补工具"（前身项目的最大教训）。
 

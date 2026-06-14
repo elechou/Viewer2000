@@ -81,3 +81,28 @@ CCS Graph 截图、Expressions 读数等）。验证知识不能只活在 commit
 >
 > 另：本轮 code review 的 #2（APP_STOP 竞态丢 FAULT + START 防御性清码）与 #3（自检补
 > TBCLK 分频器）已在 v2k_fault.c / v2k_timebase.c 修复，**待重建 + 冒烟重验**（下条）。
+
+---
+
+## Phase 3 - 执行器 + 可观测性（软件实现完成，硬件验收待进行）
+
+操作步骤见 `docs/phase3-executor-observability.md`。
+
+- [x] contract version 2；DAQ_CTRL 12/14-octet 兼容向量通过 host 检查
+- [x] GS0 平面/慢速环与 GS1-GS3 快速环链接布局完成
+- [x] 固定顺序 L1 executor、错相 1 kHz/100 Hz due mask、duty clamp/apply
+- [x] 描述符表、后台整批验证/ISR 同拍应用参数、10 Hz 值镜像
+- [x] LIVE/SNAPSHOT、边沿触发、partial final block、consumer API、CCS view
+- [x] 固定双核路径；CPU1 后台为普通无限循环，仅在控制 tick 前进后检查 deadline，
+      约 1 ms poll point
+      按 seq/flag 处理共享请求；CPU2 暂用本地 1 ms 诊断心跳
+- [x] ISR 收敛：scope 配置/绑定/容量计算移至后台；快慢组用 active 位和倒计数，
+      参数提交放在独立 1 kHz 错相槽位；控制段/scope 段周期分开统计
+- [x] PC 端 contract 静态断言与 24 组 golden vectors 检查通过（2026-06-14）
+- [ ] CCS Project：CPU1/CPU2 器件从 DK6 修正为 `TMS320F28P650DK9`
+- [ ] SysConfig：新增 CPUTIMER1；CCS pre-build 接入 git hash 生成器
+- [ ] CPU1/CPU2 RAM 与 FLASH 配置 `buildProject` 0 error
+- [ ] 20 kHz / 100 kHz 实物验收、Phase 1/2 回归与 Silicon Real-time Mode
+- [ ] 验收通过后创建 `phase3-executor-observability` tag
+
+未完成项不得用软件自检替代实物结论，也不得提前打硬件 tag。
