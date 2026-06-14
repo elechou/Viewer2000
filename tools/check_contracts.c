@@ -34,11 +34,13 @@ V2K_ASSERT_OFFSET_BITS(v2k_desc_table_hdr_t, build_hash, 64u);
 V2K_ASSERT_OFFSET_BITS(v2k_block_hdr_t, block_seq, 32u);
 V2K_ASSERT_OFFSET_BITS(v2k_block_hdr_t, n_ch,      80u);
 V2K_ASSERT_OFFSET_BITS(v2k_block_hdr_t, stride_octets, 112u);
-V2K_ASSERT_OFFSET_BITS(v2k_scope_prod_t, ring_base, 96u);
-V2K_ASSERT_OFFSET_BITS(v2k_scope_prod_t, wr_idx,   128u);
-V2K_ASSERT_OFFSET_BITS(v2k_scope_prod_t, trig_tick, 160u);
-V2K_ASSERT_OFFSET_BITS(v2k_scope_prod_t, bind_ack_seq, 240u);
+V2K_ASSERT_OFFSET_BITS(v2k_scope_prod_t, prescaler, 80u);
+V2K_ASSERT_OFFSET_BITS(v2k_scope_prod_t, ring_base, 128u);
+V2K_ASSERT_OFFSET_BITS(v2k_scope_prod_t, wr_idx,   160u);
+V2K_ASSERT_OFFSET_BITS(v2k_scope_prod_t, trig_tick, 192u);
+V2K_ASSERT_OFFSET_BITS(v2k_scope_prod_t, bind_ack_seq, 272u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_cfg_t,  trig_level, 32u);
+V2K_ASSERT_OFFSET_BITS(v2k_scope_cfg_t,  block_n_ticks, 112u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_ch_bind_t, type,    32u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_bind_t,  ch,        32u);
 

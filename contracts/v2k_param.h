@@ -68,6 +68,7 @@ V2K_ASSERT_SIZE_BITS(v2k_param_shadow_t, 64u + 96u * V2K_PARAM_BATCH_MAX);
 #define V2K_CAL_BAD_TYPE   1u   // type 非法
 #define V2K_CAL_OUT_RANGE  2u   // 注册参数越 min/max（仅护栏命中时可能）
 #define V2K_CAL_BAD_COUNT  3u   // count 超上限
+#define V2K_CAL_BAD_ADDR   4u   // 目标不在 CPU1 可写数据区或 32-bit 未对齐
 
 //-----------------------------------------------------------------------------
 // 状态 + 值镜像（CPU1 属主：CPU1 写，CPU2/host 只读）

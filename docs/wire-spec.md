@@ -116,7 +116,7 @@ off  sz  字段
 | 0x10 | CAL_WRITE | H→F | 2+12k | 0x90 ACK |
 | 0x11 | CAL_COMMIT | H→F | 0 | 0x91 ACK（data=commit_seq） |
 | 0x12 | CAL_READ | H→F | 4 | 0x92 CAL_READ_RESP |
-| 0x20 | DAQ_CTRL | H→F | 12 | 0xA0 ACK |
+| 0x20 | DAQ_CTRL | H→F | 12（兼容）或 14 | 0xA0 ACK |
 | 0x21 | BLOCK_REQ | H→F | 2 | 0xA1 BLOCK_DATA |
 | 0x22 | DAQ_BIND | H→F | 2+8k | 0xA2 ACK（data=bind_seq） |
 | 0x30 | CMD | H→F | 8 | 0xB0 ACK（data=ack_seq） |
@@ -220,7 +220,8 @@ off sz 字段
 
 ### 4.5 DAQ_CTRL / DAQ_BIND（0x20 / 0x22）
 
-`DAQ_CTRL` 请求（12 octets），逐字段镜像 `v2k_scope_cfg_t`：
+`DAQ_CTRL` 请求保留原 12-octet 前缀，并在新格式尾部追加
+`block_n_ticks`，共 14 octets：
 
 ```
 0  1  group
@@ -231,8 +232,10 @@ off sz 字段
 8  1  trig_edge     V2K_TRIG_*
 9  1  pre_trig_pct  0..100
 10 2  prescaler     0 = 维持当前值
+12 2  block_n_ticks 0 = 维持当前值；旧 12-octet 请求按默认 N=10 解释
 ```
 
+固件必须继续接受旧 12-octet 请求；该向后兼容扩展不提升 wire version。
 CPU2 写组 cfg 并发布 `cfg_seq`，回 ACK(OK)=已受理；
 模式实际跃迁经 STATUS 的 `scope_mode[group]` 确认。
 

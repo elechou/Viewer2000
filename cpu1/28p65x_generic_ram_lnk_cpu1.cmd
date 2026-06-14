@@ -27,10 +27,9 @@ MEMORY
    // RAMLS8_CLA    : origin = 0x004000, length = 0x002000  // Use only if configured as CLA program memory
    // RAMLS9_CLA    : origin = 0x006000, length = 0x002000  // Use only if configured as CLA program memory
 
-   RAMGS0           : origin = 0x010000, length = 0x002000
-   RAMGS1           : origin = 0x012000, length = 0x002000
-   RAMGS2           : origin = 0x014000, length = 0x002000
-   RAMGS3           : origin = 0x016000, length = 0x002000
+   RAMGS0_PLANE     : origin = 0x010000, length = 0x001000
+   RAMGS0_SLOW      : origin = 0x011000, length = 0x001000
+   RAMGS13          : origin = 0x012000, length = 0x006000
    RAMGS4           : origin = 0x018000, length = 0x002000
 
    /* Flash Banks (128 sectors each) */
@@ -70,11 +69,11 @@ SECTIONS
 
    .stack           : > RAMM1
 #if defined(__TI_EABI__)
-   .bss             : > RAMLS5
-   .bss:output      : > RAMLS3
+   .bss             : > RAMLS5, START(V2K_BssStart), END(V2K_BssEnd)
+   .bss:output      : > RAMLS3, START(V2K_BssOutputStart), END(V2K_BssOutputEnd)
    .init_array      : > RAMM0
    .const           : > RAMLS5 | RAMLS6
-   .data            : > RAMLS5
+   .data            : > RAMLS5, START(V2K_DataStart), END(V2K_DataEnd)
    .sysmem          : > RAMLS4
 #else
    .pinit           : > RAMM0
@@ -87,8 +86,10 @@ SECTIONS
       修改必须双核 .cmd（RAM+FLASH 共四份）与 memmap 头文件同步。
       每个 section 内只有一个聚合对象（common/v2k_planes.h），
       因此对象基址 == 区块基址；运行期 v2k_assert_layout 自检兜底。 */
-   v2k_gs0_cpu1  : > RAMGS0, type=NOINIT                    /* 描述符表+参数状态+示波生产块（CPU1 属主） */
-   v2k_gs13_ring : >> RAMGS1 | RAMGS2 | RAMGS3, type=NOINIT /* 示波环数据区 24K words，Phase 3 启用 */
+   v2k_gs0_cpu1   : > RAMGS0_PLANE, type=NOINIT /* 描述符表+参数状态+示波生产块 */
+   v2k_scope_slow : > RAMGS0_SLOW, type=NOINIT  /* group 1 慢速环 */
+   v2k_scope_fast : > RAMGS13, type=NOINIT      /* group 0 快速环 */
+   v2k_ccs_view    : > RAMD2, type=NOINIT        /* 冻结后 float[2048] 解交错视图 */
 
    v2k_msg_1to2 : > CPU1TOCPU2RAM_V2K, type=NOINIT
    v2k_msg_2to1 : > CPU2TOCPU1RAM_V2K, type=NOINIT

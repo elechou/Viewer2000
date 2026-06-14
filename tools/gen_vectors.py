@@ -140,7 +140,7 @@ def build_cases():
     add("hello_req", "HELLO_REQ：空 payload", 0x01, 0x0001, b"")
     add("hello_resp", "HELLO_RESP：proto/contract 版本 + build_hash + 固件名",
         0x81, 0x0001,
-        struct.pack("<HHIHH16s", 1, 1, BUILD_HASH, 10, 0, b"v2k-foc-demo"))
+        struct.pack("<HHIHH16s", 1, 2, BUILD_HASH, 10, 0, b"v2k-foc-demo"))
 
     # ---- 4.2 STATUS ----
     add("status_req", "STATUS_REQ：空 payload（兼任链路心跳）", 0x02, 0x0002, b"")
@@ -199,9 +199,14 @@ def build_cases():
 
     # ---- 4.5 DAQ_CTRL / DAQ_BIND ----
     add("daq_ctrl_snapshot",
-        "DAQ_CTRL：组 0 进 SNAP_ARMED，触发源=通道槽位 1 上升沿过 2.5，pre-trigger 30%",
+        "DAQ_CTRL 新格式：组 0 进 SNAP_ARMED，触发源=通道槽位 1 上升沿过 2.5，"
+        "pre-trigger 30%，block N=10",
         0x20, 0x0008,
-        struct.pack("<BBHfBBH", 0, 2, 1, 2.5, 0, 30, 0))
+        struct.pack("<BBHfBBHH", 0, 2, 1, 2.5, 0, 30, 0, 10))
+    add("daq_ctrl_legacy",
+        "DAQ_CTRL 旧 12-octet 格式：固件兼容接收并使用默认 block N=10",
+        0x20, 0x000D,
+        struct.pack("<BBHfBBH", 0, 1, 0, 0.0, 0, 0, 1))
     add("daq_bind_2ch",
         "DAQ_BIND：组 0 绑 2 通道（0xA044=I16 原生 2 octets；"
         "0xC120=F32 原生 4 octets 无损——地址可来自描述符表或 DWARF）",

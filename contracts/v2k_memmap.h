@@ -14,13 +14,13 @@
 // ┌────────┬──────┬─────────────────────────────────────────────┐
 // │ 区块    │ 属主  │ 内容                                         │
 // ├────────┼──────┼─────────────────────────────────────────────┤
-// │ GS0    │ CPU1 │ v2k_desc_table_t（描述符表）   (1928 words)   │
+// │ GS0前半│ CPU1 │ v2k_desc_table_t（描述符表）   (1928 words)   │
 // │        │      │ v2k_param_status_t            ( 136 words)   │
-// │        │      │ v2k_scope_prod_t ×4           (  72 words)   │
-// │        │      │ → 合计 ~2.1K / 8K words，余量大               │
-// │ GS1-3  │ CPU1 │ 示波环数据区 24K words（分配见下）              │
+// │        │      │ v2k_scope_prod_t ×4           (  80 words)   │
+// │ GS0后半│ CPU1 │ 慢速组示波环 4K words                         │
+// │ GS1-3  │ CPU1 │ 快速组示波环 24K words                        │
 // │ GS4    │ CPU2 │ v2k_param_shadow_t            ( 100 words)   │
-// │        │      │ v2k_scope_cfg_t ×4            (  32 words)   │
+// │        │      │ v2k_scope_cfg_t ×4            (  40 words)   │
 // │        │      │ v2k_scope_bind_t ×4           ( 136 words)   │
 // │        │      │ v2k_scope_cons_t ×4           (   8 words)   │
 // │        │      │ 余量 ~7.7K words 留 CPU2（EtherCAT 缓冲等）    │
@@ -51,6 +51,13 @@
 #define V2K_GS4_BASE   0x018000uL
 #define V2K_GSX_WORDS  0x2000uL
 
+#define V2K_GS0_PLANE_BASE    V2K_GS0_BASE
+#define V2K_GS0_PLANE_WORDS   0x1000uL
+#define V2K_SCOPE_SLOW_BASE   0x011000uL
+#define V2K_SCOPE_SLOW_WORDS  0x1000uL
+#define V2K_SCOPE_FAST_BASE   V2K_GS1_BASE
+#define V2K_SCOPE_FAST_WORDS  0x6000uL
+
 #define V2K_MSGRAM_1TO2_BASE 0x03A000uL
 #define V2K_MSGRAM_2TO1_BASE 0x03B000uL
 #define V2K_MSGRAM_WORDS     0x400uL
@@ -64,17 +71,11 @@
 //-----------------------------------------------------------------------------
 // 共享结构体 → 链接 section 名（Phase 1 在两核 .cmd 中建立同名 SECTION 映射）
 //-----------------------------------------------------------------------------
-#define V2K_SECT_DESC_TABLE   "v2k_gs0_cpu1"    /* GS0: 描述符表+参数状态+示波生产块 */
-#define V2K_SECT_SCOPE_RING   "v2k_gs13_ring"   /* GS1-3: 环数据区 */
+#define V2K_SECT_DESC_TABLE   "v2k_gs0_cpu1"    /* GS0 前半: 描述符+参数状态+生产块 */
+#define V2K_SECT_SCOPE_SLOW   "v2k_scope_slow"  /* GS0 后半: 慢速组环 */
+#define V2K_SECT_SCOPE_FAST   "v2k_scope_fast"  /* GS1-3: 快速组环 */
 #define V2K_SECT_CPU2_PLANE   "v2k_gs4_cpu2"    /* GS4: 参数 shadow+示波 cfg/cons */
 #define V2K_SECT_MSG_1TO2     "v2k_msg_1to2"   /* 区头 V2K_MSGRAM_V2K_WORDS；勿用 TI惯例名 MSGRAM_*（driverlib 占用，见上）*/
 #define V2K_SECT_MSG_2TO1     "v2k_msg_2to1"
-
-//-----------------------------------------------------------------------------
-// 单核调试开关（基本规则 3：所有核间接口可单核运行）
-// 定义 V2K_SINGLE_CORE 后：消费端代码编译进 CPU1 后台循环，GSx 归属全划 CPU1，
-// MSGRAM 两个方向退化为 CPU1 普通 RAM 中的两个 struct。接口布局不变。
-//-----------------------------------------------------------------------------
-// #define V2K_SINGLE_CORE 1
 
 #endif // V2K_MEMMAP_H

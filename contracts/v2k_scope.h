@@ -2,7 +2,7 @@
 // v2k_scope.h — 共享内存接口：示波平面（控制核 → 主机方向）
 //
 // 无锁 SPSC：CPU1 控制 ISR 是唯一生产者（采样在 ISR 上下文，所有通道天然同拍），
-// CPU2（或单核调试时的 CPU1 后台循环，基本规则 3）是唯一消费者。
+// CPU2 是唯一消费者；CCS Graph 通过 CPU1 后台生成的只读 view 查看 snapshot。
 //
 // ---- 通道组（≈ XCP event channel）----
 // 组 = 同速率通道集合，组速率 = ISR tick 率 / prescaler，因此一个 block 内
@@ -83,6 +83,14 @@
 #define V2K_TRIG_RISE 0u
 #define V2K_TRIG_FALL 1u
 
+// 配置与绑定结果码（prod.cfg_result / prod.bind_result）
+#define V2K_SCOPE_RESULT_OK          0u
+#define V2K_SCOPE_RESULT_BAD_STATE   1u
+#define V2K_SCOPE_RESULT_BAD_PARAM   2u
+#define V2K_SCOPE_RESULT_BAD_TYPE    3u
+#define V2K_SCOPE_RESULT_BAD_ADDR    4u
+#define V2K_SCOPE_RESULT_NO_CAPACITY 5u
+
 //-----------------------------------------------------------------------------
 // block 头（RAM 与线上同构，16 octets / 8 words）
 //-----------------------------------------------------------------------------
@@ -101,9 +109,9 @@ V2K_ASSERT_SIZE_BITS(v2k_block_hdr_t, 128u);
 //-----------------------------------------------------------------------------
 // 生产者控制块（每组一个；CPU1 属主区，CPU2 只读）
 //
-// C28x word 偏移：mode@0 flags@1 cap@2 n_ticks@3 n_ch@4 cfg_ack@5 ring_base@6
-//   wr_idx@8 overrun@9 trig_tick@10 frz_end@12 frz_cnt@13 state_seq@14
-//   bind_ack@15 bind_result@16 res@17
+// C28x word 偏移：mode@0 flags@1 cap@2 n_ticks@3 n_ch@4 prescaler@5
+//   cfg_ack@6 cfg_result@7 ring_base@8 wr_idx@10 overrun@11 trig_tick@12
+//   frz_end@14 frz_cnt@15 state_seq@16 bind_ack@17 bind_result@18 slot_words@19
 //-----------------------------------------------------------------------------
 typedef struct {
     uint16_t mode;            // V2K_SCOPE_*（CPU1 写；响应 cfg 请求后跃迁）
@@ -111,7 +119,9 @@ typedef struct {
     uint16_t ring_capacity;   // 环容量（block 数，2 的幂）
     uint16_t block_n_ticks;   // 当前生效的 N
     uint16_t n_ch;            // 当前生效的 M（= 已应用绑定的通道数）
+    uint16_t prescaler;       // 当前生效的组采样分频
     uint16_t cfg_ack_seq;     // 已处理的 cfg_seq（序号握手应答侧）
+    uint16_t cfg_result;      // V2K_SCOPE_RESULT_*（对应 cfg_ack_seq）
     uint32_t ring_base;       // 环数据区基址（CPU1 数据空间 word 地址）
     uint16_t wr_idx;          // 自由递增写索引（block 单位）；数据就绪后发布
     uint16_t overrun_cnt;     // LIVE 模式环满丢块累计
@@ -125,7 +135,7 @@ typedef struct {
                               //   （CPU2 排空时按此索引环：base + (idx%cap)*slot）
 } v2k_scope_prod_t;
 
-V2K_ASSERT_SIZE_BITS(v2k_scope_prod_t, 288u);
+V2K_ASSERT_SIZE_BITS(v2k_scope_prod_t, 320u);
 
 //-----------------------------------------------------------------------------
 // 消费者控制块（每组一个；CPU2 属主区，CPU1 只读）
@@ -141,8 +151,8 @@ V2K_ASSERT_SIZE_BITS(v2k_scope_cons_t, 32u);
 // 示波配置请求（每组一个；CPU2 属主区 = host 经 DAQ_CTRL 写入，CPU1 应用）
 //
 // 序号握手：CPU2 填其余字段 → 最后写 cfg_seq = 旧值+1（发布）。
-// CPU1 ISR 安全点见 cfg_seq != prod.cfg_ack_seq 即读取、应用、跃迁 mode、
-// 写 prod.cfg_ack_seq = cfg_seq。结果看 prod.mode/state_seq。
+// CPU1 后台稳定复制、验证并准备整组运行态；所有字段完成后，最后发布该组
+// active 标志给 ISR。ISR 不做配置复制、容量计算或地址验证。
 //-----------------------------------------------------------------------------
 typedef struct {
     uint16_t mode_req;        // 目标模式：OFF / LIVE / SNAP_ARMED
@@ -152,10 +162,12 @@ typedef struct {
     uint16_t trig_edge;       // V2K_TRIG_*
     uint16_t pre_trig_pct;    // pre-trigger 占环深百分比 0..100
     uint16_t prescaler;       // 组速率覆盖（0 = 维持当前值）
+    uint16_t block_n_ticks;   // block 拍数覆盖（0 = 维持当前值）
     uint16_t cfg_seq;         // CPU2 最后写（发布）；应答在 prod.cfg_ack_seq
+    uint16_t reserved;        // 置 0；保持 C28x/PC 结构尾部对齐一致
 } v2k_scope_cfg_t;
 
-V2K_ASSERT_SIZE_BITS(v2k_scope_cfg_t, 128u);
+V2K_ASSERT_SIZE_BITS(v2k_scope_cfg_t, 160u);
 
 //-----------------------------------------------------------------------------
 // 通道绑定请求（每组一个；CPU2 属主区 = host 经 DAQ_BIND 写入，CPU1 应用）
