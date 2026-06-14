@@ -134,6 +134,7 @@ CPU2 启动顺序应为：
 
 ```text
 Device_init
+  -> SysCtl_enablePeripheral(SYSCTL_PERIPH_CLK_SCIA)
   -> SCIA_BASE_init（sysconfig 生成；直接调用，绕开 Board_init 聚合入口）
   -> NMI 兜底
   -> 双核共享契约握手
@@ -147,9 +148,13 @@ Device_init
 > `SysCtl_setPeripheralAccessControl`/`CPUSEL` 写入——对 CPU2 是死代码，
 > 但 cl2000 `-Ooff` 默认按 translation unit 链接，会把整个 SYSCTL_init 拉
 > 进 CPU2 .text 把 RAMGS4 撑爆（链接器报 `error #10099-D: .bss size 0xb42
-> won't fit`）。直调 `SCIA_BASE_init()` 配合 §6.3 强制的
-> `--gen_func_subsections=on`，可让链接器只带入实际被调用的 board.obj 函
-> 数，board.obj 最终只贡献 ~150 words 给 CPU2 .text。
+> won't fit`）。不过 `SYSCTL_init()` 同时负责打开 CPU2 本地
+> `SYSCTL_PERIPH_CLK_SCIA`；绕开 `Board_init()` 时必须手动保留这一个
+> clock gate，否则 `SCIA_BASE_init()` 对 `SCICCR/SCICTL1/BAUD` 的写入会被
+> 外设时钟门控吞掉，表现为 host HELLO 超时且 `rx_octets` 恒为 0。直调
+> `SCIA_BASE_init()` 配合 §6.3 强制的 `--gen_func_subsections=on`，可让
+> 链接器只带入实际被调用的 board.obj 函数，board.obj 最终只贡献 ~150
+> words 给 CPU2 .text。
 
 ### 1.3 必须删除的手写静态配置
 
@@ -164,8 +169,9 @@ SysCtl_selectCPUForPeripheralInstance(SCIA, CPU2)
 ```
 
 CPU2 SCI 初始化也不得重复执行已经由生成代码完成的 `SCI_setConfig`、
-pinmux、FIFO/module 静态初始化。重复写虽然可能“能跑”，但会掩盖 `.syscfg`
-错误，并使后续换 pin、换 LSPCLK 或升级 C2000Ware 时出现配置漂移。
+pinmux、FIFO/module 静态初始化。`SysCtl_enablePeripheral(SCIA)` 是保留
+`SYSCTL_init()` 中的本地 clock gate，不是重复 SCI 配置。重复写虽然可能“能跑”，
+但会掩盖 `.syscfg` 错误，并使后续换 pin、换 LSPCLK 或升级 C2000Ware 时出现配置漂移。
 `v2k_sci_init()` 仅保留 RX FIFO level（覆盖生成的 RX0=empty 为 RX1）、
 `SCI_clearOverflowStatus()`、`INT_SCIA_RX` 注册与 `SCI_INT_RXFF` 使能。
 

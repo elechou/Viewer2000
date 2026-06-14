@@ -168,8 +168,15 @@ CCS Graph 截图、Expressions 读数等）。验证知识不能只活在 commit
       seq 错配与版本不匹配测试
 - [x] 公开源码/文件名品牌扫描通过；原创无文字图标仅改为中立文件名
 - [x] Scope2000 独立 root commit：`0fe4067`（Viewer2000 待 CCS/实物验收后提交）
+- [x] 验证 A — 串口与 HELLO：115200 / `/dev/tty.usbmodemCL6500011`
 - [ ] CCS CPU1/CPU2 RAM + FLASH `buildProject` 0 error
 - [ ] 115200 实物闭环与最高稳定波特率测试
 - [ ] 参数原子提交、命令结果、Live partial block、Snapshot/pre-trigger 实测
 - [ ] 停止 Scope2000/CPU2 消费时 CPU1 tick、ISR budget、控制状态不受影响
 - [ ] 记录双仓库 commit、持续时间、丢块、overrun 与 CRC 结果
+
+记录区：
+
+| 日期 | 验证项 | 方法 | 实测 | 结论 |
+|---|---|---|---|---|
+| 2026-06-14 | 验证 A — 串口与 HELLO timeout 根因 | Scope2000 HELLO 超时后用 CCS Expressions 读 CPU2 诊断量与 SCIA 寄存器；再按 golden HELLO wire frame 经 XDS110 VCP 发包 | 修复前 `g_handshake_state=3`、CPU2 heartbeat 递增，但 `rx_octets=0`；SCIA GPIO42/43 mux 与 CPUSEL 生成正确，`SCICCR/SCICTL1/HBAUD/LBAUD` 却保持 0。根因：CPU2 为省 RAM 绕开 `Board_init()` 直调 `SCIA_BASE_init()`，漏掉 CPU2 `SYSCTL_init()` 里的本地 `SysCtl_enablePeripheral(SCIA)` clock gate，导致 SCIA 配置写入被门控吞掉。修复后寄存器读回 `SCICCR=7`、`SCICTL1=0x23`、`HBAUD=0`、`LBAUD=53`、`RXFFIL=1`；向 `/dev/tty.usbmodemCL6500011` 发 `U` 后 `rx_octets` 0→1；HELLO 响应解码：wire=1、contract=3、build_hash=0x26cd7396、desc_count=16、firmware=viewer2000、tick_hz=20000、capabilities=0x7f；`good_frames=1`、`tx_octets=49` | **验证 A 通过**。正确端口是 `/dev/tty.usbmodemCL6500011`；`...14` 不是本阶段 XDS110 UART backchannel。遗留：Scope2000 GUI 端重连截图/日志、ENUM 及后续 B-G 验证仍待跑 |

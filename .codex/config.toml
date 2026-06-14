@@ -1,0 +1,27 @@
+[mcp_servers.ccs-debug]
+command = "/Applications/ti/ccs2051/ccs/tools/node/node"
+args = [
+  "/Applications/ti/ccs2051/ccs/Code Composer Studio.app/Contents/Resources/app/plugins/ccs-ai/extension/dist/mcp-server-proxy.js",
+  "debug",
+]
+
+[mcp_servers.ccs-project]
+command = "/Applications/ti/ccs2051/ccs/tools/node/node"
+args = [
+  "/Applications/ti/ccs2051/ccs/Code Composer Studio.app/Contents/Resources/app/plugins/ccs-ai/extension/dist/mcp-server-proxy.js",
+  "project",
+]
+
+[mcp_servers.ccs-sysconfig]
+command = "/Applications/ti/ccs2051/ccs/tools/node/node"
+args = [
+  "/Applications/ti/ccs2051/ccs/Code Composer Studio.app/Contents/Resources/app/plugins/ccs-ai/extension/dist/mcp-server-proxy.js",
+  "sysconfig",
+]
+
+[mcp_servers.ccs-serial]
+command = "/Applications/ti/ccs2051/ccs/tools/node/node"
+args = [
+  "/Applications/ti/ccs2051/ccs/Code Composer Studio.app/Contents/Resources/app/plugins/ccs-ai/extension/dist/mcp-server-proxy.js",
+  "serial",
+]

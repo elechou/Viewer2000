@@ -77,11 +77,14 @@ void main(void)
     //   - CPU2 syscfg SCI 实例（SCIA + GPIO42/43 + 115200 8N1 + FIFO）双
     //     context 协同 → CPU1 board.c 出 SCIA pinmux + pad/qual，CPU2
     //     board.c 出 SCIA_BASE_init（reset/FIFO/SCI_setConfig/enableModule）
-    // CPU1 在引导本核前已完成 pinmux 与 CPUSEL→CPU2，本核此处的 SCIA 寄
-    // 存器写入有效。绕开 Board_init() 聚合入口，避免顺带拉进数百条 boot-
-    // master 专属 SysCtl_setPeripheralAccessControl/CPUSEL（对 CPU2 无效但
-    // 会撑爆 RAMGS4）；函数级 dead-strip 由 --gen_func_subsections=on 提供。
+    // CPU2 Board_init() 会先调 SYSCTL_init() 再调 SCI_init()；这里绕开
+    // Board_init() 聚合入口，因此必须保留最小本地 clock gate，否则后续
+    // SCIA_BASE_init() 对 SCICCR/BAUD 的写入会被外设时钟门控吞掉。
+    // 不调用完整 SYSCTL_init()，避免顺带拉进数百条 boot-master 专属
+    // SysCtl_setPeripheralAccessControl/CPUSEL（对 CPU2 无效但会撑爆 RAMGS4）；
+    // 函数级 dead-strip 由 --gen_func_subsections=on 提供。
     //
+    SysCtl_enablePeripheral(SYSCTL_PERIPH_CLK_SCIA);
     SCIA_BASE_init();
 
     //
