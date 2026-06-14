@@ -10,8 +10,8 @@
 // Phase 2 追加（路线图「时基证明 + 保护」）：
 //   5. 时基：ePWM1→ADC SOC→EOC ISR（v2k_timebase.c），g_v2k_tick 接管时间所有权
 //   6. 保护：TZ trip + 故障锁存状态机（v2k_fault.c），保护先于 PWM 上引脚就位
-// 主循环的 DEVICE_DELAY_US(1000) 自此降级为慢环/后台节拍（心跳、命令受理、
-// 闪灯）；控制时间一律以 ISR tick 为准（基本规则 5）。
+// Phase 3 后台采用普通前后台循环：主循环只等 g_v2k_tick 前进，再按 deadline
+// 服务共享平面请求。tick 只发布时间，不在 ISR 内执行后台工作。
 //
 // 注意：启动序列中的 IPC_sync 是 init 阶段的一次性会合，不属于
 // "控制核不得阻塞等待通信核"（基本规则 1）约束的运行时路径。
@@ -25,11 +25,11 @@
 #include "../common/v2k_planes.h"
 #include "v2k_timebase.h"
 #include "v2k_fault.h"
+#include "v2k_registry.h"
+#include "v2k_scope_runtime.h"
+#include "v2k_build_hash.h"
 
-// 固件 build hash：Phase 3.5 起由构建注入 git 短哈希（-D 定义），当前占位
-#ifndef V2K_BUILD_HASH
-#define V2K_BUILD_HASH 0u
-#endif
+extern void SetDBGIER(uint16_t dbgier);
 
 //-----------------------------------------------------------------------------
 // 共享内存实体（section → 物理区块的映射见 28p65x_generic_*_lnk_cpu1.cmd）
@@ -45,6 +45,29 @@ v2k_msg_1to2_t g_v2k_msg_1to2;
 //-----------------------------------------------------------------------------
 uint32_t g_ping_cnt;    // IPC ping-pong 完成轮数（持续递增 = 核间中断链路活着）
 uint16_t g_cpu2_alive;  // 1 = CPU2 心跳在走（CPU1 视角；0 仅置标志，不停机）
+
+#define V2K_BG_1MS_TICKS       (V2K_ISR_HZ / 1000u)
+#define V2K_BG_MIRROR_TICKS    (V2K_ISR_HZ / 10u)
+#define V2K_BG_MONITOR_TICKS   ((V2K_ISR_HZ * 256uL) / 1000uL)
+#define V2K_BG_LED_TICKS       (V2K_ISR_HZ / 2u)
+
+V2K_STATIC_ASSERT((V2K_ISR_HZ % 1000u) == 0u);
+V2K_STATIC_ASSERT((V2K_ISR_HZ % 10u) == 0u);
+V2K_STATIC_ASSERT(V2K_BG_MONITOR_TICKS > 0u);
+
+// 无符号减法使 tick 回绕仍然正确。后台落后多个周期时只执行一次并以 now
+// 重新定相，避免恢复后为“补课”连续执行低优先级任务。
+static uint16_t v2k_tick_due(v2k_tick_t now,
+                             v2k_tick_t *last,
+                             v2k_tick_t period)
+{
+    if ((v2k_tick_t)(now - *last) < period)
+    {
+        return 0u;
+    }
+    *last = now;
+    return 1u;
+}
 
 //-----------------------------------------------------------------------------
 // NMI 兜底（boot master 职责，AGENTS.md 双核分工）。
@@ -72,7 +95,7 @@ static __interrupt void v2k_nmi_isr(void)
 //-----------------------------------------------------------------------------
 static void v2k_assert_layout(void)
 {
-    if (((uint32_t)&g_v2k_gs0      != V2K_GS0_BASE) ||
+    if (((uint32_t)&g_v2k_gs0 != V2K_GS0_PLANE_BASE) ||
         ((uint32_t)&g_v2k_msg_1to2 != V2K_MSGRAM_1TO2_BASE))
     {
         for (;;) { ESTOP0; }
@@ -81,7 +104,11 @@ static void v2k_assert_layout(void)
 
 void main(void)
 {
-    uint32_t loop = 0u;
+    v2k_tick_t loop_tick = 0u;
+    v2k_tick_t heartbeat_tick = 0u;
+    v2k_tick_t mirror_tick = 0u;
+    v2k_tick_t led_tick = 0u;
+    v2k_tick_t monitor_tick = 0u;
     uint32_t cpu2_hb_last = 0u;
     uint16_t cpu2_hb_stale = 0u;
 
@@ -102,15 +129,11 @@ void main(void)
     // 不是线上序列化路径，不受"禁止 memcpy 上线"约束。
     //
     memset(&g_v2k_gs0, 0, sizeof(g_v2k_gs0));
-    g_v2k_gs0.desc_table.hdr.contract_ver       = V2K_CONTRACT_VER;
-    g_v2k_gs0.desc_table.hdr.entry_count        = 0u;  // 注册 API Phase 3 落地，先发空表
-    g_v2k_gs0.desc_table.hdr.build_hash         = V2K_BUILD_HASH;
-    g_v2k_gs0.desc_table.hdr.entry_stride_words = (uint16_t)sizeof(v2k_desc_entry_t);
-    g_v2k_gs0.desc_table.hdr.magic              = V2K_DESC_MAGIC;  // 最后写 = 发布
-
     memset(&g_v2k_msg_1to2, 0, sizeof(g_v2k_msg_1to2));
     g_v2k_msg_1to2.cpu1_status.contract_ver = V2K_CONTRACT_VER;
     g_v2k_msg_1to2.cpu1_status.sys_state    = V2K_STATE_INIT;
+    v2k_registry_init(V2K_BUILD_HASH);
+    v2k_scope_init();
 
     //
     // Phase 2 保护先行（一）：放行前抢先封锁。不依赖 device 初始化是否
@@ -140,7 +163,8 @@ void main(void)
     Interrupt_register(INT_NMI, &v2k_nmi_isr);
     SysCtl_enableNMIGlobalInterrupt();
     Interrupt_enable(INT_NMI);
-    EINT;   // PIE 内尚无使能源；为后续 CCS 实时模式与慢环中断打底
+    SetDBGIER(INTERRUPT_CPU_INT1); // ADCA1 所在 PIE Group 1 = time-critical
+    EINT;
     ERTM;
 
     //
@@ -174,26 +198,41 @@ void main(void)
 
     for (;;)
     {
-        DEVICE_DELAY_US(1000);  // ~1 kHz 后台/慢环节拍（非控制时间，控制 tick = g_v2k_tick）
-        loop++;
-
-        // 心跳与 ISR tick 快照发布（tick 唯一来源 = 控制 ISR，规则 5）
-        g_v2k_msg_1to2.cpu1_status.heartbeat++;
-        g_v2k_msg_1to2.cpu1_status.tick = g_v2k_tick;
-
-        // 命令受理 + 状态机同步（START/STOP/CLEAR_FAULT，见 v2k_fault.h）
-        v2k_fault_poll(&g_v2k_msg_1to2.cpu1_status);
-
-        // ping-pong：CPU2 ack 后 flag 不再 busy → 计一轮并续发
-        if (!IPC_isFlagBusyLtoR(IPC_CPU1_L_CPU2_R, IPC_FLAG0))
+        v2k_tick_t now = g_v2k_tick;
+        if (now == loop_tick)
         {
-            g_ping_cnt++;
-            IPC_setFlagLtoR(IPC_CPU1_L_CPU2_R, IPC_FLAG0);
+            continue;
+        }
+        loop_tick = now;
+
+        if (v2k_tick_due(now, &heartbeat_tick, V2K_BG_1MS_TICKS))
+        {
+            // 共享平面服务均为有限、可抢占的 run-to-completion 工作单元。
+            // 没有新 seq/request 时立即返回，不等待通信核或外设。集中在
+            // 约 1 ms poll point，避免空闲控制核持续读取 GS4/MSGRAM。
+            v2k_param_service();
+            v2k_scope_service();
+            v2k_scope_apply_ready();
+            v2k_scope_ccs_view_service();
+            v2k_fault_poll(&g_v2k_msg_1to2.cpu1_status);
+
+            g_v2k_msg_1to2.cpu1_status.heartbeat++;
+            g_v2k_msg_1to2.cpu1_status.tick = now;
+            // ping 是 1 ms 周期诊断，不是控制任务；已有未应答 ping 时直接跳过。
+            if (!IPC_isFlagBusyLtoR(IPC_CPU1_L_CPU2_R, IPC_FLAG0))
+            {
+                g_ping_cnt++;
+                IPC_setFlagLtoR(IPC_CPU1_L_CPU2_R, IPC_FLAG0);
+            }
         }
 
-        // CPU2 心跳监视（~每 256 ms 查一次；连续 4 次不前进判失联。
-        // 基本规则 1：失联只置 status_flags，控制核照跑）
-        if ((loop & 0xFFu) == 0u)
+        if (v2k_tick_due(now, &mirror_tick, V2K_BG_MIRROR_TICKS))
+        {
+            v2k_param_refresh_mirror();
+        }
+
+        // 每 256 ms 检查一次 CPU2 心跳；失联只置状态位，控制 ISR 照跑。
+        if (v2k_tick_due(now, &monitor_tick, V2K_BG_MONITOR_TICKS))
         {
             uint32_t hb = V2K_MSG_2TO1_RO->cpu2_status.heartbeat;
             if (hb == cpu2_hb_last)
@@ -216,8 +255,7 @@ void main(void)
             }
         }
 
-        // 闪灯 1 Hz（500 ms 翻转一次；低电平点亮）
-        if ((loop % 500u) == 0u)
+        if (v2k_tick_due(now, &led_tick, V2K_BG_LED_TICKS))
         {
             GPIO_togglePin(LED_CPU1_GPIO);
         }

@@ -28,41 +28,7 @@
 #include "driverlib.h"
 #include "device.h"
 #include "v2k_timebase.h"
-
-volatile v2k_tick_t g_v2k_tick;
-volatile uint16_t g_v2k_adc_a0;
-volatile uint16_t g_v2k_isr_lat;
-volatile uint16_t g_v2k_isr_lat_min = 0xFFFFu;
-volatile uint16_t g_v2k_isr_lat_max;
-volatile uint32_t g_v2k_isr_ovf_cnt;
-
-//-----------------------------------------------------------------------------
-// 控制 ISR（Phase 3 起由 L1 执行器接管固定序列；Phase 2 只做时基证明）
-// 探针引脚入口置位/出口清零：脉冲前沿位置 = 中断延迟，宽度 = ISR 耗时
-//-----------------------------------------------------------------------------
-static __interrupt void v2k_tb_isr(void)
-{
-    uint16_t lat;
-
-    GPIO_writePin(V2K_TB_PROBE_GPIO, 1u);
-    lat = (uint16_t)EPWM_getTimeBaseCounterValue(EPWM1_BASE); // SOC 点为 CTR=0，
-                                                              // 入口 TBCTR 即延迟
-    g_v2k_adc_a0 = ADC_readResult(ADCARESULT_BASE, ADC_SOC_NUMBER0);
-    g_v2k_tick++;
-
-    g_v2k_isr_lat = lat;
-    if (lat < g_v2k_isr_lat_min) { g_v2k_isr_lat_min = lat; }
-    if (lat > g_v2k_isr_lat_max) { g_v2k_isr_lat_max = lat; }
-
-    if (ADC_getInterruptOverflowStatus(ADCA_BASE, ADC_INT_NUMBER1))
-    {
-        g_v2k_isr_ovf_cnt++;
-        ADC_clearInterruptOverflowStatus(ADCA_BASE, ADC_INT_NUMBER1);
-    }
-    ADC_clearInterruptStatus(ADCA_BASE, ADC_INT_NUMBER1);
-    Interrupt_clearACKGroup(INTERRUPT_ACK_GROUP1);
-    GPIO_writePin(V2K_TB_PROBE_GPIO, 0u);
-}
+#include "v2k_executor.h"
 
 //-----------------------------------------------------------------------------
 // 契约自检：安全/正确关键配置从寄存器读回对账。上电即停 ESTOP0，不带病运行。
@@ -81,6 +47,7 @@ static void v2k_tb_check(void)
     uint16_t tzctl = HWREGH(EPWM1_BASE + EPWM_O_TZCTL);
     uint16_t tbctl = HWREGH(EPWM1_BASE + EPWM_O_TBCTL);
     uint16_t etsel = HWREGH(EPWM1_BASE + EPWM_O_ETSEL);
+    uint16_t timer_tcr = HWREGH(CPUTIMER1_BASE + CPUTIMER_O_TCR);
     uint16_t ediv  = HWREGH(CLKCFG_BASE + SYSCTL_O_PERCLKDIVSEL) &
                      SYSCTL_PERCLKDIVSEL_EPWMCLKDIV_M;
 
@@ -98,6 +65,14 @@ static void v2k_tb_check(void)
             != (uint16_t)V2K_TB_SOC_SRC)                            ||  // SOC 源（C 侧补写，TI bug）
         (((tbctl & EPWM_TBCTL_FREE_SOFT_M) >> EPWM_TBCTL_FREE_SOFT_S) < 2u) ||
                                                    // FREE_SOFT=1x 即 free run
+        (HWREG(CPUTIMER1_BASE + CPUTIMER_O_PRD) != 0xFFFFFFFFuL) ||
+        ((HWREGH(CPUTIMER1_BASE + CPUTIMER_O_TPR) &
+          CPUTIMER_TPR_TDDR_M) != 0u) ||
+        ((HWREGH(CPUTIMER1_BASE + CPUTIMER_O_TPRH) &
+          CPUTIMER_TPRH_TDDRH_M) != 0u) ||
+        ((timer_tcr & CPUTIMER_TCR_TSS) != 0u) ||
+        ((timer_tcr & CPUTIMER_TCR_TIE) != 0u) ||
+        ((timer_tcr & CPUTIMER_TCR_FREE) == 0u) ||
         // TBCLK 分频器 CLKDIV/HSPCLKDIV 必须都 /1：与 PERIOD 同决定 ISR 频率
         //（TBCLK = EPWMCLK/(HSPCLKDIV*CLKDIV)），但只在 syscfg 有源头、C 侧无镜像。
         // 漂成非 /1 则真实频率偏离而 PERIOD 仍 == V2K_TB_PRD：周期检查照过、频率
@@ -127,7 +102,7 @@ void v2k_tb_init(void)
 
     // ISR 所有权归 L1（规则：用户/工具不碰 ISR），注册不走 syscfg
     ADC_clearInterruptStatus(ADCA_BASE, ADC_INT_NUMBER1);
-    Interrupt_register(INT_ADCA1, &v2k_tb_isr);
+    Interrupt_register(INT_ADCA1, &v2k_executor_isr);
     Interrupt_enable(INT_ADCA1);
 }
 

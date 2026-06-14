@@ -8,8 +8,9 @@
 //   4. 闪灯 2 Hz（LED5 绿 = GPIO13，低电平点亮；pad 配置与 CSEL→CPU2 由
 //      CPU1 侧完成，本核只写数据寄存器——归属分配权在 boot master）
 //
-// CPU2 是事件驱动核，不设自己的节拍（AGENTS.md「驱动方式对称」）；Phase 1
-// 的 1 kHz 延时循环只是骨架占位，Phase 3.5 起改为 ISR 收事件 + 超级循环。
+// CPU2 不拥有控制时间：block 时间戳、采样纪元和控制调度都来自 CPU1。
+// Phase 3 临时保留一个本地低速后台心跳，用于证明通信核自身仍在运行；
+// Phase 3.5 接入 SCI 后再改成通信事件/timeout 驱动。
 //#############################################################################
 
 #include <string.h>
@@ -60,7 +61,7 @@ static void v2k_assert_layout(void)
 
 void main(void)
 {
-    uint32_t loop = 0u;
+    uint16_t led_count = 0u;
 
     Device_init();
     v2k_assert_layout();
@@ -106,12 +107,6 @@ void main(void)
 
     for (;;)
     {
-        DEVICE_DELAY_US(1000);  // ~1 kHz 骨架节拍（Phase 3.5 改事件驱动）
-        loop++;
-
-        // 心跳发布（CPU1 与 host 的活性判据）
-        g_v2k_msg_2to1.cpu2_status.heartbeat++;
-
         // ping-pong 应答：见 ping 即 ack
         if (IPC_isFlagBusyRtoL(IPC_CPU2_L_CPU1_R, IPC_FLAG0))
         {
@@ -119,9 +114,16 @@ void main(void)
             IPC_ackFlagRtoL(IPC_CPU2_L_CPU1_R, IPC_FLAG0);
         }
 
-        // 闪灯 2 Hz（250 ms 翻转一次；与 CPU1 的 1 Hz 肉眼可区分）
-        if ((loop % 250u) == 0u)
+        // 临时本地心跳：不参与控制时间或采样时间戳，只证明 CPU2 主循环活着。
+        // 忙等不关中断；Phase 3.5 的 SCI/EtherCAT 事件源就位后替换掉它。
+        DEVICE_DELAY_US(1000);
+        g_v2k_msg_2to1.cpu2_status.heartbeat++;
+        led_count++;
+
+        // 250 个本地心跳翻转一次，约 2 Hz；只用于肉眼诊断。
+        if (led_count >= 250u)
         {
+            led_count = 0u;
             GPIO_togglePin(V2K_LED_CPU2_PIN);
         }
     }

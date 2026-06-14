@@ -65,6 +65,13 @@ extern volatile uint16_t g_v2k_isr_lat_max;// 历史最大。注意含 ADC 采�
                                            // 偏置，看 min/max 散布不看绝对值；
                                            // 绝对延迟由示波器 GPIO 法实测
 extern volatile uint32_t g_v2k_isr_ovf_cnt;// ADC INT overflow 计数（≠0 = ISR 超时）
+extern volatile uint32_t g_v2k_isr_cycles; // CPUTIMER1 测得的最近 ISR 周期数
+extern volatile uint32_t g_v2k_isr_cycles_max;
+extern volatile uint32_t g_v2k_control_cycles; // acquire→apply（含 user_step）
+extern volatile uint32_t g_v2k_control_cycles_max;
+extern volatile uint32_t g_v2k_scope_cycles;   // scope epilogue 单独预算
+extern volatile uint32_t g_v2k_scope_cycles_max;
+extern volatile uint32_t g_v2k_isr_budget_violation_cnt;
 
 void v2k_tb_init(void);    // EPWMCLKDIV=/1 + 契约自检 + 占空比 + ISR 注册
 void v2k_tb_start(void);   // TBCLKSYNC 放行（保护与自检全部就位后调用）
