@@ -136,7 +136,8 @@ off sz 字段
 
 ### 4.1 HELLO（0x01 / 0x81）
 
-请求 payload 空。响应（28 octets）：
+请求 payload 空。响应基础前缀 28 octets，wire v1 当前响应为 36 octets；
+新增字段只允许追加在尾部：
 
 ```
 0   2  proto_ver     = V2K_WIRE_VER（host 不符即断开，提示固件/上位机版本错配）
@@ -144,12 +145,29 @@ off sz 字段
 4   4  build_hash    固件 git 短哈希（§5.1 重枚举依据）
 8   2  desc_count    描述符总数
 10  2  reserved
-12  16 fw_name       ASCII，如 "v2k-foc-demo"
+12  16 fw_name       ASCII，如 "viewer2000"
+28  4  tick_hz       CPU1 ISR tick 频率；block tick 换算为秒的唯一依据
+32  4  capabilities  设备能力位
 ```
+
+`capabilities`（只追加，不复用）：
+
+| bit | 名称 | 语义 |
+|---:|---|---|
+| 0 | ENUM | 描述符枚举 |
+| 1 | CAL | 参数读写与原子提交 |
+| 2 | DAQ_LIVE | Live 连续流 |
+| 3 | DAQ_SNAPSHOT | 触发 Snapshot |
+| 4 | PRE_TRIGGER | Snapshot pre-trigger |
+| 5 | SYSTEM_CMD | Start / Stop / Clear Fault |
+| 6 | NATIVE_BLOCK | 原生位宽 `ScopeBlock` |
+
+旧解析器可只读 28-octet 前缀；新解析器若收到较短响应，尾部能力按 0 处理。
 
 ### 4.2 STATUS（0x02 / 0x82）
 
-请求 payload 空。响应（36 octets）——兼任链路心跳（host 周期轮询）：
+请求 payload 空。响应基础前缀 36 octets，wire v1 当前响应为 44 octets；
+兼任链路心跳（host 周期轮询）：
 
 ```
 0   2  sys_state      V2K_STATE_*（v2k_command.h）
@@ -164,6 +182,9 @@ off sz 字段
 26  2  cal_fail_idx
 28  4  build_hash     会话中检测固件热更换
 32  4  scope_mode     4 组各 1 octet：V2K_SCOPE_*（组 id = octet 下标）
+36  4  cmd_ack_seq     CPU1 已执行的最大系统命令序号
+40  2  cmd_result      V2K_CMDR_*（对应 cmd_ack_seq）
+42  2  reserved
 ```
 
 ### 4.3 ENUM（0x03 / 0x83）
@@ -294,7 +315,7 @@ EtherCAT 档 N 由单帧过程数据上限（~1486 octets）在 Phase 6 定
 请求（8 octets）：`{0:2 cmd_code(V2K_CMD_*), 2:2 arg0, 4:4 arg1}`
 CPU2 检查 mailbox 空闲（`cmd_seq == ack_seq`）→ 写命令 mailbox，
 回 ACK(OK, data=cmd_seq)；mailbox 忙 → ACK(BUSY)，host 稍后重试。
-执行结果经 STATUS 的 `sys_state/cmd_result` 确认。
+执行结果经 STATUS 的 `cmd_ack_seq/cmd_result/sys_state` 确认。
 
 ## 5. 服务语义
 
@@ -356,10 +377,11 @@ block 顺序由 host 按 `start_tick` 重建。
 ### 5.4 错误处理与重同步
 
 - 损坏帧静默丢弃（§3.1）。host 对每请求设超时（建议 100 ms）+ 重发。
-- **全部请求幂等**：重复 CAL_WRITE 覆盖同 addr 暂存条目；重复 COMMIT
-  被 `commit_seq` 对账吸收；重复 DAQ_BIND 整区覆盖；重复 BLOCK_REQ 返回
-  新数据（丢响应 = 丢块，由 block_seq 断口机制兜底，符合基本规则 1 的
-  "丢了就丢了"）。
+- CPU2 缓存上一条已编码响应；host 以相同 `(msg_type, seq)` 超时重发时直接
+  重放，不再次执行 CAL_COMMIT、CMD、DAQ_BIND 或消费 BLOCK。缓存只复用当前
+  TX 缓冲，不增加第二份 1 KB 级缓冲。
+- 服务本身仍保持可安全重试：重复 CAL_WRITE 覆盖同 addr 暂存条目；
+  DAQ_BIND 整区覆盖。host 只有在放弃旧请求并使用新 seq 后，才视为新操作。
 - host 凭帧 seq 回显丢弃迟到/错配响应。
 - 失步恢复：host 发任意请求，固件解码器自动在 0x00 边界重同步。
 
@@ -421,51 +443,40 @@ Phase 3.5+）；.out 与固件的配对靠 build_hash 双向校验；未注册�
 兜底。换得：学生零注册代码、零命名负担、任意 struct 成员/数组元素可观测，
 且通道选择完全运行时化（不重烧）。
 
-## 附录 B：上位机 `DataSource` trait 草案（Phase 3.5 落地）
+## 附录 B：Scope2000 `DataSource` 边界（Phase 3.5）
 
-目标：既有 Rust + egui 前端与中立数据模型复用，通讯层拆为三个数据源。
-现有 `connection/mod.rs` 的 `Command`/`HardwareEvent` 已是事实边界，
-拆分 = 中立化命名 + 把兼容协议细节封装在 `CompatSource` 内部。
+Scope2000 的原生实现是 `V2kSource`，内部严格分成服务语义、消息 codec 与
+byte-stream transport 三层。Phase 3.5 transport = SCI；Phase 6 增加
+EtherCAT transport 时，不改变 GUI 数据模型和服务命令。
 
 ```rust
-/// 中立命令（GUI → 数据源）
-/// VarRef = 变量引用 { addr: u32, ty: VarType }——来源由 GUI 决定：
-/// 描述符表枚举（平台量）或 .out/DWARF 符号树（应用变量），源内部不区分。
 pub enum SourceCommand {
-    Connect(String), Disconnect,
-    Enumerate,                                  // V2k: ENUM(平台量); Compat: 解析兼容格式
-    WriteParams(Vec<(VarRef, f64)>),            // 暂存（V2k: CAL_WRITE 按地址）
-    CommitParams,                               // V2k: CAL_COMMIT; Compat: 适配兼容写入
-    ReadValues { ids: Vec<VarRef> },            // V2k: CAL_READ(平台镜像)/慢速组绑定
-    BindChannels { group: u8, ch: Vec<VarRef> },// V2k: DAQ_BIND; Compat: 适配兼容通道选择
-    ScopeConfig(ScopeConfig),                   // V2k: DAQ_CTRL; Compat: 适配兼容示波控制
-    RequestBlocks { group: u8, max: u8 },       // V2k 专属拉流（Compat 可内部自驱）
-    SystemCmd(SysCmd),                          // Start/Stop/ClearFault ↔ execute/stop
+    Connect(TransportEndpoint),
+    Disconnect,
+    WriteParams(Vec<ParamWrite>),
+    CommitParams,
+    ReadValues { start: u16, count: u8 },
+    BindChannels { group: u8, channels: Vec<VarRef> },
+    ConfigureScope(ScopeConfig),
+    SystemCommand(SystemCommand),
 }
 
-/// 样本原生宽度无损上线；物理量换算（scale/offset）是 GUI 侧显示元数据，
-/// 由前端按变量来源（描述符表字段 / 用户在符号树上配置）自行管理，不下发。
-
-/// 中立事件（数据源 → GUI）
 pub enum SourceEvent {
-    Connected(DeviceInfo),                      // ← HELLO（build_hash, fw_name）
-    Disconnected, Error(String),
-    Descriptors(Vec<VarDescriptor>),            // ← ENUM / .def 解析结果
-    Status(DeviceStatus),                       // ← STATUS / status_poll(28)
-    ParamsApplied { seq: u32, result: CalResult },
-    Values { seq: u32, vals: Vec<(VarId, f64)> },
-    Blocks(Vec<ScopeBlock>),                    // ← BLOCK_DATA / WaveRound 切块
-    ScopeStateChanged { group: u8, mode: ScopeMode },
+    Connected(DeviceInfo),
+    Descriptors(Vec<VarDescriptor>),
+    Status(DeviceStatus),
+    Blocks(Vec<ScopeBlock>),
+    StreamGap { group: u8, expected: u16, received: u16 },
+    DeviceChanged { old_hash: u32, new_hash: u32 },
+    // 参数、绑定、模式、错误与日志事件略
 }
-
-pub trait DataSource: Send {
-    fn spawn(self: Box<Self>, rt: &tokio::runtime::Runtime)
-        -> (mpsc::UnboundedSender<SourceCommand>,
-            mpsc::UnboundedReceiver<SourceEvent>);
-}
-// 实现: SimSource(L2 FFI) / CompatSource(可选兼容适配器) / V2kSource(本 spec)
 ```
 
-兼容数据源负责把轮询结果适配为 `ReadValues` 事件，并把批次波形转换为
-`Blocks` 增量交付（group=0, start_tick 合成）。固件烧写暂留为兼容适配器
-扩展，V2k 对应 0x60 预留号段实现后再中立化。
+`ScopeBlock` 保留 `start_tick/block_seq/bind_seq/stride_octets` 与原生
+`samples: Vec<u8>`；只有绘图或 CSV 导出边界才按绑定类型展开并应用
+`scale/offset`，不在 codec 或 source 热路径统一转换为 `f64`。
+
+旧设备兼容不实现为 Scope2000 内部专用数据源。未来独立 `LegacyBridge`
+进程负责旧协议，另一侧通过通用本地 byte-stream transport 暴露规范化的
+Viewer2000 消息语义，并用 capability 位声明缺失能力。桥接器可合成
+tick/序号并显式报告精度限制，但不得定义、削减或拖慢 `V2kSource` 原生路径。

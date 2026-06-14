@@ -10,3 +10,22 @@
  * Import the modules used in this configuration.
  */
 const device_support = scripting.addModule("/driverlib/device_support.js");
+const sci            = scripting.addModule("/driverlib/sci.js", {}, false);
+const sci1           = sci.addInstance();
+
+/**
+ * Write custom configuration values to the imported modules.
+ */
+sci1.$hardware    = system.deviceData.board.components.XDS_UART.subComponents.XDS_SCI_INST1;
+sci1.$name        = "SCIA_BASE";
+sci1.rxQual.$name = "myGPIOQUAL0";
+sci1.txQual.$name = "myGPIOQUAL1";
+
+/**
+ * Pinmux solution for unlocked pins/peripherals. This ensures that minor changes to the automatic solver in a future
+ * version of the tool will not impact the pinmux you originally saw.  These lines can be completely deleted in order to
+ * re-solve from scratch.
+ */
+sci1.sci.$suggestSolution           = "SCIA";
+sci1.sci.sci_rxPin.$suggestSolution = "boosterpack1.3";
+sci1.sci.sci_txPin.$suggestSolution = "boosterpack1.4";

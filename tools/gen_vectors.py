@@ -138,16 +138,17 @@ def build_cases():
 
     # ---- 4.1 HELLO ----
     add("hello_req", "HELLO_REQ：空 payload", 0x01, 0x0001, b"")
-    add("hello_resp", "HELLO_RESP：proto/contract 版本 + build_hash + 固件名",
+    add("hello_resp", "HELLO_RESP：版本、build_hash、固件名、tick_hz 与能力位",
         0x81, 0x0001,
-        struct.pack("<HHIHH16s", 1, 2, BUILD_HASH, 10, 0, b"v2k-foc-demo"))
+        struct.pack("<HHIHH16sII", 1, 3, BUILD_HASH, 10, 0,
+                    b"viewer2000", 20000, 0x7F))
 
     # ---- 4.2 STATUS ----
     add("status_req", "STATUS_REQ：空 payload（兼任链路心跳）", 0x02, 0x0002, b"")
     add("status_resp",
         "STATUS_RESP：RUNNING 态，组 0=LIVE 其余 OFF",
         0x82, 0x0002,
-        struct.pack("<HHHHIIIIHHI4B",
+        struct.pack("<HHHHIIIIHHI4BIHH",
                     2,            # sys_state = RUNNING
                     0,            # fault_code
                     0,            # status_flags
@@ -159,7 +160,10 @@ def build_cases():
                     0,            # cal_result = OK
                     0,            # cal_fail_idx
                     BUILD_HASH,
-                    1, 0, 0, 0))  # scope_mode[4]: LIVE,OFF,OFF,OFF
+                    1, 0, 0, 0,   # scope_mode[4]: LIVE,OFF,OFF,OFF
+                    9,            # cmd_ack_seq
+                    0,            # cmd_result = OK
+                    0))           # reserved
 
     # ---- 4.3 ENUM ----
     add("enum_req", "ENUM_REQ：从 0 开始要 8 条", 0x03, 0x0003,

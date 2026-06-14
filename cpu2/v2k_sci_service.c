@@ -1,0 +1,906 @@
+//=============================================================================
+// v2k_sci_service.c - Viewer2000 wire v1 over SCIA/XDS110 VCP
+//
+// RX ISR 只把 8-bit octet 搬进本地 SPSC 环；COBS/CRC、消息解释、共享平面
+// 服务与 TX 均在 CPU2 超级循环执行。所有线上字段显式序列化，禁止 struct
+// memcpy；C28x 的 uint16_t 缓冲只使用低 8 bit 保存 octet。
+//=============================================================================
+
+#include <string.h>
+#include "driverlib.h"
+#include "device.h"
+#include "../common/v2k_planes.h"
+#include "../common/v2k_scope_consumer.h"
+#include "v2k_sci_service.h"
+
+#define V2K_MAX_PAYLOAD       V2K_WIRE_MAX_PAYLOAD
+#define V2K_RAW_MAX           (7u + V2K_MAX_PAYLOAD + 4u)
+#define V2K_WIRE_MAX          (V2K_RAW_MAX + (V2K_RAW_MAX / 254u) + 2u)
+#define V2K_RX_FRAME_WORDS    256u
+#define V2K_RX_RING_WORDS     512u
+#define V2K_RX_RING_MASK      (V2K_RX_RING_WORDS - 1u)
+#define V2K_LINK_TIMEOUT_MS   2000uL
+
+#define V2K_MSG_HELLO         0x01u
+#define V2K_MSG_STATUS        0x02u
+#define V2K_MSG_ENUM          0x03u
+#define V2K_MSG_CAL_WRITE     0x10u
+#define V2K_MSG_CAL_COMMIT    0x11u
+#define V2K_MSG_CAL_READ      0x12u
+#define V2K_MSG_DAQ_CTRL      0x20u
+#define V2K_MSG_BLOCK_REQ     0x21u
+#define V2K_MSG_DAQ_BIND      0x22u
+#define V2K_MSG_CMD           0x30u
+
+#define V2K_ACK_OK            0u
+#define V2K_ACK_BAD_PARAM     1u
+#define V2K_ACK_BUSY          2u
+#define V2K_ACK_BAD_STATE     3u
+#define V2K_ACK_UNSUPPORTED   4u
+#define V2K_ACK_INTERNAL      5u
+
+extern v2k_gs4_plane_t g_v2k_gs4;
+extern v2k_msg_2to1_t g_v2k_msg_2to1;
+
+static volatile uint16_t s_rx_ring[V2K_RX_RING_WORDS];
+static volatile uint16_t s_rx_wr;
+static volatile uint16_t s_rx_rd;
+
+// 当前最大请求是 16 条 CAL_WRITE，共 205 raw octets；响应仍允许 1024 payload。
+// C28x 每个 octet 占一个 16-bit word，收发缓冲必须分开核算。
+static uint16_t s_rx_frame[V2K_RX_FRAME_WORDS];
+static uint16_t s_rx_frame_len;
+static uint16_t s_rx_discard;
+
+static uint16_t s_tx_frame[V2K_WIRE_MAX];
+static uint16_t s_tx_len;
+static uint16_t s_tx_pos;
+static uint16_t s_last_req_type;
+static uint16_t s_last_req_seq;
+static uint16_t s_have_last_response;
+
+static uint16_t s_raw[V2K_RAW_MAX];
+static uint16_t s_snapshot_state_seq[V2K_SCOPE_MAX_GROUPS];
+static uint32_t s_last_valid_heartbeat;
+static uint32_t s_cal_staged_commit_seq;
+
+volatile uint32_t g_v2k_sci_rx_octets;
+volatile uint32_t g_v2k_sci_tx_octets;
+volatile uint32_t g_v2k_sci_rx_overflow;
+volatile uint32_t g_v2k_sci_bad_frames;
+volatile uint32_t g_v2k_sci_good_frames;
+
+static uint16_t v2k_get_u16(const uint16_t *buf, uint16_t off)
+{
+    return (uint16_t)((buf[off] & 0xFFu) |
+                      ((buf[(uint16_t)(off + 1u)] & 0xFFu) << 8u));
+}
+
+static uint32_t v2k_get_u32(const uint16_t *buf, uint16_t off)
+{
+    uint32_t lo = v2k_get_u16(buf, off);
+    uint32_t hi = v2k_get_u16(buf, (uint16_t)(off + 2u));
+    return lo | (hi << 16u);
+}
+
+static void v2k_put_u16(uint16_t *buf, uint16_t off, uint16_t value)
+{
+    buf[off] = value & 0xFFu;
+    buf[(uint16_t)(off + 1u)] = (value >> 8u) & 0xFFu;
+}
+
+static void v2k_put_u32(uint16_t *buf, uint16_t off, uint32_t value)
+{
+    v2k_put_u16(buf, off, (uint16_t)value);
+    v2k_put_u16(buf, (uint16_t)(off + 2u), (uint16_t)(value >> 16u));
+}
+
+static uint32_t v2k_float_bits(float value)
+{
+    union {
+        float f32;
+        uint32_t u32;
+    } bits;
+    bits.f32 = value;
+    return bits.u32;
+}
+
+static uint32_t v2k_crc32c(const uint16_t *buf, uint16_t len)
+{
+    uint16_t i;
+    uint16_t bit;
+    uint32_t crc = 0xFFFFFFFFuL;
+    for (i = 0u; i < len; i++)
+    {
+        crc ^= (uint32_t)(buf[i] & 0xFFu);
+        for (bit = 0u; bit < 8u; bit++)
+        {
+            crc = (crc >> 1u) ^
+                  ((crc & 1u) ? 0x82F63B78uL : 0uL);
+        }
+    }
+    return crc ^ 0xFFFFFFFFuL;
+}
+
+static uint16_t v2k_cobs_decode_in_place(uint16_t *buf, uint16_t len)
+{
+    uint16_t read = 0u;
+    uint16_t write = 0u;
+    while (read < len)
+    {
+        uint16_t i;
+        uint16_t code = buf[read++] & 0xFFu;
+        if (code == 0u)
+        {
+            return 0u;
+        }
+        for (i = 1u; i < code; i++)
+        {
+            if (read >= len)
+            {
+                return 0u;
+            }
+            buf[write++] = buf[read++] & 0xFFu;
+        }
+        if ((code != 0xFFu) && (read < len))
+        {
+            buf[write++] = 0u;
+        }
+    }
+    return write;
+}
+
+static uint16_t v2k_cobs_encode(const uint16_t *src, uint16_t len,
+                                uint16_t *dst, uint16_t cap)
+{
+    uint16_t read;
+    uint16_t write = 1u;
+    uint16_t code_pos = 0u;
+    uint16_t code = 1u;
+    if (cap < 2u)
+    {
+        return 0u;
+    }
+    for (read = 0u; read < len; read++)
+    {
+        uint16_t octet = src[read] & 0xFFu;
+        if (octet == 0u)
+        {
+            dst[code_pos] = code;
+            code_pos = write++;
+            code = 1u;
+        }
+        else
+        {
+            if (write >= cap)
+            {
+                return 0u;
+            }
+            dst[write++] = octet;
+            code++;
+            if (code == 0xFFu)
+            {
+                dst[code_pos] = code;
+                code_pos = write++;
+                code = 1u;
+            }
+        }
+    }
+    if (write >= cap)
+    {
+        return 0u;
+    }
+    dst[code_pos] = code;
+    dst[write++] = 0u;
+    return write;
+}
+
+static uint16_t v2k_response_begin(uint16_t msg_type, uint16_t seq)
+{
+    s_raw[0] = V2K_WIRE_VER_MAGIC;
+    s_raw[1] = (msg_type | 0x80u) & 0xFFu;
+    s_raw[2] = 0u;
+    v2k_put_u16(s_raw, 3u, seq);
+    v2k_put_u16(s_raw, 5u, 0u);
+    return 7u;
+}
+
+static void v2k_response_send(uint16_t payload_len)
+{
+    uint16_t raw_len;
+    uint32_t crc;
+    if ((payload_len > V2K_MAX_PAYLOAD) || (s_tx_pos != s_tx_len))
+    {
+        return;
+    }
+    v2k_put_u16(s_raw, 5u, payload_len);
+    raw_len = (uint16_t)(7u + payload_len);
+    crc = v2k_crc32c(s_raw, raw_len);
+    v2k_put_u32(s_raw, raw_len, crc);
+    raw_len = (uint16_t)(raw_len + 4u);
+    s_tx_len = v2k_cobs_encode(s_raw, raw_len, s_tx_frame, V2K_WIRE_MAX);
+    s_tx_pos = 0u;
+    if (s_tx_len != 0u)
+    {
+        s_last_req_type = s_raw[1] & 0x7Fu;
+        s_last_req_seq = v2k_get_u16(s_raw, 3u);
+        s_have_last_response = 1u;
+    }
+}
+
+static void v2k_send_ack(uint16_t request_type, uint16_t seq,
+                         uint16_t status, uint32_t data)
+{
+    uint16_t off = v2k_response_begin(request_type, seq);
+    s_raw[off++] = status & 0xFFu;
+    s_raw[off++] = request_type & 0xFFu;
+    v2k_put_u16(s_raw, off, 0u);
+    off = (uint16_t)(off + 2u);
+    v2k_put_u32(s_raw, off, data);
+    off = (uint16_t)(off + 4u);
+    v2k_response_send((uint16_t)(off - 7u));
+}
+
+static void v2k_handle_hello(uint16_t seq)
+{
+    static const char fw_name[16] = "viewer2000";
+    uint16_t i;
+    uint16_t off = v2k_response_begin(V2K_MSG_HELLO, seq);
+    v2k_put_u16(s_raw, off, V2K_WIRE_VER);
+    v2k_put_u16(s_raw, (uint16_t)(off + 2u), V2K_CONTRACT_VER);
+    v2k_put_u32(s_raw, (uint16_t)(off + 4u),
+                V2K_GS0_RO->desc_table.hdr.build_hash);
+    v2k_put_u16(s_raw, (uint16_t)(off + 8u),
+                V2K_GS0_RO->desc_table.hdr.entry_count);
+    v2k_put_u16(s_raw, (uint16_t)(off + 10u), 0u);
+    for (i = 0u; i < 16u; i++)
+    {
+        s_raw[(uint16_t)(off + 12u + i)] = ((uint16_t)fw_name[i]) & 0xFFu;
+    }
+    v2k_put_u32(s_raw, (uint16_t)(off + 28u),
+                V2K_MSG_1TO2_RO->cpu1_status.tick_hz);
+    v2k_put_u32(s_raw, (uint16_t)(off + 32u),
+                V2K_CAPABILITIES_NATIVE);
+    v2k_response_send(36u);
+}
+
+static void v2k_handle_status(uint16_t seq)
+{
+    const volatile v2k_cpu1_status_t *cpu1 =
+        &V2K_MSG_1TO2_RO->cpu1_status;
+    const volatile v2k_param_status_t *cal = &V2K_GS0_RO->param_status;
+    uint16_t group;
+    uint16_t off = v2k_response_begin(V2K_MSG_STATUS, seq);
+    v2k_put_u16(s_raw, off, cpu1->sys_state);
+    v2k_put_u16(s_raw, (uint16_t)(off + 2u), cpu1->fault_code);
+    v2k_put_u16(s_raw, (uint16_t)(off + 4u), cpu1->status_flags);
+    v2k_put_u16(s_raw, (uint16_t)(off + 6u), cal->unguarded_cnt);
+    v2k_put_u32(s_raw, (uint16_t)(off + 8u), cpu1->tick);
+    v2k_put_u32(s_raw, (uint16_t)(off + 12u), cpu1->heartbeat);
+    v2k_put_u32(s_raw, (uint16_t)(off + 16u),
+                g_v2k_msg_2to1.cpu2_status.heartbeat);
+    v2k_put_u32(s_raw, (uint16_t)(off + 20u), cal->applied_seq);
+    v2k_put_u16(s_raw, (uint16_t)(off + 24u), cal->result);
+    v2k_put_u16(s_raw, (uint16_t)(off + 26u), cal->fail_idx);
+    v2k_put_u32(s_raw, (uint16_t)(off + 28u),
+                V2K_GS0_RO->desc_table.hdr.build_hash);
+    for (group = 0u; group < V2K_SCOPE_MAX_GROUPS; group++)
+    {
+        s_raw[(uint16_t)(off + 32u + group)] =
+            V2K_GS0_RO->scope_prod[group].mode & 0xFFu;
+    }
+    v2k_put_u32(s_raw, (uint16_t)(off + 36u), cpu1->ack_seq);
+    v2k_put_u16(s_raw, (uint16_t)(off + 40u), cpu1->cmd_result);
+    v2k_put_u16(s_raw, (uint16_t)(off + 42u), 0u);
+    v2k_response_send(44u);
+}
+
+static void v2k_handle_enum(uint16_t seq, const uint16_t *payload,
+                            uint16_t payload_len)
+{
+    const volatile v2k_desc_table_t *table = &V2K_GS0_RO->desc_table;
+    uint16_t start;
+    uint16_t max_count;
+    uint16_t count;
+    uint16_t i;
+    uint16_t off;
+    if (payload_len != 4u)
+    {
+        v2k_send_ack(V2K_MSG_ENUM, seq, V2K_ACK_BAD_PARAM, 0uL);
+        return;
+    }
+    start = v2k_get_u16(payload, 0u);
+    max_count = payload[2] & 0xFFu;
+    if ((max_count == 0u) || (max_count > 8u))
+    {
+        v2k_send_ack(V2K_MSG_ENUM, seq, V2K_ACK_BAD_PARAM, 0uL);
+        return;
+    }
+    count = (start < table->hdr.entry_count) ?
+            (uint16_t)(table->hdr.entry_count - start) : 0u;
+    if (count > max_count)
+    {
+        count = max_count;
+    }
+    off = v2k_response_begin(V2K_MSG_ENUM, seq);
+    v2k_put_u16(s_raw, off, table->hdr.entry_count);
+    v2k_put_u16(s_raw, (uint16_t)(off + 2u), start);
+    s_raw[(uint16_t)(off + 4u)] = count;
+    s_raw[(uint16_t)(off + 5u)] = 0u;
+    off = (uint16_t)(off + 6u);
+    for (i = 0u; i < count; i++)
+    {
+        const volatile v2k_desc_entry_t *entry =
+            &table->entries[(uint16_t)(start + i)];
+        uint16_t n;
+        for (n = 0u; n < V2K_NAME_LEN; n++)
+        {
+            s_raw[off++] = ((uint16_t)entry->name[n]) & 0xFFu;
+        }
+        v2k_put_u16(s_raw, off, entry->type);
+        v2k_put_u16(s_raw, (uint16_t)(off + 2u), entry->kind);
+        v2k_put_u32(s_raw, (uint16_t)(off + 4u), entry->addr);
+        v2k_put_u32(s_raw, (uint16_t)(off + 8u),
+                    v2k_float_bits(entry->min_val));
+        v2k_put_u32(s_raw, (uint16_t)(off + 12u),
+                    v2k_float_bits(entry->max_val));
+        v2k_put_u32(s_raw, (uint16_t)(off + 16u),
+                    v2k_float_bits(entry->scale));
+        v2k_put_u32(s_raw, (uint16_t)(off + 20u),
+                    v2k_float_bits(entry->offset));
+        v2k_put_u16(s_raw, (uint16_t)(off + 24u), entry->prescaler);
+        v2k_put_u16(s_raw, (uint16_t)(off + 26u), entry->group);
+        off = (uint16_t)(off + 28u);
+    }
+    v2k_response_send((uint16_t)(off - 7u));
+}
+
+static int16_t v2k_find_staged(uint32_t addr)
+{
+    uint16_t i;
+    for (i = 0u; i < g_v2k_gs4.param_shadow.count; i++)
+    {
+        if (g_v2k_gs4.param_shadow.writes[i].addr == addr)
+        {
+            return (int16_t)i;
+        }
+    }
+    return -1;
+}
+
+static void v2k_handle_cal_write(uint16_t seq, const uint16_t *payload,
+                                 uint16_t payload_len)
+{
+    uint16_t count;
+    uint16_t i;
+    if (payload_len < 2u)
+    {
+        v2k_send_ack(V2K_MSG_CAL_WRITE, seq, V2K_ACK_BAD_PARAM, 0uL);
+        return;
+    }
+    if (g_v2k_gs4.param_shadow.commit_seq !=
+        V2K_GS0_RO->param_status.applied_seq)
+    {
+        v2k_send_ack(V2K_MSG_CAL_WRITE, seq, V2K_ACK_BUSY, 0uL);
+        return;
+    }
+    if (s_cal_staged_commit_seq != g_v2k_gs4.param_shadow.commit_seq)
+    {
+        g_v2k_gs4.param_shadow.count = 0u;
+        s_cal_staged_commit_seq = g_v2k_gs4.param_shadow.commit_seq;
+    }
+    count = payload[0] & 0xFFu;
+    if ((count == 0u) || (payload_len != (uint16_t)(2u + 12u * count)))
+    {
+        v2k_send_ack(V2K_MSG_CAL_WRITE, seq, V2K_ACK_BAD_PARAM, 0uL);
+        return;
+    }
+    for (i = 0u; i < count; i++)
+    {
+        uint16_t in = (uint16_t)(2u + 12u * i);
+        uint32_t addr = v2k_get_u32(payload, in);
+        int16_t existing = v2k_find_staged(addr);
+        uint16_t dst;
+        if (existing >= 0)
+        {
+            dst = (uint16_t)existing;
+        }
+        else
+        {
+            if (g_v2k_gs4.param_shadow.count >= V2K_PARAM_BATCH_MAX)
+            {
+                v2k_send_ack(V2K_MSG_CAL_WRITE, seq,
+                             V2K_ACK_BAD_PARAM, 0uL);
+                return;
+            }
+            dst = g_v2k_gs4.param_shadow.count++;
+        }
+        g_v2k_gs4.param_shadow.writes[dst].addr = addr;
+        g_v2k_gs4.param_shadow.writes[dst].value_bits =
+            v2k_get_u32(payload, (uint16_t)(in + 4u));
+        g_v2k_gs4.param_shadow.writes[dst].type =
+            v2k_get_u16(payload, (uint16_t)(in + 8u));
+        g_v2k_gs4.param_shadow.writes[dst].reserved = 0u;
+    }
+    v2k_send_ack(V2K_MSG_CAL_WRITE, seq, V2K_ACK_OK, 0uL);
+}
+
+static void v2k_handle_cal_commit(uint16_t seq, uint16_t payload_len)
+{
+    uint32_t commit_seq;
+    if ((payload_len != 0u) || (g_v2k_gs4.param_shadow.count == 0u))
+    {
+        v2k_send_ack(V2K_MSG_CAL_COMMIT, seq, V2K_ACK_BAD_PARAM, 0uL);
+        return;
+    }
+    if (g_v2k_gs4.param_shadow.commit_seq !=
+        V2K_GS0_RO->param_status.applied_seq)
+    {
+        v2k_send_ack(V2K_MSG_CAL_COMMIT, seq, V2K_ACK_BUSY, 0uL);
+        return;
+    }
+    commit_seq = g_v2k_gs4.param_shadow.commit_seq + 1uL;
+    g_v2k_gs4.param_shadow.commit_seq = commit_seq;
+    v2k_send_ack(V2K_MSG_CAL_COMMIT, seq, V2K_ACK_OK, commit_seq);
+}
+
+static void v2k_handle_cal_read(uint16_t seq, const uint16_t *payload,
+                                uint16_t payload_len)
+{
+    const volatile v2k_param_status_t *cal = &V2K_GS0_RO->param_status;
+    uint16_t start;
+    uint16_t count;
+    uint16_t i;
+    uint16_t off;
+    if (payload_len != 4u)
+    {
+        v2k_send_ack(V2K_MSG_CAL_READ, seq, V2K_ACK_BAD_PARAM, 0uL);
+        return;
+    }
+    start = v2k_get_u16(payload, 0u);
+    count = payload[2] & 0xFFu;
+    if ((count > 32u) || ((uint32_t)start + count >
+                          V2K_GS0_RO->desc_table.hdr.entry_count))
+    {
+        v2k_send_ack(V2K_MSG_CAL_READ, seq, V2K_ACK_BAD_PARAM, 0uL);
+        return;
+    }
+    off = v2k_response_begin(V2K_MSG_CAL_READ, seq);
+    v2k_put_u32(s_raw, off, cal->mirror_seq);
+    v2k_put_u16(s_raw, (uint16_t)(off + 4u), start);
+    s_raw[(uint16_t)(off + 6u)] = count;
+    s_raw[(uint16_t)(off + 7u)] = 0u;
+    off = (uint16_t)(off + 8u);
+    for (i = 0u; i < count; i++)
+    {
+        v2k_put_u32(s_raw, off, cal->value_mirror[(uint16_t)(start + i)]);
+        off = (uint16_t)(off + 4u);
+    }
+    v2k_response_send((uint16_t)(off - 7u));
+}
+
+static void v2k_handle_daq_ctrl(uint16_t seq, const uint16_t *payload,
+                                uint16_t payload_len)
+{
+    uint16_t group;
+    uint16_t block_n_ticks;
+    volatile v2k_scope_cfg_t *cfg;
+    if ((payload_len != 12u) && (payload_len != 14u))
+    {
+        v2k_send_ack(V2K_MSG_DAQ_CTRL, seq, V2K_ACK_BAD_PARAM, 0uL);
+        return;
+    }
+    group = payload[0] & 0xFFu;
+    if (group >= V2K_SCOPE_MAX_GROUPS)
+    {
+        v2k_send_ack(V2K_MSG_DAQ_CTRL, seq, V2K_ACK_BAD_PARAM, 0uL);
+        return;
+    }
+    block_n_ticks = (payload_len == 14u) ?
+                    v2k_get_u16(payload, 12u) : 0u;
+    if (block_n_ticks != 0u)
+    {
+        const volatile v2k_scope_prod_t *prod =
+            &V2K_GS0_RO->scope_prod[group];
+        uint16_t stride_words;
+        uint32_t block_octets;
+        if ((prod->block_n_ticks == 0u) || (prod->block_slot_words < 8u))
+        {
+            v2k_send_ack(V2K_MSG_DAQ_CTRL, seq,
+                         V2K_ACK_BAD_STATE, 0uL);
+            return;
+        }
+        stride_words = (uint16_t)(
+            (prod->block_slot_words - 8u) / prod->block_n_ticks);
+        block_octets = 16uL +
+            (uint32_t)block_n_ticks * (uint32_t)stride_words * 2uL;
+        if (block_octets > (V2K_MAX_PAYLOAD - 8u))
+        {
+            v2k_send_ack(V2K_MSG_DAQ_CTRL, seq,
+                         V2K_ACK_BAD_PARAM, 0uL);
+            return;
+        }
+    }
+    cfg = &g_v2k_gs4.scope_cfg[group];
+    cfg->mode_req = payload[1] & 0xFFu;
+    cfg->trig_ch_slot = v2k_get_u16(payload, 2u);
+    {
+        union {
+            uint32_t u32;
+            float f32;
+        } level;
+        level.u32 = v2k_get_u32(payload, 4u);
+        cfg->trig_level = level.f32;
+    }
+    cfg->trig_edge = payload[8] & 0xFFu;
+    cfg->pre_trig_pct = payload[9] & 0xFFu;
+    cfg->prescaler = v2k_get_u16(payload, 10u);
+    cfg->block_n_ticks = block_n_ticks;
+    cfg->reserved = 0u;
+    cfg->cfg_seq++;
+    v2k_send_ack(V2K_MSG_DAQ_CTRL, seq, V2K_ACK_OK, 0uL);
+}
+
+static void v2k_handle_daq_bind(uint16_t seq, const uint16_t *payload,
+                                uint16_t payload_len)
+{
+    uint16_t group;
+    uint16_t count;
+    uint16_t i;
+    uint16_t bind_seq;
+    volatile v2k_scope_bind_t *bind;
+    if (payload_len < 2u)
+    {
+        v2k_send_ack(V2K_MSG_DAQ_BIND, seq, V2K_ACK_BAD_PARAM, 0uL);
+        return;
+    }
+    group = payload[0] & 0xFFu;
+    count = payload[1] & 0xFFu;
+    if ((group >= V2K_SCOPE_MAX_GROUPS) || (count == 0u) ||
+        (count > V2K_SCOPE_MAX_CH) ||
+        (payload_len != (uint16_t)(2u + 8u * count)))
+    {
+        v2k_send_ack(V2K_MSG_DAQ_BIND, seq, V2K_ACK_BAD_PARAM, 0uL);
+        return;
+    }
+    if (V2K_GS0_RO->scope_prod[group].mode != V2K_SCOPE_OFF)
+    {
+        v2k_send_ack(V2K_MSG_DAQ_BIND, seq, V2K_ACK_BAD_STATE, 0uL);
+        return;
+    }
+    bind = &g_v2k_gs4.scope_bind[group];
+    bind_seq = (uint16_t)(bind->bind_seq + 1u);
+    bind->n_ch = count;
+    for (i = 0u; i < count; i++)
+    {
+        uint16_t in = (uint16_t)(2u + 8u * i);
+        bind->ch[i].addr = v2k_get_u32(payload, in);
+        bind->ch[i].type = v2k_get_u16(payload, (uint16_t)(in + 4u));
+        bind->ch[i].reserved = 0u;
+    }
+    bind->bind_seq = bind_seq;
+    for (i = 0u; i < 3000u; i++)
+    {
+        if (V2K_GS0_RO->scope_prod[group].bind_ack_seq == bind_seq)
+        {
+            uint16_t result = V2K_GS0_RO->scope_prod[group].bind_result;
+            uint16_t ack = (result == V2K_SCOPE_RESULT_OK) ?
+                           V2K_ACK_OK :
+                           ((result == V2K_SCOPE_RESULT_BAD_STATE) ?
+                            V2K_ACK_BAD_STATE : V2K_ACK_BAD_PARAM);
+            v2k_send_ack(V2K_MSG_DAQ_BIND, seq, ack, bind_seq);
+            return;
+        }
+        DEVICE_DELAY_US(1u);
+    }
+    v2k_send_ack(V2K_MSG_DAQ_BIND, seq, V2K_ACK_INTERNAL, bind_seq);
+}
+
+static uint16_t v2k_scope_remaining(
+    const volatile v2k_scope_prod_t *prod,
+    const volatile v2k_scope_cons_t *cons)
+{
+    uint16_t end = (prod->mode == V2K_SCOPE_SNAP_FROZEN) ?
+                   prod->frozen_end_idx : prod->wr_idx;
+    return (uint16_t)(end - cons->rd_idx);
+}
+
+static void v2k_handle_block_req(uint16_t seq, const uint16_t *payload,
+                                 uint16_t payload_len)
+{
+    uint16_t group;
+    uint16_t max_blocks;
+    uint16_t count = 0u;
+    uint16_t off;
+    const volatile v2k_scope_prod_t *prod;
+    volatile v2k_scope_cons_t *cons;
+    if (payload_len != 2u)
+    {
+        v2k_send_ack(V2K_MSG_BLOCK_REQ, seq, V2K_ACK_BAD_PARAM, 0uL);
+        return;
+    }
+    group = payload[0] & 0xFFu;
+    max_blocks = payload[1] & 0xFFu;
+    if ((group >= V2K_SCOPE_MAX_GROUPS) ||
+        (max_blocks == 0u) || (max_blocks > 2u))
+    {
+        v2k_send_ack(V2K_MSG_BLOCK_REQ, seq, V2K_ACK_BAD_PARAM, 0uL);
+        return;
+    }
+    prod = &V2K_GS0_RO->scope_prod[group];
+    cons = &g_v2k_gs4.scope_cons[group];
+    if ((prod->mode == V2K_SCOPE_SNAP_FROZEN) &&
+        (s_snapshot_state_seq[group] != prod->state_seq))
+    {
+        v2k_scope_consumer_begin_snapshot(prod, cons);
+        s_snapshot_state_seq[group] = prod->state_seq;
+    }
+    off = v2k_response_begin(V2K_MSG_BLOCK_REQ, seq);
+    s_raw[off++] = group;
+    s_raw[off++] = 0u;
+    s_raw[off++] = prod->mode & 0xFFu;
+    s_raw[off++] = 0u;
+    v2k_put_u16(s_raw, off, prod->overrun_cnt);
+    off = (uint16_t)(off + 2u);
+    v2k_put_u16(s_raw, off, 0u);
+    off = (uint16_t)(off + 2u);
+    // Snapshot 覆盖写期间 rd_idx 没有消费语义，只允许冻结后排空。
+    if ((prod->mode != V2K_SCOPE_LIVE) &&
+        (prod->mode != V2K_SCOPE_SNAP_FROZEN))
+    {
+        s_raw[8u] = 0u;
+        v2k_response_send((uint16_t)(off - 7u));
+        return;
+    }
+    while (count < max_blocks)
+    {
+        v2k_scope_block_view_t view;
+        uint16_t block_octets;
+        uint16_t word;
+        if (!v2k_scope_consumer_peek(prod, cons, &view))
+        {
+            break;
+        }
+        block_octets = (uint16_t)(view.word_count * 2u);
+        if ((uint32_t)(off - 7u) + block_octets > V2K_MAX_PAYLOAD)
+        {
+            break;
+        }
+        for (word = 0u; word < view.word_count; word++)
+        {
+            uint16_t value = view.words[word];
+            s_raw[off++] = value & 0xFFu;
+            s_raw[off++] = (value >> 8u) & 0xFFu;
+        }
+        v2k_scope_consumer_release(cons);
+        count++;
+    }
+    s_raw[8u] = count;
+    v2k_put_u16(s_raw, 13u, v2k_scope_remaining(prod, cons));
+    v2k_response_send((uint16_t)(off - 7u));
+}
+
+static void v2k_handle_cmd(uint16_t seq, const uint16_t *payload,
+                           uint16_t payload_len)
+{
+    uint32_t cmd_seq;
+    if (payload_len != 8u)
+    {
+        v2k_send_ack(V2K_MSG_CMD, seq, V2K_ACK_BAD_PARAM, 0uL);
+        return;
+    }
+    if (g_v2k_msg_2to1.cmd_req.cmd_seq !=
+        V2K_MSG_1TO2_RO->cpu1_status.ack_seq)
+    {
+        v2k_send_ack(V2K_MSG_CMD, seq, V2K_ACK_BUSY, 0uL);
+        return;
+    }
+    cmd_seq = g_v2k_msg_2to1.cmd_req.cmd_seq + 1uL;
+    g_v2k_msg_2to1.cmd_req.cmd_code = v2k_get_u16(payload, 0u);
+    g_v2k_msg_2to1.cmd_req.arg0 = v2k_get_u16(payload, 2u);
+    g_v2k_msg_2to1.cmd_req.arg1 = v2k_get_u32(payload, 4u);
+    g_v2k_msg_2to1.cmd_req.cmd_seq = cmd_seq;
+    v2k_send_ack(V2K_MSG_CMD, seq, V2K_ACK_OK, cmd_seq);
+}
+
+static void v2k_dispatch(uint16_t msg_type, uint16_t seq,
+                         const uint16_t *payload, uint16_t payload_len)
+{
+    switch (msg_type)
+    {
+        case V2K_MSG_HELLO:
+            if (payload_len == 0u) v2k_handle_hello(seq);
+            else v2k_send_ack(msg_type, seq, V2K_ACK_BAD_PARAM, 0uL);
+            break;
+        case V2K_MSG_STATUS:
+            if (payload_len == 0u) v2k_handle_status(seq);
+            else v2k_send_ack(msg_type, seq, V2K_ACK_BAD_PARAM, 0uL);
+            break;
+        case V2K_MSG_ENUM:
+            v2k_handle_enum(seq, payload, payload_len);
+            break;
+        case V2K_MSG_CAL_WRITE:
+            v2k_handle_cal_write(seq, payload, payload_len);
+            break;
+        case V2K_MSG_CAL_COMMIT:
+            v2k_handle_cal_commit(seq, payload_len);
+            break;
+        case V2K_MSG_CAL_READ:
+            v2k_handle_cal_read(seq, payload, payload_len);
+            break;
+        case V2K_MSG_DAQ_CTRL:
+            v2k_handle_daq_ctrl(seq, payload, payload_len);
+            break;
+        case V2K_MSG_BLOCK_REQ:
+            v2k_handle_block_req(seq, payload, payload_len);
+            break;
+        case V2K_MSG_DAQ_BIND:
+            v2k_handle_daq_bind(seq, payload, payload_len);
+            break;
+        case V2K_MSG_CMD:
+            v2k_handle_cmd(seq, payload, payload_len);
+            break;
+        default:
+            v2k_send_ack(msg_type, seq, V2K_ACK_UNSUPPORTED, 0uL);
+            break;
+    }
+}
+
+static void v2k_process_encoded_frame(void)
+{
+    uint16_t raw_len;
+    uint16_t payload_len;
+    uint16_t expected_len;
+    uint16_t seq;
+    uint32_t received_crc;
+    uint32_t calculated_crc;
+    if ((s_tx_pos != s_tx_len) || (s_rx_frame_len == 0u))
+    {
+        return;
+    }
+    raw_len = v2k_cobs_decode_in_place(s_rx_frame, s_rx_frame_len);
+    if (raw_len < 11u)
+    {
+        g_v2k_sci_bad_frames++;
+        return;
+    }
+    payload_len = v2k_get_u16(s_rx_frame, 5u);
+    expected_len = (uint16_t)(7u + payload_len + 4u);
+    if ((s_rx_frame[0] != V2K_WIRE_VER_MAGIC) ||
+        (s_rx_frame[2] != 0u) ||
+        (payload_len > V2K_MAX_PAYLOAD) ||
+        (raw_len != expected_len))
+    {
+        g_v2k_sci_bad_frames++;
+        return;
+    }
+    received_crc = v2k_get_u32(s_rx_frame, (uint16_t)(raw_len - 4u));
+    calculated_crc = v2k_crc32c(s_rx_frame, (uint16_t)(raw_len - 4u));
+    if (received_crc != calculated_crc)
+    {
+        g_v2k_sci_bad_frames++;
+        return;
+    }
+    seq = v2k_get_u16(s_rx_frame, 3u);
+    g_v2k_sci_good_frames++;
+    s_last_valid_heartbeat = g_v2k_msg_2to1.cpu2_status.heartbeat;
+    g_v2k_msg_2to1.cpu2_status.link_state = 1u;
+    if (s_have_last_response &&
+        ((s_rx_frame[1] & 0x7Fu) == s_last_req_type) &&
+        (seq == s_last_req_seq))
+    {
+        // host 超时重发同一帧时重放原响应，禁止 COMMIT/CMD 等服务重复执行。
+        s_tx_pos = 0u;
+        return;
+    }
+    v2k_dispatch(s_rx_frame[1] & 0x7Fu, seq,
+                 &s_rx_frame[7], payload_len);
+}
+
+static __interrupt void v2k_scia_rx_isr(void)
+{
+    while (SCI_getRxFIFOStatus(SCIA_BASE) != SCI_FIFO_RX0)
+    {
+        uint16_t value = SCI_readCharNonBlocking(SCIA_BASE) & 0xFFu;
+        uint16_t next = (uint16_t)((s_rx_wr + 1u) & V2K_RX_RING_MASK);
+        if (next == s_rx_rd)
+        {
+            g_v2k_sci_rx_overflow++;
+        }
+        else
+        {
+            s_rx_ring[s_rx_wr] = value;
+            s_rx_wr = next;
+            g_v2k_sci_rx_octets++;
+        }
+    }
+    if (SCI_getOverflowStatus(SCIA_BASE))
+    {
+        SCI_clearOverflowStatus(SCIA_BASE);
+        SCI_resetRxFIFO(SCIA_BASE);
+        g_v2k_sci_rx_overflow++;
+    }
+    SCI_clearInterruptStatus(SCIA_BASE, SCI_INT_RXFF);
+    Interrupt_clearACKGroup(INTERRUPT_ACK_GROUP9);
+}
+
+static void v2k_tx_service(void)
+{
+    while ((s_tx_pos < s_tx_len) &&
+           (SCI_getTxFIFOStatus(SCIA_BASE) != SCI_FIFO_TX16))
+    {
+        SCI_writeCharNonBlocking(SCIA_BASE, s_tx_frame[s_tx_pos++]);
+        g_v2k_sci_tx_octets++;
+    }
+    // 完成后保留帧内容和长度，供相同 (msg_type, seq) 的超时重试直接重放。
+}
+
+void v2k_sci_init(void)
+{
+    memset((void *)s_rx_ring, 0, sizeof(s_rx_ring));
+    memset(s_rx_frame, 0, sizeof(s_rx_frame));
+    memset(s_tx_frame, 0, sizeof(s_tx_frame));
+    memset(s_raw, 0, sizeof(s_raw));
+    memset(s_snapshot_state_seq, 0, sizeof(s_snapshot_state_seq));
+    s_cal_staged_commit_seq = 0xFFFFFFFFuL;
+    s_rx_wr = 0u;
+    s_rx_rd = 0u;
+    s_rx_frame_len = 0u;
+    s_rx_discard = 0u;
+    s_tx_len = 0u;
+    s_tx_pos = 0u;
+    s_last_req_type = 0u;
+    s_last_req_seq = 0u;
+    s_have_last_response = 0u;
+
+    // SCIA 静态配置（clock enable / setConfig 115200 8N1 / enableFIFO /
+    // enableModule / FIFO level=TX0,RX0）由 sysconfig 生成的 SCIA_BASE_init
+    // 落地（在 cpu2.c main() 里调用，先于本 init）。这里只做：
+    //   1) 把 RX FIFO 触发阈值从生成的 RX0（empty）改为 RX1，匹配本服务
+    //      “RX ISR 逐 octet 搬运”策略；
+    //   2) 清一次 RX 溢出锁存，覆盖 boot 期间任何脏字节；
+    //   3) 注册 INT_SCIA_RX，开 RXFF 中断 + PIE。
+    SCI_setFIFOInterruptLevel(SCIA_BASE, SCI_FIFO_TX0, SCI_FIFO_RX1);
+    SCI_clearOverflowStatus(SCIA_BASE);
+    Interrupt_register(INT_SCIA_RX, &v2k_scia_rx_isr);
+    SCI_enableInterrupt(SCIA_BASE, SCI_INT_RXFF);
+    Interrupt_enable(INT_SCIA_RX);
+}
+
+void v2k_sci_service(void)
+{
+    v2k_tx_service();
+    while (s_rx_rd != s_rx_wr)
+    {
+        uint16_t value = s_rx_ring[s_rx_rd] & 0xFFu;
+        s_rx_rd = (uint16_t)((s_rx_rd + 1u) & V2K_RX_RING_MASK);
+        if (value == 0u)
+        {
+            if (!s_rx_discard)
+            {
+                v2k_process_encoded_frame();
+            }
+            s_rx_frame_len = 0u;
+            s_rx_discard = 0u;
+        }
+        else if (!s_rx_discard)
+        {
+            if (s_rx_frame_len < V2K_RX_FRAME_WORDS)
+            {
+                s_rx_frame[s_rx_frame_len++] = value;
+            }
+            else
+            {
+                s_rx_discard = 1u;
+                g_v2k_sci_bad_frames++;
+            }
+        }
+    }
+    v2k_tx_service();
+    if ((g_v2k_msg_2to1.cpu2_status.link_state == 1u) &&
+        ((uint32_t)(g_v2k_msg_2to1.cpu2_status.heartbeat -
+                    s_last_valid_heartbeat) > V2K_LINK_TIMEOUT_MS))
+    {
+        g_v2k_msg_2to1.cpu2_status.link_state = 0u;
+    }
+}

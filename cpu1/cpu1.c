@@ -131,6 +131,7 @@ void main(void)
     memset(&g_v2k_msg_1to2, 0, sizeof(g_v2k_msg_1to2));
     g_v2k_msg_1to2.cpu1_status.contract_ver = V2K_CONTRACT_VER;
     g_v2k_msg_1to2.cpu1_status.sys_state    = V2K_STATE_INIT;
+    g_v2k_msg_1to2.cpu1_status.tick_hz      = V2K_ISR_HZ;
     v2k_registry_init(V2K_BUILD_HASH);
     v2k_scope_init();
 
@@ -151,6 +152,16 @@ void main(void)
     Device_initGPIO();
     Board_init();
     GPIO_setControllerCore(LED_CPU2_GPIO, GPIO_CORE_CPU2);
+
+    //
+    // Phase 3.5 SCIA 背通道：pinmux（GPIO42 TX / GPIO43 RX, PULLUP, ASYNC）
+    // 与 CPUSEL_SCIA→CPU2 均由 sysconfig 双 context 协同生成到 CPU1 board.c：
+    //   - CPU2 syscfg 上的 SCI 实例反向触发 CPU1 PINMUX_init 中的
+    //     GPIO_setPinConfig(SCIA_SCIRX_PIN_CONFIG)/SCITX_PIN_CONFIG 等
+    //   - CPU1 sysctl.cpuSel_SCIA 触发 SYSCTL_init 里的
+    //     SysCtl_selectCPUForPeripheralInstance(SYSCTL_CPUSEL_SCIA, ...CPU2)
+    // 本核业务源码不再追加任何 SCIA 静态配置（见 phase3.5-sci-scope2000.md §1.3）。
+    //
 
     //
     // NMI 兜底必须先于引导 CPU2 就位——CPU2 放出复位到其 .out 加载完成的

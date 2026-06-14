@@ -45,3 +45,6 @@ Desktop.ini
 *.bak
 *.orig
 *~
+
+# Scope Reference Project
+V2KScope.reference/

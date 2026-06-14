@@ -14,7 +14,7 @@
 
 **性能锚点：20–100 kHz（待定）× 8ch × f32 无损，0.64–3.2 MB/s**。这个数字以排除法决定了物理层选型（见「通信架构」）。
 
-**仓库边界：本 repo 只做固件**（烧进 F28P65x 的部分）。上位机复用既有 Rust + egui 前端，其通讯层拆分为 `DataSource` trait：`SimSource`（L2 FFI 仿真）/ `CompatSource`（可选兼容协议）/ `V2kSource`（本项目）。前端与中立数据模型共用一套代码持续演进，本项目对接 V2k 一侧。
+**仓库边界：本 repo 只做固件**（烧进 F28P65x 的部分）。上位机是同级独立仓库 **Scope2000**（Rust + egui），原生通讯实现为 `V2kSource`；未来 `SimSource` 可接 L2 FFI。旧设备兼容由独立桥接进程完成，桥接器通过通用本地 byte-stream transport 向 Scope2000 提供规范化 Viewer2000 消息语义，不进入 `V2kSource` 原生热路径。
 
 本项目的设计原则：**保护先行、可观测性先行、平台与应用分离**。
 
@@ -85,7 +85,7 @@ EtherCAT 要点：
 
 弥补 C++ 缺失的三条编码约定（对齐 TI DCL 风格）：多实例 = struct 实例 + 操作函数（`pi_update(&pi_vel, err)`）；命名空间 = 模块前缀；init 完成后禁止动态分配。
 
-**PC 侧统一用 Rust + egui**：L2 控制库编译成动态库，经 FFI（bindgen）接入 Rust 做单元测试与电机模型仿真，egui_plot 看波形。仿真宿主和上位机是同一个程序的三个数据源（`SimSource` / `CompatSource` / `V2kSource`）。
+**PC 侧统一用 Rust + egui**：Scope2000 使用 `DataSource` 边界；`V2kSource` 服务原生 SCI/EtherCAT，未来 `SimSource` 经 FFI（bindgen）接 L2 控制库与电机模型。旧设备由独立桥接进程适配为相同消息语义，Scope2000 不增加专用兼容数据源。
 
 ### 四个共享内存接口（先于一切代码定稿）
 
@@ -123,8 +123,8 @@ void user_step(const plat_in_t *in, plat_out_t *out);
 
 ```
                 ┌──────────────────────────────────────────────┐
-                │  上位机 = Rust + egui 前端                     │
-                │  DataSource: Sim / Compat / V2k(本项目)       │
+                │  Scope2000 = Rust + egui 前端                  │
+                │  DataSource: V2k(原生) / Sim(未来)             │
                 └────┬───────────────┬────────────────┬────────┘
                      │ JTAG/CCS      │ SCI (XDS110     │ EtherCAT
                      │ (Phase 1–)    │  VCP, Ph 3.5)   │ (ethercrab, Ph 6)
@@ -169,7 +169,7 @@ void user_step(const plat_in_t *in, plat_out_t *out);
 - **Phase 1 — 双核骨架**：两个 CCS 工程、两份 linker .cmd、GSx RAM 归属分配、CPU1 引导 CPU2、IPC ping-pong、共享 RAM 握手、CCS 双核调试会话。完成标志：两核各自闪灯 + 握手成功。（主要是工具链体力活，但它决定内存映射，必须早做。）
 - **Phase 2 — 时基证明 + 保护**：EPWM → ADC SOC → EOC ISR 链路打通，GPIO 翻转 + 示波器实测中断延迟与抖动；配置 FREE_SOFT；CMPSS 硬件 trip + fault 锁存状态机。
 - **Phase 3 — 执行器 + 可观测性**：ISR 多速率调度框架（软件分频 + **相位错开 stagger**——慢环不挤在 `k%N==0` 同一拍，摊平 WCET；慢环内联跑还是丢给低优先级软中断，在此决策）、双模式 RAM 示波器（snapshot 先行，CCS Graph 消费）、参数双缓冲、描述符表。
-- **Phase 3.5 — SCI 哑数据泵**：CPU2 经 XDS110 VCP 跑最小协议子集（枚举描述符表 + Live 小 N block + snapshot 排空）。**意义：描述符表、示波平面、命令平面的第一个真实消费者**——CCS Graph 走 JTAG 直读内存，绕过 CPU2 / SPSC 消费端 / IPC，不算数；双核分离这个最大的架构风险点在此处提前验证，不留到 Phase 6。上位机侧同步落地 `V2kSource` 初版。
+- **Phase 3.5 — SCI 哑数据泵**：CPU2 经 XDS110 VCP 跑最小协议子集（枚举描述符表 + Live 小 N block + snapshot 排空）。**意义：描述符表、示波平面、命令平面的第一个真实消费者**——CCS Graph 走 JTAG 直读内存，绕过 CPU2 / SPSC 消费端 / IPC，不算数；双核分离这个最大的架构风险点在此处提前验证，不留到 Phase 6。Scope2000 同步落地 `V2kSource` 初版；兼容桥只预留 transport/capability 边界。
 - **Phase 4 — 控制库**：L2 纯软件实现，PC 上对电机模型仿真验证（与"仿真平台"的终极目标同路）。
 - **Phase 5 — 电机 bring-up（平台验收）**：开环 V/f → 电流采样校准 → 电流环 → 编码器 → 速度环 → 位置环。每一步是一个 L3 小应用，顺便检验平台接口设计。
 - **Phase 6 — EtherCAT 链路成型**：SSC 移植、ESI/EEPROM、状态机至 OP、PDO 映射；ethercrab master @ 2 kHz 循环。**验收 = 100 kHz × 8ch 无损连续流（序号零丢失 × 长时间）+ 录盘回放。**

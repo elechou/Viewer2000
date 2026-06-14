@@ -57,6 +57,7 @@ V2K_ASSERT_OFFSET_BITS(v2k_cmd_req_t,      cmd_code,  32u);
 V2K_ASSERT_OFFSET_BITS(v2k_cpu1_status_t,  ack_seq,   32u);
 V2K_ASSERT_OFFSET_BITS(v2k_cpu1_status_t,  heartbeat, 128u);
 V2K_ASSERT_OFFSET_BITS(v2k_cpu1_status_t,  tick,      160u);
+V2K_ASSERT_OFFSET_BITS(v2k_cpu1_status_t,  tick_hz,   192u);
 
 // 防"空 TU"告警
 typedef int v2k_check_contracts_nonempty;

@@ -1,22 +1,23 @@
 //#############################################################################
-// cpu2.c — Phase 1 双核骨架：CPU2（通信核）
+// cpu2.c — CPU2 通信核（Phase 3.5 SCI 数据泵）
 //
-// 本阶段职责（AGENTS.md 路线图 Phase 1）：
+// 当前职责：
 //   1. IPC_sync 会合 → 等描述符表 magic → 契约版本握手（v2k_command.h）
-//   2. 拥有 GS4 平面与 CPU2→CPU1 MSGRAM，主循环递增心跳
-//   3. 应答 IPC ping-pong
-//   4. 闪灯 2 Hz（LED5 绿 = GPIO13，低电平点亮；pad 配置与 CSEL→CPU2 由
+//   2. 拥有 GS4 平面与 CPU2→CPU1 MSGRAM，服务参数/示波/命令平面
+//   3. SCIA ISR 收 octet，超级循环完成 COBS/CRC/消息服务与 TX
+//   4. 应答 IPC ping-pong并闪灯 2 Hz（LED5 绿 = GPIO13，低电平点亮；pad 配置与 CSEL→CPU2 由
 //      CPU1 侧完成，本核只写数据寄存器——归属分配权在 boot master）
 //
 // CPU2 不拥有控制时间：block 时间戳、采样纪元和控制调度都来自 CPU1。
-// Phase 3 临时保留一个本地低速后台心跳，用于证明通信核自身仍在运行；
-// Phase 3.5 接入 SCI 后再改成通信事件/timeout 驱动。
+// 本地低速心跳只证明通信核仍在运行，不进入采样或控制时间。
 //#############################################################################
 
 #include <string.h>
 #include "driverlib.h"
 #include "device.h"
+#include "board.h"   // sysconfig 生成：SCIA_BASE_init
 #include "../common/v2k_planes.h"
+#include "v2k_sci_service.h"
 
 // LED5 绿（GPIO13）。引脚来自板卡文档（LAUNCHXL-F28P65X），pad 配置在
 // CPU1 的 sysconfig 里（实例名 LED_CPU2），本核不依赖生成的 board.h。
@@ -70,6 +71,20 @@ void main(void)
     memset(&g_v2k_msg_2to1, 0, sizeof(g_v2k_msg_2to1));
 
     //
+    // Phase 3.5 SCIA 静态配置（pin/baud/FIFO/module）由 sysconfig 落地：
+    //   - CPU1 syscfg cpuSel_SCIA→CPU2 → CPU1 board.c SYSCTL_init 含
+    //     SysCtl_selectCPUForPeripheralInstance(SYSCTL_CPUSEL_SCIA, CPU2)
+    //   - CPU2 syscfg SCI 实例（SCIA + GPIO42/43 + 115200 8N1 + FIFO）双
+    //     context 协同 → CPU1 board.c 出 SCIA pinmux + pad/qual，CPU2
+    //     board.c 出 SCIA_BASE_init（reset/FIFO/SCI_setConfig/enableModule）
+    // CPU1 在引导本核前已完成 pinmux 与 CPUSEL→CPU2，本核此处的 SCIA 寄
+    // 存器写入有效。绕开 Board_init() 聚合入口，避免顺带拉进数百条 boot-
+    // master 专属 SysCtl_setPeripheralAccessControl/CPUSEL（对 CPU2 无效但
+    // 会撑爆 RAMGS4）；函数级 dead-strip 由 --gen_func_subsections=on 提供。
+    //
+    SCIA_BASE_init();
+
+    //
     // NMI 兜底（与 cpu1.c 对称）
     //
     Interrupt_initModule();
@@ -95,7 +110,7 @@ void main(void)
 
     //
     // 契约版本握手：不符 = CPU1/CPU2 固件不同期烧录，停在失败状态
-    //（Phase 3.5 起改为经线上 STATUS 上报，而非死等）
+    // 共享布局不一致时不能安全启动线上服务，直接停在可诊断状态。
     //
     if ((V2K_MSG_1TO2_RO->cpu1_status.contract_ver != V2K_CONTRACT_VER) ||
         (V2K_GS0_RO->desc_table.hdr.contract_ver   != V2K_CONTRACT_VER))
@@ -104,6 +119,7 @@ void main(void)
         for (;;) { ESTOP0; }
     }
     g_handshake_state = 3u;
+    v2k_sci_init();
 
     for (;;)
     {
@@ -114,14 +130,19 @@ void main(void)
             IPC_ackFlagRtoL(IPC_CPU2_L_CPU1_R, IPC_FLAG0);
         }
 
-        // 临时本地心跳：不参与控制时间或采样时间戳，只证明 CPU2 主循环活着。
-        // 忙等不关中断；Phase 3.5 的 SCI/EtherCAT 事件源就位后替换掉它。
-        DEVICE_DELAY_US(1000);
-        g_v2k_msg_2to1.cpu2_status.heartbeat++;
-        led_count++;
+        // SCI ISR 只收 octet；协议解释、共享平面服务与 TX 均在超级循环。
+        v2k_sci_service();
 
-        // 250 个本地心跳翻转一次，约 2 Hz；只用于肉眼诊断。
-        if (led_count >= 250u)
+        // 本地诊断 heartbeat 不进入控制时间或示波时间戳。
+        DEVICE_DELAY_US(100);
+        led_count++;
+        if ((led_count % 10u) == 0u)
+        {
+            g_v2k_msg_2to1.cpu2_status.heartbeat++;
+        }
+
+        // 2500 × 100 us 翻转一次，约 2 Hz；只用于肉眼诊断。
+        if (led_count >= 2500u)
         {
             led_count = 0u;
             GPIO_togglePin(V2K_LED_CPU2_PIN);

@@ -88,7 +88,7 @@ CCS Graph 截图、Expressions 读数等）。验证知识不能只活在 commit
 
 操作步骤见 `docs/phase3-executor-observability.md`。
 
-- [x] contract version 2；DAQ_CTRL 12/14-octet 兼容向量通过 host 检查
+- [x] Phase 3 基线 contract version 2；DAQ_CTRL 12/14-octet 兼容向量通过 host 检查（Phase 3.5 因状态块追加 `tick_hz` 升至 version 3）
 - [x] GS0 平面/慢速环与 GS1-GS3 快速环链接布局完成
 - [x] 固定顺序 L1 executor、错相 1 kHz/100 Hz due mask、duty clamp/apply
 - [x] 描述符表、后台整批验证/ISR 同拍应用参数、10 Hz 值镜像
@@ -149,3 +149,27 @@ CCS Graph 截图、Expressions 读数等）。验证知识不能只活在 commit
 | 2026-06-14 | §6 步骤 6 跨状态烟雾 @100 kHz | CPU2 发 APP_START → 软 TZ trip (`writeMemory(0x309B,0x0004)`) → CLEAR_FAULT | sys_state 1(IDLE)→2(RUNNING)→3(FAULT)、`tz_int_cnt` 0→1、`fault_code` 0→1→0、sys_state 3→1；cmd_result 全 OK | ✓ 状态机在 100 kHz 下完整闭环 |
 | 2026-06-14 | @100 kHz 全程 ISR 预算 + overflow（含 SNAPSHOT 8ch 期间） | 跑完 SNAPSHOT + 跨状态后读 max | **SNAPSHOT 期间峰值** `isr_cycles_max=1844` (9.22 µs)、`scope_cycles_max=1091`、`control_cycles_max=693`；OFF 重置后 isr_max 回落到 840 | **`isr_max=1844 < 2000` 预算，余 156 cycles (~8%)**——@100 kHz 全负载 8 ch SNAPSHOT 真的把预算扣得很紧。`budget_violation_cnt=0`、`isr_ovf_cnt=0` 全程 ✓ |
 | 2026-06-14 | **Phase 3 RAM/100 kHz 验收通过** | 上面 5 行综合 | tick 100k/s、预算无违规、overflow=0、调度与错相成立、参数链 + 状态机 + scope 全活 | **§5 §6 §8 重点项在 RAM/100 kHz 上全部通过**。剩余项与 20 kHz 相同：CPU2 consumer 单元语义留给 Phase 3.5；FLASH 20k+100k 配置也尚未做（Phase 3 § 4 的「FLASH 启动 smoke + tb_check + tick smoke」） |
+
+---
+
+## Phase 3.5 - SCI 数据泵 + Scope2000（软件实现完成，CCS/实物验收待进行）
+
+操作步骤见 `docs/phase3.5-sci-scope2000.md`。
+
+- [x] wire v1 尾部兼容扩展：HELLO tick_hz/capabilities，STATUS cmd ack/result
+- [x] contract version 3、静态断言、生成器与 24 组 golden vectors 同步
+- [x] CPU1 配置 GPIO42/43 与 SCIA CPU2 归属；CPU2 RX ISR + COBS + CRC-32C
+- [x] CPU2 完成 HELLO/ENUM/STATUS/CAL/DAQ_BIND/DAQ_CTRL/BLOCK/CMD 服务
+- [x] 相同 frame seq 超时重试重放缓存响应，不重复执行 COMMIT/CMD/消费 block
+- [x] Snapshot 仅在 FROZEN 后排空；Live 满环继续 drop，不阻塞 CPU1
+- [x] Scope2000 Rust/egui 初版：SCI transport、完整能力模型、原生 ScopeBlock、
+      参数/命令、Live/Snapshot、断口、CSV、控制台、build-hash 重枚举
+- [x] Scope2000 golden-vector、坏 CRC、COBS 重同步、拆包/粘包、timeout、
+      seq 错配与版本不匹配测试
+- [x] 公开源码/文件名品牌扫描通过；原创无文字图标仅改为中立文件名
+- [x] Scope2000 独立 root commit：`0fe4067`（Viewer2000 待 CCS/实物验收后提交）
+- [ ] CCS CPU1/CPU2 RAM + FLASH `buildProject` 0 error
+- [ ] 115200 实物闭环与最高稳定波特率测试
+- [ ] 参数原子提交、命令结果、Live partial block、Snapshot/pre-trigger 实测
+- [ ] 停止 Scope2000/CPU2 消费时 CPU1 tick、ISR budget、控制状态不受影响
+- [ ] 记录双仓库 commit、持续时间、丢块、overrun 与 CRC 结果

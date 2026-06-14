@@ -79,9 +79,10 @@ typedef struct {
     uint16_t reserved;
     uint32_t heartbeat;     // CPU1 慢环递增
     v2k_tick_t tick;        // 当前 ISR tick 快照（host 对时/活性双重判据）
+    uint32_t tick_hz;       // ISR tick 频率；host 将 tick 换算为秒
 } v2k_cpu1_status_t;
 
-V2K_ASSERT_SIZE_BITS(v2k_cpu1_status_t, 192u);
+V2K_ASSERT_SIZE_BITS(v2k_cpu1_status_t, 224u);
 
 //-----------------------------------------------------------------------------
 // CPU2 状态块（MSGRAM CPU2→CPU1）
