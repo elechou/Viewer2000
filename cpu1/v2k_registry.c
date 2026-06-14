@@ -153,6 +153,10 @@ void v2k_registry_init(v2k_build_hash_t build_hash)
     v2k_desc_add("sys_state", V2K_TYPE_U16, V2K_KIND_SCOPE,
                  &g_v2k_sm_state, 0.0f, 0.0f, 1.0f, 0.0f, 1u, 0u);
 
+    // group 1 = 1 kHz 慢速健康/保护组。单组默认绑定上限 V2K_SCOPE_MAX_CH(=8)：
+    // v2k_default_bind 按注册序取前 8 个，注册数超 8 会静默丢掉尾部通道，
+    // 因此这里保持恰好 8 个（含保护信号 tz_trip_cnt）。需要更多慢量时由 host
+    // 经 DAQ_BIND 重绑，或启用第二慢组。
     v2k_desc_add("fault_code", V2K_TYPE_U16, V2K_KIND_SCOPE,
                  &g_v2k_fault_code, 0.0f, 0.0f, 1.0f, 0.0f, slow_div, 1u);
     v2k_desc_add("cpu2_alive", V2K_TYPE_U16, V2K_KIND_SCOPE,
@@ -168,9 +172,9 @@ void v2k_registry_init(v2k_build_hash_t build_hash)
     v2k_desc_add("ctrl_cycles_max", V2K_TYPE_U32, V2K_KIND_SCOPE,
                  &g_v2k_control_cycles_max, 0.0f, 0.0f,
                  1.0f, 0.0f, slow_div, 1u);
-    v2k_desc_add("scope_cyc_max", V2K_TYPE_U32, V2K_KIND_SCOPE,
-                 &g_v2k_scope_cycles_max, 0.0f, 0.0f,
-                 1.0f, 0.0f, slow_div, 1u);
+    // scope_cyc_max 未注册：示波段周期 = isr_cycles_max − ctrl_cycles_max 即可
+    // 推得，为保住保护信号 tz_trip_cnt 让出这个槽（仍可在 CCS 直接看
+    // g_v2k_scope_cycles_max，或 host 经 DWARF 绑定）。
     v2k_desc_add("scope_overrun", V2K_TYPE_U32, V2K_KIND_SCOPE,
                  &g_v2k_scope_overrun_total, 0.0f, 0.0f,
                  1.0f, 0.0f, slow_div, 1u);

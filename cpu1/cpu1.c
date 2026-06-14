@@ -10,8 +10,8 @@
 // Phase 2 追加（路线图「时基证明 + 保护」）：
 //   5. 时基：ePWM1→ADC SOC→EOC ISR（v2k_timebase.c），g_v2k_tick 接管时间所有权
 //   6. 保护：TZ trip + 故障锁存状态机（v2k_fault.c），保护先于 PWM 上引脚就位
-// Phase 3 后台采用普通前后台循环：主循环只等 g_v2k_tick 前进，再按 deadline
-// 服务共享平面请求。tick 只发布时间，不在 ISR 内执行后台工作。
+// Phase 3 后台采用普通前后台循环：主循环按 g_v2k_tick deadline 服务共享
+// 平面请求。tick 只发布时间，不在 ISR 内执行后台工作。
 //
 // 注意：启动序列中的 IPC_sync 是 init 阶段的一次性会合，不属于
 // "控制核不得阻塞等待通信核"（基本规则 1）约束的运行时路径。
@@ -104,7 +104,6 @@ static void v2k_assert_layout(void)
 
 void main(void)
 {
-    v2k_tick_t loop_tick = 0u;
     v2k_tick_t heartbeat_tick = 0u;
     v2k_tick_t mirror_tick = 0u;
     v2k_tick_t led_tick = 0u;
@@ -199,11 +198,6 @@ void main(void)
     for (;;)
     {
         v2k_tick_t now = g_v2k_tick;
-        if (now == loop_tick)
-        {
-            continue;
-        }
-        loop_tick = now;
 
         if (v2k_tick_due(now, &heartbeat_tick, V2K_BG_1MS_TICKS))
         {

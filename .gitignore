@@ -3,10 +3,14 @@
 .vscode/
 .metadata/
 .claude/ccs.settings.md
+.mcp.json
 
 # clangd generated data
 **/.clangd/.cache/
 **/compile_commands.json
+
+# Pre-build generated firmware build hash (regenerated locally every build)
+cpu1/v2k_build_hash.h
 
 # Code Composer Studio / Eclipse build output directories
 **/FLASH/

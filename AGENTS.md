@@ -1,16 +1,5 @@
 # AGNENTS Guidelines
 
-## MANDATORY Pre-Task Steps (DO NOT SKIP)
-
-**CRITICAL - NO EXCEPTIONS**: Before ANY CCS/Texas Instruments-related task (even simple ones), you MUST complete these steps IN ORDER. Do NOT call any ccs-project, ccs-debug, ccs-sysconfig, or ccs-serial MCP tools until both steps are complete.
-
-1. The CCS installation directory is `/Applications/ti/ccs2051`
-2. Read `{installation_directory}/ccs/Code Composer Studio.app/Contents/Resources/ai/CCS.md` using the installation directory from step 1. This file includes information on how to interact with CCS as well as device-specific information (UART backchannel pins, LED setup, transmit best practices, etc.).
-3. ONLY THEN proceed with CCS MCP tool calls or any other task work
-
-- Do NOT parallelize these steps with task work. Do NOT skip step 2 regardless of task complexity.
-- The ccs-* MCP servers proxy into a **running CCS IDE**. If a call fails to connect, ask the user to launch CCS instead of retrying. Plain file reads work without CCS.
-
 # Commit Rule
 
 在开发过程中的注释为方便进度可以以中文标注。commit 信息等后期难以一次性更改的信息切换为英文标注。
@@ -202,3 +191,13 @@ void user_step(const plat_in_t *in, plat_out_t *out);
 - [ ] ESC 过程数据 RAM 大小与 SM 配置上限（TRM 核对，决定 block 天花板）
 - [ ] 示波通道组与降采样比的具体档位
 - [ ] flash bank 划分与 CPU2 镜像存放
+
+## CCS/Texas Instruments-related task
+
+You can find the docs related to hardware by:
+
+1. The CCS installation directory is `/Applications/ti/ccs2051`
+2. Read `{installation_directory}/ccs/Code Composer Studio.app/Contents/Resources/ai/CCS.md` using the installation directory from step 1. This file includes information on how to interact with CCS as well as device-specific information (UART backchannel pins, LED setup, transmit best practices, etc.).
+3. ONLY THEN proceed with CCS MCP tool calls or any other task work
+
+- The ccs-* MCP servers proxy into a **running CCS IDE**. If a call fails to connect, ask the user to launch CCS instead of retrying. Plain file reads work without CCS.

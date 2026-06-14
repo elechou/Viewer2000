@@ -17,6 +17,8 @@ const asysctl          = scripting.addModule("/driverlib/asysctl.js");
 const led              = scripting.addModule("/driverlib/board_components/led", {}, false);
 const led1             = led.addInstance();
 const led2             = led.addInstance();
+const cputimer         = scripting.addModule("/driverlib/cputimer.js", {}, false);
+const cputimer1        = cputimer.addInstance();
 const dac              = scripting.addModule("/driverlib/dac.js", {}, false);
 const dac1             = dac.addInstance();
 const device_support   = scripting.addModule("/driverlib/device_support.js");
@@ -55,6 +57,12 @@ led2.gpio.controllerCore    = "GPIO_CORE_CPU2";
 
 const divider8       = system.clockTree["EPWMCLKDIV"];
 divider8.divideValue = 1;
+
+cputimer1.cputimerBase  = "CPUTIMER1_BASE";
+cputimer1.timerPeriod   = 4294967295;
+cputimer1.emulationMode = "CPUTIMER_EMULATIONMODE_RUNFREE";
+cputimer1.startTimer    = true;
+cputimer1.$name         = "ISR_CYCLE_TIMER";
 
 dac1.$name            = "myDAC0";
 dac1.referenceVoltage = "DAC_REF_ADC_VREFHI";
