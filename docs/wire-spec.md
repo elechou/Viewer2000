@@ -1,4 +1,4 @@
-# Viewer2000 线上协议规范（wire spec）v1
+# Viewer2000 线上协议规范（wire spec）v2
 
 > **文档地位**：本文档与 `contracts/` 头文件共同构成协议的唯一基准；
 > `contracts/vectors/` 的 golden test vectors 是本文档的可执行形态。
@@ -16,7 +16,7 @@
 ┌──────────────────────────────────────────────────────┐
 │ 服务语义层   会话/枚举/参数事务/DAQ 流/命令   （§5）     │  传输无关
 ├──────────────────────────────────────────────────────┤
-│ 消息层      消息目录 v1，定长小端布局        （§4）     │  传输无关
+│ 消息层      消息目录 v2，定长小端布局        （§4）     │  传输无关
 ├──────────────────────────────────────────────────────┤
 │ 帧适配器    per-transport：                 （§3）     │  传输相关
 │             SCI = COBS + 帧头 + CRC-32C               │
@@ -29,9 +29,10 @@
 设计不变量：**消息层以上与传输无关**。换物理层只换帧适配器（Phase 3.5 → 6
 的全部迁移量），消息与共享接口（`contracts/*.h`）一个 bit 不动。
 
-服务语义对齐 XCP（ASAM MCD-1）概念词汇：参数事务 ≈ CAL，示波流 ≈ DAQ，
-通道组 ≈ event channel，降采样比 ≈ prescaler。语义对齐保留"将来在 CPU2
-加 XCP 门面对接 CANape 类工具"的退路；编码本身不是 XCP。
+服务语义保留 XCP（ASAM MCD-1）里 CAL/DAQ/prescaler 这些通用词汇，但 Viewer2000
+暴露两个 Scope 入口：Stream = 连续 block 流，Capture = 设备侧触发冻结窗口。
+两者复用同一套通道绑定、ring 与 block 格式；固件协议不再暴露 XCP event
+channel / group 概念。
 
 ## 2. 通用约定
 
@@ -60,7 +61,7 @@
 编码前帧（"裸帧"，CRC 覆盖区 = offset 0 .. 7+n-1）:
 
 off  sz  字段
-0    1   ver_magic   = 0x51（高 nibble 0x5 固定魔数，低 nibble = V2K_WIRE_VER）
+0    1   ver_magic   = 0x52（高 nibble 0x5 固定魔数，低 nibble = V2K_WIRE_VER）
 1    1   msg_type    （§4 目录；响应 = 请求 | 0x80）
 2    1   flags       = 0x00，保留
 3    2   seq         host 每请求 +1（回绕）；响应原样回显，host 据此配对
@@ -107,7 +108,7 @@ off  sz  字段
 
 时间戳始终是 block 头里的 ISR tick，与 EtherCAT DC 时钟体系无关（不用 DC）。
 
-## 4. 消息目录 v1
+## 4. 消息目录 v2
 
 ### 4.0 总表
 
@@ -119,7 +120,7 @@ off  sz  字段
 | 0x10 | CAL_WRITE | H→F | 2+12k | 0x90 ACK |
 | 0x11 | CAL_COMMIT | H→F | 0 | 0x91 ACK（data=commit_seq） |
 | 0x12 | CAL_READ | H→F | 4 | 0x92 CAL_READ_RESP |
-| 0x20 | DAQ_CTRL | H→F | 12（兼容）或 14 | 0xA0 ACK |
+| 0x20 | DAQ_CTRL | H→F | 16 | 0xA0 ACK |
 | 0x21 | BLOCK_REQ | H→F | 2 | 0xA1 BLOCK_DATA |
 | 0x22 | DAQ_BIND | H→F | 2+8k | 0xA2 ACK（data=bind_seq） |
 | 0x30 | CMD | H→F | 8 | 0xB0 ACK（data=ack_seq） |
@@ -139,7 +140,7 @@ off sz 字段
 
 ### 4.1 HELLO（0x01 / 0x81）
 
-请求 payload 空。响应基础前缀 28 octets，wire v1 当前响应为 36 octets；
+请求 payload 空。响应基础前缀 28 octets，wire v2 当前响应为 36 octets；
 新增字段只允许追加在尾部：
 
 ```
@@ -159,9 +160,9 @@ off sz 字段
 |---:|---|---|
 | 0 | ENUM | 描述符枚举 |
 | 1 | CAL | 参数读写与原子提交 |
-| 2 | DAQ_LIVE | Live 连续流 |
-| 3 | DAQ_SNAPSHOT | 触发 Snapshot |
-| 4 | PRE_TRIGGER | Snapshot pre-trigger |
+| 2 | SCOPE_STREAM | Scope 连续 block 流 |
+| 3 | SCOPE_CAPTURE | Scope 设备侧触发冻结窗口 |
+| 4 | PRE_TRIGGER | 触发冻结的 pre-trigger 环形历史 |
 | 5 | SYSTEM_CMD | Start / Stop / Clear Fault |
 | 6 | NATIVE_BLOCK | 原生位宽 `ScopeBlock` |
 
@@ -182,7 +183,9 @@ off sz 字段
 22  2  cal_result     V2K_CAL_*
 24  2  cal_fail_idx
 26  4  build_hash     会话中检测固件热更换
-30  4  scope_mode     4 组各 1 octet：V2K_SCOPE_*（组 id = octet 下标）
+30  1  scope_mode     当前 V2K_SCOPE_*（OFF/STREAM/CAPTURE_ARMED/CAPTURE_POST/CAPTURE_FROZEN）
+31  1  scope_flags    当前保留，置 0
+32  2  reserved
 34  4  cmd_ack_seq    CPU1 已执行的最大系统命令序号
 38  2  cmd_result     V2K_CMDR_*（对应 cmd_ack_seq）
 40  2  reserved
@@ -202,8 +205,8 @@ off sz 字段
 4  1  count          本页实际条数
 5  1  reserved
 6  …  count × 描述符条目（28 octets，逐字段镜像当前 v2k_desc_entry_t）:
-      0:16 name | 16:2 type | 18:2 kind | 20:4 addr | 24:2 prescaler | 26:2 group
-      prescaler/group 为开机默认绑定提示，运行时以 DAQ_BIND/CTRL 为准
+      0:16 name | 16:2 type | 18:2 kind | 20:4 addr | 24:2 prescaler | 26:2 reserved
+      prescaler 为默认采样分频建议；运行时实际速率以 DAQ_CTRL 为准
 ```
 
 `start_idx ≥ total_count` → `count=0`（合法的"读完了"信号）。
@@ -242,30 +245,29 @@ type 一致。**不做 min/max 范围检查，不做 clamp，不做 scale/offset
 
 ### 4.5 DAQ_CTRL / DAQ_BIND（0x20 / 0x22）
 
-`DAQ_CTRL` 请求保留原 12-octet 前缀，并在新格式尾部追加
-`block_n_ticks`，共 14 octets：
+`DAQ_CTRL` 请求 16 octets。它选择并配置 Scope 入口：`STREAM` 是连续 block 流；
+`CAPTURE_ARMED` 是设备侧触发冻结窗口。两者使用同一套绑定和 block 格式，但对
+host 来说是两个入口。
 
 ```
-0  1  group
-1  1  mode_req      V2K_SCOPE_OFF / LIVE / SNAP_ARMED
-2  2  trig_ch_slot  触发源 = 本组绑定的通道槽位 0..n_ch-1
+0  2  mode_req      V2K_SCOPE_OFF / STREAM / CAPTURE_ARMED
+2  2  trig_ch_slot  触发源 = 当前绑定的通道槽位 0..n_ch-1（STREAM 时忽略）
 4  4  trig_level    f32，**源值域**（f32 变量=值本身，ADC 计数=计数值；
                     固件无物理换算知识，host 按显示元数据折算后下发）
-8  1  trig_edge     V2K_TRIG_*
-9  1  pre_trig_pct  0..100
-10 2  prescaler     0 = 维持当前值
-12 2  block_n_ticks 0 = 维持当前值；旧 12-octet 请求按默认 N=10 解释
+8  2  trig_edge     V2K_TRIG_*（STREAM 时忽略）
+10 2  pre_trig_pct  0..100（STREAM 时忽略）
+12 2  prescaler     0 = 维持当前值
+14 2  block_n_ticks 0 = 维持当前值
 ```
 
-固件必须继续接受旧 12-octet 请求；该向后兼容扩展不提升 wire version。
-CPU2 写组 cfg 并发布 `cfg_seq`，回 ACK(OK)=已受理；
-模式实际跃迁经 STATUS 的 `scope_mode[group]` 确认。
+CPU2 写 cfg 并发布 `cfg_seq`，回 ACK(OK)=已受理；
+模式实际跃迁经 STATUS 的 `scope_mode` 确认。
 
 `DAQ_BIND` 请求（2 + 8k octets）——**运行时选通道，不重烧**：
 
 ```
-0  1  group
-1  1  n_ch          1..8
+0  1  n_ch          1..16
+1  1  reserved      置 0
 2  …  k × 通道绑定（8 octets，逐字段镜像 v2k_scope_ch_bind_t）:
       0:4 addr | 4:2 type | 6:2 reserved
 ```
@@ -273,38 +275,37 @@ CPU2 写组 cfg 并发布 `cfg_seq`，回 ACK(OK)=已受理；
 语义：addr 来源任意（描述符表或 DWARF）；样本按**原生宽度无损直拷**
 （I16/U16→2 octets，I32/U32/F32→4 octets，位模式原样，固件零转换零量化
 ——准确性优先）。物理量换算（如 ADC 计数→安培）是纯 host 侧显示元数据，
-不上线、不进固件。**仅组 mode==OFF 时可绑**。
-CPU2 写组 bind 区并发布 `bind_seq`，然后短暂等待（≤1 ms）CPU1 的
+不上线、不进固件。**仅 scope mode==OFF 时可绑**。
+CPU2 写 bind 区并发布 `bind_seq`，然后短暂等待（≤1 ms）CPU1 的
 `bind_ack_seq/bind_result`，把最终结果放进 ACK：OK / BAD_STATE（非 OFF，
 先 DAQ_CTRL(OFF)）/ BAD_PARAM（n_ch 或 type 非法），data=bind_seq；
 超时回 INTERNAL（CPU1 ISR 未运行）。
 
 ### 4.6 BLOCK_REQ / BLOCK_DATA（0x21 / 0xA1）
 
-请求（2 octets）：`{0:1 group, 1:1 max_blocks(1..2)}`
+请求（2 octets）：`{0:1 max_blocks(1..2), 1:1 reserved}`
 响应（8 + Σblock octets）：
 
 ```
-0  1  group
-1  1  count        0..max_blocks（0 = 当前无数据，合法）
-2  1  mode         该组当前 V2K_SCOPE_*
-3  1  reserved
+0  1  count        0..max_blocks（0 = 当前无数据，合法）
+1  1  mode         当前 V2K_SCOPE_*
+2  2  reserved
 4  2  overrun_cnt  生产侧累计丢块数（host 据此报"采集端过载"）
-6  2  remain_hint  环内尚可取的 block 数（host 调轮询节奏；snapshot 排空进度）
+6  2  remain_hint  环内尚可取的 block 数（host 调轮询节奏；冻结排空进度）
 8  …  count × block
 ```
 
 block = 示波平面内存布局原样上线（**热路径零重编码**）：
 
 ```
-0  4  start_tick | 4:2 block_seq | 6:2 group_id | 8:2 n_ticks | 10:2 n_ch
+0  4  start_tick | 4:2 block_seq | 6:2 flags | 8:2 n_ticks | 10:2 n_ch
 12 2  bind_seq      产生本块的绑定代号（host 换绑后丢弃不匹配旧块）
 14 2  stride_octets 每 tick 样本区宽度 = Σ 通道原生宽度（块自描述定界）
 16 …  样本区 n_ticks × stride_octets：tick-major，每 tick 内按绑定顺序，
       各通道按原生宽度连续排列（I16/U16=2，I32/U32/F32=4，LE 位模式无损）
 ```
 
-host 凭组内 `block_seq` 跳变检测丢块 → 画断口，**不存在重传**（基本规则 1）。
+host 凭 `block_seq` 跳变检测丢块 → 画断口，**不存在重传**（基本规则 1）。
 
 带宽参考（ISR 周期 20–100 kHz 待定）：20kHz×8ch×f32 = 640 KB/s；
 100kHz×8ch×f32 = 3.2 MB/s——均在 EtherCAT 实用吞吐内，物理层结论不变。
@@ -357,23 +358,25 @@ host 在 applied_seq 追上 commit_seq 前不得发起下一批 COMMIT。
 
 ### 5.3 示波流
 
-通道选择（任何模式开始前）：`DAQ_CTRL(OFF)` → `DAQ_BIND(group, 通道列表)`
-→ ACK(OK) 后方可启动。开机时 L1 已写入默认绑定（组 0 = 平台经典 8 通道），
-host 不发 BIND 也能直接看波形。
+通道选择（任何模式开始前）：`DAQ_CTRL(OFF)` → `DAQ_BIND(通道列表)` →
+ACK(OK) 后方可启动。开机时 L1 已写入默认绑定（前 8 个平台可观测量），host
+不发 BIND 也能直接看波形。
 
-**Live**：`DAQ_CTRL(mode=LIVE)` → host 持续 `BLOCK_REQ` 轮询（SCI 阶段
-即"软 PDO"；频率按 `remain_hint` 自适应）。环满生产者丢新块 + overrun_cnt++，
-流不停，host 画断口。
+**Stream 入口**：`DAQ_CTRL(mode=STREAM, prescaler, block_n_ticks)` → host
+持续 `BLOCK_REQ` 轮询（SCI 阶段即"软 PDO"；频率按 `remain_hint` 自适应）。
+环满生产者丢新块 + overrun_cnt++，流不停，host 凭 block_seq 画断口。
 
-**Snapshot**：`DAQ_CTRL(mode=SNAP_ARMED, trig…)` → CPU1 全速覆盖写环 +
-逐拍触发判定 → 命中后补采 post 段（深度 = 环深×(100-pre_trig_pct)%）→
-FROZEN（STATUS.scope_mode 可见）→ host `BLOCK_REQ` 慢速排空（remain_hint
-递减到 0）→ host 重新 ARM。pre-trigger 历史由环形结构天然保存；
-block 顺序由 host 按 `start_tick` 重建。
+**Capture 入口**：同一套通道绑定下发
+`DAQ_CTRL(mode=CAPTURE_ARMED, trig…, pre_trig_pct, prescaler, block_n_ticks)` →
+CPU1 按同一 block 格式覆盖写环并逐拍判定触发 → 命中后进入 CAPTURE_POST 补采
+post 段（深度 = 环深×(100-pre_trig_pct)%）→ CAPTURE_FROZEN
+（STATUS.scope_mode 可见）→ host `BLOCK_REQ` 慢速排空（remain_hint 递减到 0）→
+host 重新 ARM 或切回 STREAM。
+pre-trigger 历史由环形结构天然保存；block 顺序由 host 按 `start_tick` 重建。
 
-应用变量的"watch 窗口"= 把变量绑到慢速组（prescaler 大，如 1 kHz/10 Hz）
-跑 Live——自带 tick 时间戳且原生位模式无损（f32 看到的就是精确值），
-取代独立轮询式监控。
+应用变量的"watch 窗口"= 选择变量后用较大 `prescaler` 跑 STREAM——自带 tick
+时间戳且原生位模式无损，取代独立轮询式监控。需要每 tick 波形时把 prescaler
+设为 1；需要降低链路压力时增大 prescaler、减少通道或调小 block 频率。
 
 ### 5.4 错误处理与重同步
 
@@ -412,7 +415,7 @@ packed struct + memcpy 的现成库都需要重写其序列化核心，"省序�
 | 候选 | 不选的原因 |
 |---|---|
 | **XCP**（本领域行业标准） | 领域模型完美契合（CAL/DAQ 即参数/示波平面），但其变量描述靠离线 A2L（ELF 生成），与运行时枚举的思路相反——加私有枚举扩展后现成 master（CANape 等）即用不了，生态优势缩水大半；最小子集实现量 ~2–3k 行仍要 16-bit char 手写；DAQ 每事件一个 DTO 头在 100 kHz 下开销 20–30%，不如 50-tick 摊一头的 block；EtherCAT 阶段无标准 XCP 绑定。**保留**：语义词汇对齐 + 将来 CPU2 加 XCP 门面的退路。 |
-| MAVLink | 参数微服务是扁平 float 表，装不下 type/kind/prescaler/group 等运行时枚举元数据→描述符表仍需自定义消息；payload ≤255 octets→800B block 要 4 片重组；官方 C 生成代码 = packed struct + memcpy，C28x 等于重写生成器后端。保住的只有心跳与 XML 格式。 |
+| MAVLink | 参数微服务是扁平 float 表，装不下 type/kind/prescaler 等运行时枚举元数据→描述符表仍需自定义消息；payload ≤255 octets→800B block 要 4 片重组；官方 C 生成代码 = packed struct + memcpy，C28x 等于重写生成器后端。保住的只有心跳与 XML 格式。 |
 | nanopb / protobuf | 官方明确不支持 CHAR_BIT≠8 平台（自维护私有分支）；varint 让 golden vectors 人工不可核；.proto 表达不了共享 RAM 布局，共享 struct 仍需手写对齐——第二数据模型成本照付。 |
 | CBOR（控制面） | 有 Zephyr MCUmgr 先例，字段演进友好；但固件需自写 ~400 行 16-bit-char 安全编解码子集（造了个更通用的轮子），一协议两编码，vectors 需钉确定性编码。演进需求已由"追加字段+长度判别+重枚举机制"低成本覆盖。 |
 
@@ -457,7 +460,7 @@ pub enum SourceCommand {
     WriteParams(Vec<ParamWrite>),
     CommitParams,
     ReadValues { start: u16, count: u8 },
-    BindChannels { group: u8, channels: Vec<VarRef> },
+    BindChannels { channels: Vec<VarRef> },
     ConfigureScope(ScopeConfig),
     SystemCommand(SystemCommand),
 }
@@ -467,7 +470,7 @@ pub enum SourceEvent {
     Descriptors(Vec<VarDescriptor>),
     Status(DeviceStatus),
     Blocks(Vec<ScopeBlock>),
-    StreamGap { group: u8, expected: u16, received: u16 },
+    StreamGap { expected: u16, received: u16 },
     DeviceChanged { old_hash: u32, new_hash: u32 },
     // 参数、绑定、模式、错误与日志事件略
 }

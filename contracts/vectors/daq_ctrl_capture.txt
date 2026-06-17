@@ -1,0 +1,6 @@
+# vector: daq_ctrl_capture
+# DAQ_CTRL：Capture 入口进入 CAPTURE_ARMED，触发源=通道槽位 1 上升沿过 2.5，pre-trigger 30%，prescaler=1，block N=10
+# raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
+# wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
+raw: 52200008001000020001000000204000001e0001000a00a94f43c1
+wire: 0352200208021002020201010103204001021e0201020a05a94f43c100

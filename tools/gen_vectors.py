@@ -2,7 +2,7 @@
 """gen_vectors.py — Viewer2000 线上协议 golden test vectors 生成器
 
 本脚本是 docs/wire-spec.md 的可执行伪码：COBS / CRC-32C / 帧构造 /
-全部 v1 消息的参考实现。生成的 contracts/vectors/*.txt 是协议的
+全部 v2 消息的参考实现。生成的 contracts/vectors/*.txt 是协议的
 规范字节样本——固件 C 序列化器与上位机 Rust 解析器各自的 conformance
 test 必须对同一组样本通过。三方不一致时以 vectors 为准（见 spec 文首）。
 
@@ -88,7 +88,7 @@ for _case in (b"", b"\x00\x00", b"\x01" * 300, bytes(range(256))):
 # ---------------------------------------------------------------------------
 # 帧构造（wire-spec §3.1）
 # ---------------------------------------------------------------------------
-VER_MAGIC = 0x51
+VER_MAGIC = 0x52
 
 
 def raw_frame(msg_type: int, seq: int, payload: bytes) -> bytes:
@@ -104,20 +104,20 @@ def wire_frame(raw: bytes) -> bytes:
 # ---------------------------------------------------------------------------
 # 消息 payload 构造（wire-spec §4；字段顺序与偏移以 spec 为准）
 # ---------------------------------------------------------------------------
-def desc_entry(name, type_, kind, addr, presc, group):
+def desc_entry(name, type_, kind, addr, presc, reserved=0):
     return struct.pack("<16sHHIHH", name.encode("ascii"),
-                       type_, kind, addr, presc, group)
+                       type_, kind, addr, presc, reserved)
 
 
 # V2K_TYPE_* → (struct 格式码, 样本 octet 宽度)；样本按原生宽度无损直拷
 _TYPE_FMT = {0: ("h", 2), 1: ("H", 2), 2: ("i", 4), 3: ("I", 4), 4: ("f", 4)}
 
 
-def block(start_tick, block_seq, group_id, bind_seq, ch_types, samples_2d):
+def block(start_tick, block_seq, flags, bind_seq, ch_types, samples_2d):
     """block = 16 octet 头 + 样本区（tick-major，每 tick 内按绑定顺序原生宽度排列）"""
     n_ticks, n_ch = len(samples_2d), len(ch_types)
     stride = sum(_TYPE_FMT[t][1] for t in ch_types)
-    hdr = struct.pack("<IHHHHHH", start_tick, block_seq, group_id,
+    hdr = struct.pack("<IHHHHHH", start_tick, block_seq, flags,
                       n_ticks, n_ch, bind_seq, stride)
     body = b"".join(struct.pack("<" + _TYPE_FMT[t][0], v)
                     for row in samples_2d for t, v in zip(ch_types, row))
@@ -140,13 +140,13 @@ def build_cases():
     add("hello_req", "HELLO_REQ：空 payload", 0x01, 0x0001, b"")
     add("hello_resp", "HELLO_RESP：版本、build_hash、固件名、tick_hz 与能力位",
         0x81, 0x0001,
-        struct.pack("<HHIHH16sII", 1, 3, BUILD_HASH, 10, 0,
+        struct.pack("<HHIHH16sII", 2, 4, BUILD_HASH, 10, 0,
                     b"viewer2000", 20000, 0x7F))
 
     # ---- 4.2 STATUS ----
     add("status_req", "STATUS_REQ：空 payload（兼任链路心跳）", 0x02, 0x0002, b"")
     add("status_resp",
-        "STATUS_RESP：RUNNING 态，组 0=LIVE 其余 OFF",
+        "STATUS_RESP：RUNNING 态，Scope mode=STREAM",
         0x82, 0x0002,
         struct.pack("<HHHIIIIHHI4BIHH",
                     2,            # sys_state = RUNNING
@@ -159,7 +159,7 @@ def build_cases():
                     0,            # cal_result = OK
                     0,            # cal_fail_idx
                     BUILD_HASH,
-                    1, 0, 0, 0,   # scope_mode[4]: LIVE,OFF,OFF,OFF
+                    1, 0, 0, 0,   # scope mode/flags/reserved
                     9,            # cmd_ack_seq
                     0,            # cmd_result = OK
                     0))           # reserved
@@ -168,11 +168,11 @@ def build_cases():
     add("enum_req", "ENUM_REQ：从 0 开始要 8 条", 0x03, 0x0003,
         struct.pack("<HBB", 0, 8, 0))
     add("enum_resp_2entries",
-        "ENUM_RESP：总数 10，本页 2 条（vel_kp 参数 + iq_meas 快组示波通道）",
+        "ENUM_RESP：总数 10，本页 2 条（vel_kp 参数 + iq_meas 示波通道）",
         0x83, 0x0003,
         struct.pack("<HHBB", 10, 0, 2, 0)
         + desc_entry("vel_kp", 4, 0x0001, 0x0000A012, 0, 0)  # F32, PARAM
-        + desc_entry("iq_meas", 0, 0x0002, 0x0000A044, 1, 0))  # I16, SCOPE
+        + desc_entry("iq_meas", 0, 0x0002, 0x0000A044, 1))  # I16, SCOPE
     add("enum_resp_empty",
         "ENUM_RESP 边界：start_idx 越过总数 → count=0（合法的读完信号）",
         0x83, 0x0004, struct.pack("<HHBB", 10, 10, 0, 0))
@@ -199,49 +199,49 @@ def build_cases():
                       0x00000064, 0xFFFFFFF9))
 
     # ---- 4.5 DAQ_CTRL / DAQ_BIND ----
-    add("daq_ctrl_snapshot",
-        "DAQ_CTRL 新格式：组 0 进 SNAP_ARMED，触发源=通道槽位 1 上升沿过 2.5，"
-        "pre-trigger 30%，block N=10",
+    add("daq_ctrl_capture",
+        "DAQ_CTRL：Capture 入口进入 CAPTURE_ARMED，触发源=通道槽位 1 上升沿过 2.5，"
+        "pre-trigger 30%，prescaler=1，block N=10",
         0x20, 0x0008,
-        struct.pack("<BBHfBBHH", 0, 2, 1, 2.5, 0, 30, 0, 10))
-    add("daq_ctrl_legacy",
-        "DAQ_CTRL 旧 12-octet 格式：固件兼容接收并使用默认 block N=10",
+        struct.pack("<HHfHHHH", 2, 1, 2.5, 0, 30, 1, 10))
+    add("daq_ctrl_stream",
+        "DAQ_CTRL：Stream 入口连续流，trigger 字段被忽略，prescaler=1，默认 block N",
         0x20, 0x000D,
-        struct.pack("<BBHfBBH", 0, 1, 0, 0.0, 0, 0, 1))
+        struct.pack("<HHfHHHH", 1, 0, 0.0, 0, 0, 1, 0))
     add("daq_bind_2ch",
-        "DAQ_BIND：组 0 绑 2 通道（0xA044=I16 原生 2 octets；"
+        "DAQ_BIND：绑定 2 通道（0xA044=I16 原生 2 octets；"
         "0xC120=F32 原生 4 octets 无损——地址可来自描述符表或 DWARF）",
         0x22, 0x000C,
-        struct.pack("<BB", 0, 2)
+        struct.pack("<BB", 2, 0)
         + struct.pack("<IHH", 0x0000A044, 0, 0)    # I16 源
         + struct.pack("<IHH", 0x0000C120, 4, 0))   # F32 源（如 DWARF 来）
     add("ack_daq_bind", "ACK(DAQ_BIND)：OK，data=bind_seq=3",
         0xA2, 0x000C, struct.pack("<BBHI", 0, 0x22, 0, 3))
     add("ack_daq_bind_badstate",
-        "ACK(DAQ_BIND) 负例语义：组非 OFF → BAD_STATE（须先 DAQ_CTRL(OFF)）",
+        "ACK(DAQ_BIND) 负例语义：scope 非 OFF → BAD_STATE（须先 DAQ_CTRL(OFF)）",
         0xA2, 0x000D, struct.pack("<BBHI", 3, 0x22, 0, 4))
 
     # ---- 4.6 BLOCK ----
-    add("block_req", "BLOCK_REQ：组 0 最多取 2 块", 0x21, 0x0009,
-        struct.pack("<BB", 0, 2))
+    add("block_req", "BLOCK_REQ：最多取 2 块", 0x21, 0x0009,
+        struct.pack("<BB", 2, 0))
     add("block_data_1blk",
         "BLOCK_DATA：1 块（N=4×M=2 全 I16，stride=4，样本含 0 与负值"
         "——COBS 含零路径覆盖）",
         0xA1, 0x0009,
-        struct.pack("<BBBBHH", 0, 1, 1, 0, 0, 5)   # group0, count1, LIVE, overrun0, remain5
+        struct.pack("<BBBBHH", 1, 1, 0, 0, 0, 5)   # count1, RUN, overrun0, remain5
         + block(1000, 17, 0, 3, (0, 0),
                 [[0, 100], [-100, 0], [200, -200], [0, 300]]))
     add("block_data_mixed",
         "BLOCK_DATA：1 块混合宽度（N=2，通道=[F32, I16]，stride=6——"
         "钉死原生宽度交错布局：每 tick 内 F32 4 octets 后接 I16 2 octets）",
         0xA1, 0x000E,
-        struct.pack("<BBBBHH", 1, 1, 1, 0, 0, 0)   # group1, count1, LIVE
-        + block(2000, 5, 1, 2, (4, 0),
+        struct.pack("<BBBBHH", 1, 1, 0, 0, 0, 0)   # count1, RUN
+        + block(2000, 5, 0, 2, (4, 0),
                 [[1.5, -7], [-0.25, 32767]]))
     add("block_data_empty",
         "BLOCK_DATA 边界：count=0（环空，合法响应）",
         0xA1, 0x000A,
-        struct.pack("<BBBBHH", 0, 0, 1, 0, 0, 0))
+        struct.pack("<BBBBHH", 0, 1, 0, 0, 0, 0))
 
     # ---- 4.7 CMD ----
     add("cmd_app_start", "CMD：APP_START", 0x30, 0x000B,

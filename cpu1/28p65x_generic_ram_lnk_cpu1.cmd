@@ -28,8 +28,7 @@ MEMORY
    // RAMLS9_CLA    : origin = 0x006000, length = 0x002000  // Use only if configured as CLA program memory
 
    RAMGS0_PLANE     : origin = 0x010000, length = 0x001000
-   RAMGS0_SLOW      : origin = 0x011000, length = 0x001000
-   RAMGS13          : origin = 0x012000, length = 0x006000
+   RAMGS_SCOPE      : origin = 0x011000, length = 0x007000
    RAMGS4           : origin = 0x018000, length = 0x002000
 
    /* Flash Banks (128 sectors each) */
@@ -87,8 +86,7 @@ SECTIONS
       每个 section 内只有一个聚合对象（common/v2k_planes.h），
       因此对象基址 == 区块基址；运行期 v2k_assert_layout 自检兜底。 */
    v2k_gs0_cpu1   : > RAMGS0_PLANE, type=NOINIT /* 描述符表+参数状态+示波生产块 */
-   v2k_scope_slow : > RAMGS0_SLOW, type=NOINIT  /* group 1 慢速环 */
-   v2k_scope_fast : > RAMGS13, type=NOINIT      /* group 0 快速环 */
+   v2k_scope_ring : > RAMGS_SCOPE, type=NOINIT  /* Stream/Capture 共用示波环 */
    v2k_ccs_view    : > RAMD2, type=NOINIT        /* 冻结后 float[2048] 解交错视图 */
 
    v2k_msg_1to2 : > CPU1TOCPU2RAM_V2K, type=NOINIT

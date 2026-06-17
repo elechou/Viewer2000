@@ -25,7 +25,7 @@ static inline uint16_t v2k_scope_consumer_peek(
     {
         return 0u;
     }
-    end = (prod->mode == V2K_SCOPE_SNAP_FROZEN) ?
+    end = (prod->mode == V2K_SCOPE_CAPTURE_FROZEN) ?
           prod->frozen_end_idx : prod->wr_idx;
     if (idx == end)
     {
@@ -47,7 +47,7 @@ static inline void v2k_scope_consumer_release(
     cons->rd_idx++;
 }
 
-static inline void v2k_scope_consumer_begin_snapshot(
+static inline void v2k_scope_consumer_begin_frozen(
     const volatile v2k_scope_prod_t *prod,
     volatile v2k_scope_cons_t *cons)
 {

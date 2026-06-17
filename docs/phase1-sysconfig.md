@@ -11,7 +11,7 @@ linker/C 代码/契约 = 文本（有断言校验）**。
 | `cpu1/cpu1.c` | boot master：GS4 划转、描述符表发布、引导 CPU2、IPC ping-pong、心跳监视、红灯 1 Hz |
 | `cpu2/cpu2.c` | sync 会合、契约版本握手、心跳、pong 应答、绿灯 2 Hz |
 | `common/v2k_planes.h` | GS0/GS4/MSGRAM 区块聚合 struct + 对侧只读指针 |
-| 四份 `*_lnk_*.cmd` | Phase 3 后：`v2k_gs0_cpu1`→GS0 前半、`v2k_scope_slow`→GS0 后半、`v2k_scope_fast`→GS1-3；GS4 切出 0x200 词的 `v2k_gs4_cpu2` |
+| 四份 `*_lnk_*.cmd` | Phase 3 后：`v2k_gs0_cpu1`→GS0 前半、`v2k_scope_ring`→GS0 后半+GS1-3；GS4 切出 0x200 词的 `v2k_gs4_cpu2` |
 | `cpu*/v2k_check_contracts.c` | Phase 0 契约静态断言在 cl2000（CHAR_BIT=16）一侧编译生效 |
 
 ---

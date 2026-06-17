@@ -26,7 +26,7 @@
 typedef struct {
     v2k_desc_table_t   desc_table;    // 描述符表（magic 发布协议见 v2k_descriptor.h）
     v2k_param_status_t param_status;  // 参数应用状态 + 值镜像
-    v2k_scope_prod_t   scope_prod[V2K_SCOPE_MAX_GROUPS]; // 示波生产者控制块
+    v2k_scope_prod_t   scope_prod;    // 示波生产者控制块
 } v2k_gs0_plane_t;
 
 //-----------------------------------------------------------------------------
@@ -34,9 +34,9 @@ typedef struct {
 //-----------------------------------------------------------------------------
 typedef struct {
     v2k_param_shadow_t param_shadow;  // 参数双缓冲 shadow 区
-    v2k_scope_cfg_t    scope_cfg[V2K_SCOPE_MAX_GROUPS];  // 示波配置请求
-    v2k_scope_bind_t   scope_bind[V2K_SCOPE_MAX_GROUPS]; // 通道绑定请求
-    v2k_scope_cons_t   scope_cons[V2K_SCOPE_MAX_GROUPS]; // 消费者读索引
+    v2k_scope_cfg_t    scope_cfg;     // 示波配置请求
+    v2k_scope_bind_t   scope_bind;    // 通道绑定请求
+    v2k_scope_cons_t   scope_cons;    // 消费者读索引
 } v2k_gs4_plane_t;
 
 //-----------------------------------------------------------------------------
@@ -53,8 +53,8 @@ typedef struct {
 
 #if V2K_PLATFORM_C28X
 // 区块占用自检（单位 word = 16 bit；与 v2k_memmap.h 头部核算表一致）
-V2K_STATIC_ASSERT(sizeof(v2k_gs0_plane_t) == 1630u);
-V2K_STATIC_ASSERT(sizeof(v2k_gs4_plane_t) == 284u);
+V2K_STATIC_ASSERT(sizeof(v2k_gs0_plane_t) == 1570u);
+V2K_STATIC_ASSERT(sizeof(v2k_gs4_plane_t) == 178u);
 V2K_STATIC_ASSERT(sizeof(v2k_gs0_plane_t) <= V2K_GS0_PLANE_WORDS);
 V2K_STATIC_ASSERT(sizeof(v2k_gs4_plane_t) <= 0x200u);  // ≤ RAMGS4_V2K 子区（cpu2 .cmd）
 V2K_STATIC_ASSERT(sizeof(v2k_msg_1to2_t)  <= V2K_MSGRAM_V2K_WORDS);

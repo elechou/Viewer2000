@@ -68,28 +68,28 @@ V2K_ASSERT_SIZE_BITS(float, 32);
 // 线上协议版本：帧头 ver_magic 低 nibble。高 nibble 固定 0x5 作 resync 校验。
 // 版本语义：不兼容的帧格式/消息布局变更才允许 +1（描述符表内容变化不算——
 // 那由 build_hash 强制重枚举机制覆盖）。
-#define V2K_WIRE_VER        0x1u
-#define V2K_WIRE_VER_MAGIC  (0x50u | V2K_WIRE_VER)   /* = 0x51, 帧首 octet */
+#define V2K_WIRE_VER        0x2u
+#define V2K_WIRE_VER_MAGIC  (0x50u | V2K_WIRE_VER)   /* = 0x52, 帧首 octet */
 #define V2K_WIRE_MAX_PAYLOAD 1024u
 
 // 共享内存布局版本：任何共享 struct 字段变更必须 +1（CPU1/CPU2 固件不同期
 // 烧录时的握手自检用，见 v2k_command.h 握手流程）。
-#define V2K_CONTRACT_VER    3u
+#define V2K_CONTRACT_VER    4u
 
 //-----------------------------------------------------------------------------
 // 设备能力位（HELLO capabilities；只追加，不复用）
 //-----------------------------------------------------------------------------
 #define V2K_CAP_ENUM          (1uL << 0)
 #define V2K_CAP_CAL           (1uL << 1)
-#define V2K_CAP_DAQ_LIVE      (1uL << 2)
-#define V2K_CAP_DAQ_SNAPSHOT  (1uL << 3)
+#define V2K_CAP_SCOPE_STREAM  (1uL << 2)
+#define V2K_CAP_SCOPE_CAPTURE (1uL << 3)
 #define V2K_CAP_PRE_TRIGGER   (1uL << 4)
 #define V2K_CAP_SYSTEM_CMD    (1uL << 5)
 #define V2K_CAP_NATIVE_BLOCK  (1uL << 6)
 
 #define V2K_CAPABILITIES_NATIVE \
-    (V2K_CAP_ENUM | V2K_CAP_CAL | V2K_CAP_DAQ_LIVE | \
-     V2K_CAP_DAQ_SNAPSHOT | V2K_CAP_PRE_TRIGGER | \
+    (V2K_CAP_ENUM | V2K_CAP_CAL | V2K_CAP_SCOPE_STREAM | \
+     V2K_CAP_SCOPE_CAPTURE | V2K_CAP_PRE_TRIGGER | \
      V2K_CAP_SYSTEM_CMD | V2K_CAP_NATIVE_BLOCK)
 
 //-----------------------------------------------------------------------------

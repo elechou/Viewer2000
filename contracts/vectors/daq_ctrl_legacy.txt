@@ -1,6 +1,0 @@
-# vector: daq_ctrl_legacy
-# DAQ_CTRL 旧 12-octet 格式：固件兼容接收并使用默认 block N=10
-# raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
-# wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
-raw: 5120000d000c000001000000000000000001003111fd51
-wire: 035120020d020c010201010101010101010201053111fd5100

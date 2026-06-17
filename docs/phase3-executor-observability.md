@@ -12,8 +12,13 @@ Phase 2 证明了一条裸时基（ePWM→ADC→EOC ISR）和一条纯硬件保�
   其余每一步都归 L1。这是基本规则 7（可观测性 day 0）和规则 4（L3 只见物理量、
   不碰寄存器）在时间维度上的机制化：**没有不被采样的控制路径**。
 - **可观测性**——Phase 0 定稿的四个共享接口里，本阶段落地三个的生产侧：
-  描述符表（运行时枚举）、参数双缓冲（host→控制）、双模式 RAM 示波器
-  （控制→host，Live + Snapshot）。命令/状态平面 Phase 2 已落地。
+  描述符表（运行时枚举）、参数双缓冲（host→控制）、Stream/Capture 共用 RAM 示波器
+  （控制→host，Stream 连续流 + Capture 触发冻结）。命令/状态平面 Phase 2 已落地。
+
+> **2026-06-17 Scope contract 更新**：示波保留 Stream/Capture 两个入口，但不再暴露
+> 固定 8 通道 group。CPU1 只有一个 `scope_prod`，CPU2 只有一个 `scope_cfg/scope_bind/scope_cons`。
+> `STREAM` 是连续流，`CAPTURE_ARMED` 是 Capture 入口开启触发冻结，
+> `CAPTURE_FROZEN` 后可用 CCS view 或 `BLOCK_REQ` 排空。
 
 **本阶段的硬件验收对象是执行器本身，不是 FOC。** 验收只证明 ISR 在
 IDLE/RUNNING/FAULT 三态下持续采样、调度、示波，以及参数/示波两个平面端到端
@@ -33,8 +38,8 @@ CPUTIMER1 静态实例），**C 管运行时**（ISR 内容、多速率调度、
 | `cpu1/v2k_platform.h` | L1 暴露给 L3 的唯一逐拍接口：`user_step(const plat_in_t*, plat_out_t*)`，进 = 本拍物理量 + due 掩码，出 = 本拍占空比 |
 | `cpu1/v2k_user.c` | 默认 L3 示例（**弱符号**，应用可强定义覆盖）：把 `pwm1_duty_cmd` 直通到输出，无内部状态 |
 | `cpu1/v2k_registry.c/.h` | 描述符表注册；参数批次的后台机械校验 + ISR 安全点原子提交；10 Hz 值镜像刷新 |
-| `cpu1/v2k_scope_runtime.c/.h` | Live/Snapshot 示波生产者；后台配置/绑定的序号握手与容量计算；冻结后 CCS view 解交错 |
-| `common/v2k_scope_consumer.h` | CPU2/单元测试用的 SPSC 消费者 API（peek/release/begin_snapshot），内联只读 |
+| `cpu1/v2k_scope_runtime.c/.h` | Stream/Capture 共用示波生产者；后台配置/绑定的序号握手与容量计算；冻结后 CCS view 解交错 |
+| `common/v2k_scope_consumer.h` | CPU2/单元测试用的 SPSC 消费者 API（peek/release/begin_frozen），内联只读 |
 | `cpu1/cpu1.c` | 后台超级循环：按 `g_v2k_tick` deadline 服务四个共享平面，不阻塞等通信核 |
 | `tools/gen_build_hash.py` | pre-build 从 git HEAD 生成 `v2k_build_hash.h`，写入描述符表头 |
 
@@ -61,13 +66,12 @@ CPUTIMER1 静态实例），**C 管运行时**（ISR 内容、多速率调度、
   acquire→apply 的**控制段**、示波 epilogue 的**示波段**、整个 ISR 的**总时长**，
   各自记 max。它和 ePWM TBCTR 不是一回事——TBCTR 每周期回绕、只当中断延迟的
   代理量；CPUTIMER1 给的是绝对周期账。它的配置同样进 `v2k_tb_check` 读回兜底。
-- **示波默认全 `OFF`，但开箱即有默认绑定。** 上电时 `v2k_default_bind` 按注册序
-  自动绑描述符表里对应 group 的 `kind&SCOPE` 通道：group 0 = 8 个快通道，
-  group 1 = 8 个 1 kHz 慢速健康/保护通道（含 `tz_trip_cnt`），group 2/3 容量
-  为 0、永不进 ISR 热路径。**单组上限 `V2K_SCOPE_MAX_CH = 8`**——注册数超 8 会
-  被静默截掉尾部，所以慢组恰好注册 8 个；要更多慢量靠 host 重绑或启用第二慢组。
-  未采集时 ISR 示波路径只剩 group 0/1 的一个 active 判断。换通道必须先 `OFF`
-  （一个环里不混两套通道布局）。
+- **示波默认 `OFF`，但开箱即有默认绑定。** 上电时 `v2k_default_bind` 按注册序
+  自动绑定前 `V2K_SCOPE_DEFAULT_CH=8` 个 `kind&SCOPE` 平台量；host 可在 `OFF`
+  状态下重绑 1..`V2K_SCOPE_MAX_CH=16` 个 `(addr,type)` 通道。描述符里的
+  `prescaler` 只是 GUI 默认采样建议；实际采样分频由 `DAQ_CTRL` 的全局
+  `prescaler` 决定。未采集时 ISR 示波路径只剩一个 active 判断。换通道必须先
+  `OFF`（一个环里不混两套通道布局）。
 - **参数提交只做机械校验。** 每条写入按 `(addr,type)` 处理：type 必须合法，
   地址必须位于允许写入的 CPU1 数据区，32-bit 类型必须对齐；命中描述符表时
   还要求 `kind&PARAM` 且 type 一致。固件不做 `min/max` 范围检查、不 clamp、
@@ -114,15 +118,13 @@ CPUTIMER1 静态实例），**C 管运行时**（ISR 内容、多速率调度、
 
 | 区域 | 地址 | 用途 |
 |---|---|---|
-| GS0 前半 | `0x10000..0x10FFF` | 描述符表 + 参数状态 + 4 个示波生产者控制块 |
-| GS0 后半 | `0x11000..0x11FFF` | group 1 慢速环（`0x1000` words） |
-| GS1–GS3 | `0x12000..0x17FFF` | group 0 快速环（`0x6000` words） |
+| GS0 前半 | `0x10000..0x10FFF` | 描述符表 + 参数状态 + 单个示波生产者控制块 |
+| GS0 后半 + GS1–GS3 | `0x11000..0x17FFF` | Stream/Capture 共用 示波环（`0x7000` words） |
 | GS4 前 `0x200` words | `0x18000..` | 参数 shadow + 示波 cfg/bind/cons（**CPU2 属主**） |
 | RAMD2 | `0x1A000..` | 冻结后的 CCS view：解交错出的连续 `float data[2048]` |
 
-默认档位：group 0 = 8 通道、prescaler=1、`block_n_ticks=10`、mode=`OFF`；
-group 1 = 1 kHz（prescaler=`V2K_ISR_HZ/1000`）、`block_n_ticks=10`、mode=`OFF`；
-group 2/3 = `OFF` 且容量 0。
+默认档位：前 8 个平台可观测量已绑定，prescaler=1、`block_n_ticks=10`、
+mode=`OFF`。低速健康/保护量仍在描述符表中，host 可重绑后用较大 prescaler 采集。
 
 CPU1 后台是不含固定 `Delay` 的裸机事件循环：约 1 ms 一个 poll point 检查参数/
 示波/命令/CCS view 的 `seq` 变化；心跳、10 Hz 镜像、CPU2 健康检查、LED 各按
@@ -207,8 +209,8 @@ CPU1 会话常驻 Expressions（开 Continuous Refresh）：
 | `g_v2k_isr_budget_violation_cnt` | ISR 耗时达到控制周期预算的次数 |
 | `g_v2k_isr_ovf_cnt` | ADC 中断 overflow（丢拍）计数 |
 | `g_v2k_gs0.param_status` | 参数批次结果/失败下标/值镜像 |
-| `g_v2k_gs0.scope_prod[0..3]` | 各组示波状态/容量/配置结果/overrun/冻结范围 |
-| `g_v2k_ccs_view` | Snapshot 解交错后的连续 float 数据 |
+| `g_v2k_gs0.scope_prod` | 示波状态/容量/配置结果/overrun/冻结范围 |
+| `g_v2k_ccs_view` | 触发冻结后解交错出的连续 float 数据 |
 
 ### 4.1 器材：Phase 3 验收不需要逻辑分析仪
 
@@ -229,10 +231,10 @@ Phase 2 那台**示波器**即可——不接也能完成 §5 全部验收。**�
 
 | 会话 | 根符号（Expressions 直接键入） | 内容 | 用途 |
 |---|---|---|---|
-| **CPU1** | `g_v2k_gs0` | `desc_table` / `param_status` / `scope_prod[]` | 只读对照（所有应答/结果码在此看） |
-| **CPU1** | `g_v2k_ccs_view` | Snapshot 解交错缓冲；**请求也在 CPU1 会话发**（它在 CPU1 属主 RAMD2，不在 GS4） | 读 + 写请求 |
+| **CPU1** | `g_v2k_gs0` | `desc_table` / `param_status` / `scope_prod` | 只读对照（所有应答/结果码在此看） |
+| **CPU1** | `g_v2k_ccs_view` | 触发冻结解交错缓冲；**请求也在 CPU1 会话发**（它在 CPU1 属主 RAMD2，不在 GS4） | 读 + 写请求 |
 | **CPU1** | `g_v2k_tick` / `g_v2k_due_mask` / `g_v2k_isr_cycles`(`_max`) / `g_v2k_control_cycles`(`_max`) / `g_v2k_scope_cycles`(`_max`) / `g_v2k_isr_ovf_cnt` / `g_v2k_isr_budget_violation_cnt` / `g_v2k_scope_overrun_total` | 执行器标量（§4 表已列） | 只读 |
-| **CPU2** | `g_v2k_gs4` | `param_shadow` / `scope_cfg[]` / `scope_bind[]` / `scope_cons[]` | 一切参数 / 示波**写入** |
+| **CPU2** | `g_v2k_gs4` | `param_shadow` / `scope_cfg` / `scope_bind` / `scope_cons` | 一切参数 / 示波**写入** |
 
 CPU2 会话里**没有** `g_v2k_gs0` 实体（对侧只有只读指针），所以流程天生跨两个
 会话：**发布在 CPU2 会话写 `g_v2k_gs4.*`，应答/结果码回到 CPU1 会话看
@@ -244,13 +246,12 @@ CPU2 会话里**没有** `g_v2k_gs0` 实体（对侧只有只读指针），所�
 | 动作 | 发布序号（CPU2 会话写，最后 +1） | 应答（CPU1 会话轮询其追平 + 读结果码） |
 |---|---|---|
 | 参数提交 | `g_v2k_gs4.param_shadow.commit_seq` | `g_v2k_gs0.param_status.applied_seq` + `.result` |
-| 示波配置 | `g_v2k_gs4.scope_cfg[g].cfg_seq` | `g_v2k_gs0.scope_prod[g].cfg_ack_seq` + `.cfg_result` |
-| 通道绑定 | `g_v2k_gs4.scope_bind[g].bind_seq` | `g_v2k_gs0.scope_prod[g].bind_ack_seq` + `.bind_result` |
+| 示波配置 | `g_v2k_gs4.scope_cfg.cfg_seq` | `g_v2k_gs0.scope_prod.cfg_ack_seq` + `.cfg_result` |
+| 通道绑定 | `g_v2k_gs4.scope_bind.bind_seq` | `g_v2k_gs0.scope_prod.bind_ack_seq` + `.bind_result` |
 | CCS view | `g_v2k_ccs_view.request_seq` | `g_v2k_ccs_view.done_seq` + `.result`（同在 CPU1 会话） |
 
-`g` = 组号 0..3（默认 0=快组、1=慢组）。LIVE 排空还要看：生产者
-`g_v2k_gs0.scope_prod[g].wr_idx`（CPU1 会话）、消费者
-`g_v2k_gs4.scope_cons[g].rd_idx`（CPU2 会话）。
+STREAM 排空还要看：生产者 `g_v2k_gs0.scope_prod.wr_idx`（CPU1 会话）、消费者
+`g_v2k_gs4.scope_cons.rd_idx`（CPU2 会话）。
 
 **填字段的完整路径**（粘进 Expressions）：
 
@@ -259,16 +260,16 @@ CPU2 会话里**没有** `g_v2k_gs0` 实体（对侧只有只读指针），所�
   `writes[].addr` 取自描述符表（CPU1 会话看 `g_v2k_gs0.desc_table`）或 CPU1 `.map`；
   `value_bits` 是 32-bit 位模式——F32 参数想直接键入物理值，右键该表达式 →
   Number Format → **Float** 再填 `0.5` 这类值（否则得填 IEEE-754 十六进制）。
-- **绑定**（CPU2 会话）：`g_v2k_gs4.scope_bind[0].n_ch`、`.ch[0].addr`、
+- **绑定**（CPU2 会话）：`g_v2k_gs4.scope_bind.n_ch`、`.ch[0].addr`、
   `.ch[0].type`（每通道一组 addr / type），最后 `.bind_seq`。
-- **配置**（CPU2 会话）：`g_v2k_gs4.scope_cfg[0].mode_req`（`0`=OFF / `1`=LIVE /
-  `2`=SNAP_ARMED）、`.trig_ch_slot`、`.trig_level`、`.trig_edge`、`.pre_trig_pct`，
+- **配置**（CPU2 会话）：`g_v2k_gs4.scope_cfg.mode_req`（`0`=OFF / `1`=STREAM /
+  `2`=CAPTURE_ARMED）、`.trig_ch_slot`、`.trig_level`、`.trig_edge`、`.pre_trig_pct`，
   最后 `.cfg_seq`。
 
-**看波形 = snapshot 画图（§7），别看 Expressions 瞬时值。** 任何"随 tick 变化"的
+**看波形 = 触发冻结后画图（§7），别看 Expressions 瞬时值。** 任何"随 tick 变化"的
 量（`g_v2k_due_mask`、`pwm1_duty_cmd` vs `pwm1_duty`、触发前后波形）都靠 §7 的
-snapshot → 冻结 → CCS view → Graph 才画得出；Expressions 只适合读标量状态 / 计数，
-LIVE 环是给机器消费者的二进制流、不能直接画（§8）。
+CAPTURE_ARMED → CAPTURE_POST → CAPTURE_FROZEN → CCS view → Graph 才画得出；Expressions 只适合读标量状态 / 计数，
+STREAM 环是给机器消费者的二进制流、不能直接画（§8）。
 
 **CCS Graph 指向连续缓冲**（CPU1 会话）：Window → Show View → Graph → Single Time；
 Start Address = `&g_v2k_ccs_view.data`、Acquisition Buffer Size = `g_v2k_ccs_view.count`、
@@ -283,14 +284,14 @@ Sampling Rate Hz = 等效采样率。
    `g_v2k_*` 并开 Continuous Refresh。
 2. **基线**：确认 `g_v2k_tick` 持续递增、`g_v2k_isr_ovf_cnt == 0`、
    `g_v2k_isr_budget_violation_cnt == 0`（无 halt 窗口内）。
-3. **due 位别**（用 snapshot 看波形，不是 LIVE）：`g_v2k_due_mask` 的 Expressions
+3. **due 位别**（用触发冻结看波形，不是 RUN）：`g_v2k_due_mask` 的 Expressions
    瞬时值刷新太慢、抓不全每拍。按 §7 的 A→D 跑一次，触发源与查看通道都设成
-   `due_mask`（group 0 槽位 **6**）：`g_v2k_gs4.scope_cfg[0].trig_ch_slot = 6`、
+   `due_mask`（默认绑定槽位 **6**）：`g_v2k_gs4.scope_cfg.trig_ch_slot = 6`、
    `.trig_level = 0.5`、`.trig_edge = 0`、`.pre_trig_pct = 50`，冻结后
    `g_v2k_ccs_view.channel_slot = 6` 画图。曲线是每拍的 due 位模式
    （`1`=1 kHz、`2`=100 Hz、`3`=两者同拍）：数相邻非零样本的 tick 间隔按下方 due
    间隔表核对，并确认**全程无值 3 的样本**（两个 due 永不同拍）。若环深不足以显出
-   100 Hz 的 200-tick 间隔，把 `g_v2k_gs4.scope_cfg[0].block_n_ticks` 调大再触发。
+   100 Hz 的 200-tick 间隔，把 `g_v2k_gs4.scope_cfg.block_n_ticks` 调大再触发。
 4. **参数提交槽**：跑一次 §6 的合法写，确认提交槽也与两个 due 错开、发布到生效
    端到端 < 2 ms。
 5. **ISR 预算**：连跑一段（中途按 §7/§8 开关一次 scope），读
@@ -301,7 +302,7 @@ Sampling Rate Hz = 等效采样率。
    CPUTIMER1 数字互证。跳过此步不影响验收。
 7. 按 §1 切 RAM / 100 kHz（**两边都改**），重复 2–6，重点看预算 / overflow 恒 0、
    `control_cycles_max` 仍留稳定余量。
-8. **跨状态连续性**（单独一次）：保持 group 0 LIVE，按 Phase 2 的
+8. **跨状态连续性**（单独一次）：保持 Scope Stream，按 Phase 2 的
    START/STOP/TZ/CLEAR_FAULT 流程切 IDLE/RUNNING/FAULT。状态通道应反映跃迁，但
    `g_v2k_tick`、block `start_tick`、示波生产者**不得因软件状态切换而重置或停走**；
    只有消费者不及时导致的显式 overrun 才允许出现序号断口。
@@ -320,7 +321,7 @@ Sampling Rate Hz = 等效采样率。
 | `g_v2k_isr_budget_violation_cnt` | 无 halt 窗口内恒 0 |
 | `g_v2k_isr_ovf_cnt` | 恒 0 |
 
-步骤 3 的 due 间隔（snapshot 画出 due_mask 后数相邻非零样本的 tick 间隔）：
+步骤 3 的 due 间隔（触发冻结画出 due_mask 后数相邻非零样本的 tick 间隔）：
 
 | ISR 频率 | 1 kHz due 间隔 | 100 Hz due 间隔 |
 |---|---:|---:|
@@ -348,7 +349,7 @@ Sampling Rate Hz = 等效采样率。
 | 未注册但允许写地址 | CPU1 `.bss/.data/.bss:output` 中未注册的测试变量 | 写入成功 |
 | 批原子性 | 一批里先合法项、后机械非法项 | 整批拒绝、合法项也不变，`fail_idx` 指向首个非法项 |
 
-5. **命令 vs 应用同线**：合法写入后按 §7 做一次 snapshot（二者在 group 0 槽位
+5. **命令 vs 应用同线**：合法写入后按 §7 做一次触发冻结（二者在默认绑定槽位
    2 / 3，同一冻结窗口分别取 `channel_slot = 2`、`= 3` 画图），两条曲线 `start_tick`
    相同 → 命令值与应用值在同一控制时间线上。
 6. **三态照跑**：IDLE / FAULT 下重复一条合法写，确认参数提交与 10 Hz 镜像照常
@@ -361,17 +362,17 @@ Sampling Rate Hz = 等效采样率。
    仍要外部跳线引脚拉高才放行（`v2k_fault.c` 读 `V2K_FAULT_TZ_GPIO`），跳线本身未动
    → 直接 CLEAR_FAULT 即可回 IDLE。
 
-## 7. 验证 C — Snapshot + CCS Graph
+## 7. 验证 C — 触发冻结 + CCS Graph
 
-**在 CCS 里能画成波形的只有 snapshot。** 冻结后 CPU1 后台
+**在 CCS 里能画成波形的是冻结窗口。** 冻结后 CPU1 后台
 `v2k_scope_ccs_view_service` 把环里**交错的多通道 block 解交错**成单通道连续
-`float` 数组 `g_v2k_ccs_view.data[]`，Graph 直接读它。**LIVE 不产生可绘图数组**
+`float` 数组 `g_v2k_ccs_view.data[]`，Graph 直接读它。**STREAM 不产生可绘图数组**
 （环里是原生宽度交错的二进制块，解交错器只认 FROZEN，见 §8）——想"看波形"就走
 本节。
 
-group 0 上电默认已绑好 8 个快通道，**无需重新 BIND**；通道槽位 = 描述符表登记顺序：
+上电默认已绑好 8 个平台快通道，**无需重新 BIND**；通道槽位 = 描述符表登记顺序：
 
-| group 0 槽位 | 通道 | 类型 |
+| 默认槽位 | 通道 | 类型 |
 |---:|---|---|
 | 0 | `adc_a0_raw` | U16 |
 | 1 | `adc_a0_v` | F32 |
@@ -384,12 +385,12 @@ group 0 上电默认已绑好 8 个快通道，**无需重新 BIND**；通道槽
 
 下面**从头到尾跑通一次**，以触发源 = `pwm1_duty_cmd`（槽位 2）为例：
 
-**A. 武装 snapshot**（CPU2 会话，写 `g_v2k_gs4.scope_cfg[0]`）：
+**A. 武装触发冻结**（CPU2 会话，写 `g_v2k_gs4.scope_cfg`）：
 
-1. `.mode_req = 2`（SNAP_ARMED）、`.trig_ch_slot = 2`、`.trig_edge = 0`（RISE）、
+1. `.mode_req = 2`（ARMED）、`.trig_ch_slot = 2`、`.trig_edge = 0`（RISE）、
    `.trig_level = 0.5`、`.pre_trig_pct = 50`；
 2. **最后** `.cfg_seq = 旧值 + 1`；
-3. 回 **CPU1 会话**确认 `g_v2k_gs0.scope_prod[0].cfg_ack_seq` 追平、
+3. 回 **CPU1 会话**确认 `g_v2k_gs0.scope_prod.cfg_ack_seq` 追平、
    `.cfg_result == 0`、`.mode == 2`。
 
 **B. 制造触发跃迁**（让 `pwm1_duty_cmd` 从 <0.5 升到 ≥0.5），两种都行：
@@ -398,13 +399,13 @@ group 0 上电默认已绑好 8 个快通道，**无需重新 BIND**；通道槽
   CPU1 变量即触发，绕过参数平面）；
 - 走参数平面（CPU2 会话，顺带验 §6）：按 §6 提交 `pwm1_duty_cmd = 0.6`。
 
-  观察 CPU1 会话 `g_v2k_gs0.scope_prod[0]`：`.mode` 走 `2(ARMED) → 3(TRIG) →
+  观察 CPU1 会话 `g_v2k_gs0.scope_prod`：`.mode` 走 `2(ARMED) → 3(POST) →
   4(FROZEN)`、`.state_seq` 递增、`.trig_tick` 落在跃迁附近、`.frozen_count > 0`。
 
 **C. 解交错出 CCS view**（CPU1 会话——`g_v2k_ccs_view` 在 CPU1 属主 RAMD2，不在
 GS4）。想看哪个通道就填它的槽位，例如看触发的 `pwm1_duty_cmd`：
 
-1. `g_v2k_ccs_view.group = 0`、`.channel_slot = 2`；
+1. `g_v2k_ccs_view.channel_slot = 2`；
 2. **最后** `.request_seq = 旧值 + 1`；
 3. 等 `.done_seq == request_seq`，确认 `.result == 0`（OK）、`.count > 0`、
    `.start_tick` = 冻结窗口首块 tick。
@@ -412,7 +413,7 @@ GS4）。想看哪个通道就填它的槽位，例如看触发的 `pwm1_duty_cm
 **D. 画出来**（CPU1 会话）：Window → Show View → Graph → Single Time；
 Start Address = `&g_v2k_ccs_view.data`、Acquisition Buffer Size =
 `g_v2k_ccs_view.count`、DSP Data Type = **32-bit floating point**、Q value = 0。
-曲线即该通道随 tick 的波形（每样本 = 一个组 tick；prescaler=1 时 = 一个 ISR tick）。
+曲线即该通道随 tick 的波形（prescaler=1 时 = 一个 ISR tick）。
 **换通道不必重新触发**：同一冻结窗口改 `.channel_slot`（如 `3` 看 `pwm1_duty`）→
 再递增 `.request_seq` → 重画即可。
 
@@ -425,51 +426,48 @@ Start Address = `&g_v2k_ccs_view.data`、Acquisition Buffer Size =
 | 下降沿 | `trig_edge=1`(FALL)，B 步反向把 `pwm1_duty_cmd` 降到 0.4 | 状态机同上，命中下降沿 |
 | pre-trigger | `pre_trig_pct` 分别测 0 / 30 / 50 / 100% | 触发前后样本比例符合配置；100% 时仍至少留 1 个 post 样本 |
 | 部分末块 | 在非 block 边界触发冻结 | 末块 `hdr.n_ticks` 可小于 `block_n_ticks` |
-| 重复 ARM | FROZEN 后 OFF → ARM → 再触发 | `state_seq` 增加，旧冻结范围不污染新 snapshot |
+| 重复 ARM | FROZEN 后 OFF → ARM → 再触发 | `state_seq` 增加，旧冻结范围不污染新窗口 |
 | 非法配置 | 非法 `trig_ch_slot` / `pre_trig_pct>100` / `trig_edge` | `cfg_result = BAD_PARAM`（非 0），原运行态不被破坏 |
 
 冻结块按时间顺序从 `frozen_end_idx − frozen_count` 起，触发样本属于 post 段。
 
-## 8. 验证 D — Live + CPU2 consumer
+## 8. 验证 D — Scope Stream + CPU2 consumer
 
-LIVE 环满时丢弃新 block、`overrun_cnt` 加，ISR 绝不等消费者（基本规则 1）。
+STREAM 环满时丢弃新 block、`overrun_cnt` 加，ISR 绝不等消费者（基本规则 1）。
 生产侧配置写法见 §4.2，全部从 **CPU2 会话**戳。
 
-⚠️ **LIVE 不能画波形**：环里是原生宽度交错的二进制 block，CCS view 解交错器只认
-FROZEN 快照（`v2k_scope_ccs_view_service`），把 LIVE 喂给 Graph 是乱码。要看波形
-走 §7 的 snapshot。本节只验**块头字段 + SPSC 索引语义**，用 Expressions / Memory
-Browser 看，不走 Graph：**CPU1 会话**加表达式 `*(v2k_block_hdr_t *)g_v2k_scope_fast`
-（group 1 用 `g_v2k_scope_slow`）展开即是 block 0 的头，LIVE 写满回绕时其字段随之
+⚠️ **STREAM 不能直接给 CCS Graph**：环里是原生宽度交错的二进制 block，CCS view
+解交错器只认 FROZEN 窗口。要看波形走 §7。本节只验**块头字段 + SPSC 索引语义**，
+用 Expressions / Memory Browser 看，不走 Graph：**CPU1 会话**加表达式
+`*(v2k_block_hdr_t *)g_v2k_scope_ring`，RUN 写满回绕时其字段随之
 刷新。
 
-1. 对 group 0 发 `OFF`（`scope_cfg[0].mode_req = 0` + 递增 `cfg_seq`），确认
+1. 发 `OFF`（`scope_cfg.mode_req = 0` + 递增 `cfg_seq`），确认
    `cfg_ack_seq` 前进、`cfg_result == OK`；
-2. `OFF` 下发合法绑定（`scope_bind[0]` + 递增 `bind_seq`），确认 `bind_ack_seq`
-   前进、`bind_result == OK`，`scope_prod[0]` 的 `n_ch / block_slot_words /
+2. `OFF` 下发合法绑定（`scope_bind` + 递增 `bind_seq`），确认 `bind_ack_seq`
+   前进、`bind_result == OK`，`scope_prod` 的 `n_ch / block_slot_words /
    ring_capacity` 与绑定匹配；
-3. 发 `LIVE`（`scope_cfg[0].mode_req = 1` + 递增 `cfg_seq`），确认 `mode == 1`、
+3. 发 `STREAM`（`scope_cfg.mode_req = 1` + 递增 `cfg_seq`），确认 `mode == 1`、
    `state_seq` 增加；
-4. 默认 group 0 每 10 tick 发一个 block：看 `g_v2k_gs0.scope_prod[0].wr_idx` 每
-   10 tick +1；用上面的 `*(v2k_block_hdr_t *)g_v2k_scope_fast` 检查块头
-   `start_tick` / `block_seq` / `group_id` / `n_ticks` / `n_ch` / `bind_seq` /
+4. 默认每 10 tick 发一个 block：看 `g_v2k_gs0.scope_prod.wr_idx` 每
+   10 tick +1；用上面的 `*(v2k_block_hdr_t *)g_v2k_scope_ring` 检查块头
+   `start_tick` / `block_seq` / `flags` / `n_ticks` / `n_ch` / `bind_seq` /
    `stride_octets`；
 5. 暂停消费者直到环满：`overrun_cnt` 与 `g_v2k_scope_overrun_total` 增加，但
    ISR overflow / 预算违规**不增加**；
-6. LIVE 中发新绑定必须返回 `V2K_SCOPE_RESULT_BAD_STATE`；
-7. 对 group 1 重复 LIVE，block `start_tick` 间隔应为 `10 × V2K_ISR_HZ/1000` tick，
-   且不扰动 group 0。
+6. STREAM 中发新绑定必须返回 `V2K_SCOPE_RESULT_BAD_STATE`。
 
 Phase 3 不验 SCI/EtherCAT 吞吐，只验**公共 consumer API 的 SPSC 索引语义**。用
-CPU2 侧最小诊断函数或单元测试调 `v2k_scope_consumer_peek/release/begin_snapshot`：
+CPU2 侧最小诊断函数或单元测试调 `v2k_scope_consumer_peek/release/begin_frozen`：
 
 | 场景 | 通过标准 |
 |---|---|
-| LIVE 空环 | `peek` 返回无数据，`rd_idx` 不变 |
-| LIVE 有块 | `peek` 返回的 header 与 CPU1 环内数据一致 |
+| STREAM 空环 | `peek` 返回无数据，`rd_idx` 不变 |
+| STREAM 有块 | `peek` 返回的 header 与 CPU1 环内数据一致 |
 | release | 每次只让 `rd_idx + 1`，不动 CPU1 的 `wr_idx` |
 | 连续读取 | 正常时 `block_seq` 连续；overrun 后凭 seq 跳变发现断口 |
-| SNAPSHOT frozen | 从 `frozen_end_idx − frozen_count` 起，正好读完 `frozen_count` 个 block |
-| SNAPSHOT partial | 保留末块真实 `hdr.n_ticks`，消费者不假设固定 N |
+| FROZEN 窗口 | 从 `frozen_end_idx − frozen_count` 起，正好读完 `frozen_count` 个 block |
+| FROZEN partial | 保留末块真实 `hdr.n_ticks`，消费者不假设固定 N |
 
 Phase 3 不提供单核编译路径：CPU1 始终划转 GS4 并引导 CPU2，CPU2 不得写 CPU1
 的 producer 字段。
@@ -486,8 +484,8 @@ Phase 2 已验过的 ePWM/ADC/TZ 与 START/STOP/FAULT/CLEAR_FAULT，按
 | 双核、时基、TZ、命令状态机 | Phase 2 | 原 Phase 2 验收全部回归通过 |
 | 调度、状态连续性、ISR 预算 | §5 | 20/100 kHz 的 due、cycle、overflow、跨状态 scope 全通过 |
 | 参数双缓冲 | §6 | 合法、机械非法拒绝、批原子性全通过 |
-| Snapshot 与 CCS Graph | §7 | 两种边沿、四档 pre-trigger、partial block、重复 ARM 全通过 |
-| Live 与 CPU2 consumer | §8 | block 头、overrun、换绑拒绝、SPSC 索引语义全通过 |
+| 触发冻结与 CCS Graph | §7 | 两种边沿、四档 pre-trigger、partial block、重复 ARM 全通过 |
+| Scope Stream 与 CPU2 consumer | §8 | block 头、overrun、换绑拒绝、SPSC 索引语义全通过 |
 | 实时模式（halt 行为） | Phase 2 + §5 | halt 时 TZ6 保持安全，time-critical ISR/tick 继续，overflow 不增长 |
 
 记录进 BRINGUP.md Phase 3 区：
@@ -497,7 +495,7 @@ Phase 2 已验过的 ePWM/ADC/TZ 与 START/STOP/FAULT/CLEAR_FAULT，按
 - 20 kHz 与 100 kHz 各一组 `g_v2k_isr_cycles_max` / `g_v2k_control_cycles_max` /
   `g_v2k_scope_cycles_max` 与 overflow/预算计数；
 - 参数平面用例结果表；
-- Live/Snapshot 的关键 producer 字段 + CCS Graph 截图或文字记录；
+- STREAM/CAPTURE_ARMED 的关键 producer 字段 + CCS Graph 截图或文字记录；
 - START/STOP/FAULT/CLEAR_FAULT 与实时模式回归结果。
 
 以上全部完成并落地后，才打 tag `phase3-executor-observability`。

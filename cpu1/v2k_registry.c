@@ -91,8 +91,7 @@ static void v2k_desc_name(char dst[V2K_NAME_LEN], const char *src)
 }
 
 static void v2k_desc_add(const char *name, uint16_t type, uint16_t kind,
-                         volatile void *addr, uint16_t prescaler,
-                         uint16_t group)
+                         volatile void *addr, uint16_t prescaler)
 {
     v2k_desc_table_t *table = &g_v2k_gs0.desc_table;
     uint16_t idx = table->hdr.entry_count;
@@ -109,7 +108,7 @@ static void v2k_desc_add(const char *name, uint16_t type, uint16_t kind,
     entry->kind = kind;
     entry->addr = v2k_addr(addr);
     entry->prescaler = prescaler;
-    entry->group = group;
+    entry->reserved = 0u;
     table->hdr.entry_count = (uint16_t)(idx + 1u);
 }
 
@@ -124,46 +123,44 @@ void v2k_registry_init(v2k_build_hash_t build_hash)
     table->hdr.entry_stride_words = (uint16_t)sizeof(v2k_desc_entry_t);
 
     v2k_desc_add("adc_a0_raw", V2K_TYPE_U16, V2K_KIND_SCOPE,
-                 &g_v2k_adc_a0, 1u, 0u);
+                 &g_v2k_adc_a0, 1u);
     v2k_desc_add("adc_a0_v", V2K_TYPE_F32, V2K_KIND_SCOPE,
-                 &g_v2k_adc_a0_v, 1u, 0u);
+                 &g_v2k_adc_a0_v, 1u);
     v2k_desc_add("pwm1_duty_cmd", V2K_TYPE_F32,
                  V2K_KIND_PARAM | V2K_KIND_SCOPE,
-                 &g_v2k_pwm_duty_cmd, 1u, 0u);
+                 &g_v2k_pwm_duty_cmd, 1u);
     v2k_desc_add("pwm1_duty", V2K_TYPE_F32, V2K_KIND_SCOPE,
-                 &g_v2k_pwm_duty_applied, 1u, 0u);
+                 &g_v2k_pwm_duty_applied, 1u);
     v2k_desc_add("isr_cycles", V2K_TYPE_U32, V2K_KIND_SCOPE,
-                 &g_v2k_isr_cycles, 1u, 0u);
+                 &g_v2k_isr_cycles, 1u);
     v2k_desc_add("isr_latency", V2K_TYPE_U16, V2K_KIND_SCOPE,
-                 &g_v2k_isr_lat, 1u, 0u);
+                 &g_v2k_isr_lat, 1u);
     v2k_desc_add("due_mask", V2K_TYPE_U16, V2K_KIND_SCOPE,
-                 &g_v2k_due_mask, 1u, 0u);
+                 &g_v2k_due_mask, 1u);
     v2k_desc_add("sys_state", V2K_TYPE_U16, V2K_KIND_SCOPE,
-                 &g_v2k_sm_state, 1u, 0u);
+                 &g_v2k_sm_state, 1u);
 
-    // group 1 = 1 kHz 慢速健康/保护组。单组默认绑定上限 V2K_SCOPE_MAX_CH(=8)：
-    // v2k_default_bind 按注册序取前 8 个，注册数超 8 会静默丢掉尾部通道，
-    // 因此这里保持恰好 8 个（含保护信号 tz_trip_cnt）。需要更多慢量时由 host
-    // 经 DAQ_BIND 重绑，或启用第二慢组。
+    // 后半部分是低速健康/保护量；prescaler 只是 Scope2000 的默认采样建议。
+    // Stream/Capture 复用同一热路径，实际采样分频由 host 在 DAQ_CTRL 中统一下发。
     v2k_desc_add("fault_code", V2K_TYPE_U16, V2K_KIND_SCOPE,
-                 &g_v2k_fault_code, slow_div, 1u);
+                 &g_v2k_fault_code, slow_div);
     v2k_desc_add("cpu2_alive", V2K_TYPE_U16, V2K_KIND_SCOPE,
-                 &g_cpu2_alive, slow_div, 1u);
+                 &g_cpu2_alive, slow_div);
     v2k_desc_add("isr_overflow", V2K_TYPE_U32, V2K_KIND_SCOPE,
-                 &g_v2k_isr_ovf_cnt, slow_div, 1u);
+                 &g_v2k_isr_ovf_cnt, slow_div);
     v2k_desc_add("isr_budget", V2K_TYPE_U32, V2K_KIND_SCOPE,
-                 &g_v2k_isr_budget_violation_cnt, slow_div, 1u);
+                 &g_v2k_isr_budget_violation_cnt, slow_div);
     v2k_desc_add("isr_cycles_max", V2K_TYPE_U32, V2K_KIND_SCOPE,
-                 &g_v2k_isr_cycles_max, slow_div, 1u);
+                 &g_v2k_isr_cycles_max, slow_div);
     v2k_desc_add("ctrl_cycles_max", V2K_TYPE_U32, V2K_KIND_SCOPE,
-                 &g_v2k_control_cycles_max, slow_div, 1u);
+                 &g_v2k_control_cycles_max, slow_div);
     // scope_cyc_max 未注册：示波段周期 = isr_cycles_max − ctrl_cycles_max 即可
     // 推得，为保住保护信号 tz_trip_cnt 让出这个槽（仍可在 CCS 直接看
     // g_v2k_scope_cycles_max，或 host 经 DWARF 绑定）。
     v2k_desc_add("scope_overrun", V2K_TYPE_U32, V2K_KIND_SCOPE,
-                 &g_v2k_scope_overrun_total, slow_div, 1u);
+                 &g_v2k_scope_overrun_total, slow_div);
     v2k_desc_add("tz_trip_cnt", V2K_TYPE_U32, V2K_KIND_SCOPE,
-                 &g_v2k_tz_int_cnt, slow_div, 1u);
+                 &g_v2k_tz_int_cnt, slow_div);
 
     table->hdr.magic = V2K_DESC_MAGIC;
 }

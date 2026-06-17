@@ -14,7 +14,7 @@ Phase 3 的 CCS Graph 直接读 CPU1 内存，绕过了 CPU2、GS4 消费者索�
 CPU1 ISR
   -> 描述符表 / 参数平面 / Scope SPSC 环 / 命令状态
   -> CPU2 共享接口消费者
-  -> Viewer2000 wire v1（显式序列化）
+  -> Viewer2000 wire v2（显式序列化）
   -> COBS + CRC-32C
   -> SCIA / GPIO42,43 / XDS110 VCP
   -> Scope2000 V2kSource
@@ -25,17 +25,25 @@ CPU1 ISR
 115200 baud 不可能承载平台的 100 kHz × 8ch 性能锚点；最终连续高速链路仍是
 Phase 6 EtherCAT。SCI 只负责在低成本物理链路上提前暴露双核和 host 端问题。
 
+> **2026-06-17 Scope contract 更新**：Scope 暴露 Stream 和 Capture 两个入口。
+> `DAQ_BIND` 不再带 group，`DAQ_CTRL(STREAM)` 是连续流，
+> `DAQ_CTRL(CAPTURE_ARMED)` 启动设备侧触发冻结；冻结后仍用 `BLOCK_REQ`
+> 排空同一种 block。所有 `scope_prod` /
+> `scope_cfg` / `scope_bind` / `scope_cons` 都是单个对象，不再是 `[group]` 数组。
+> 本文后续若出现旧的单入口或 group 说法，按本段和
+> [wire-spec.md](wire-spec.md) v2 为准。
+
 ## 我已完成的部分（仅供对照）
 
 | 产物 | 内容 |
 |---|---|
-| `contracts/v2k_common.h`、`v2k_command.h` | contract v3；HELLO 的 `tick_hz/capabilities`；STATUS 的 `cmd_ack_seq/cmd_result`；原生能力位 |
-| `docs/wire-spec.md` | wire v1 消息、重试幂等、build-hash 重枚举、独立兼容桥边界 |
+| `contracts/v2k_common.h`、`v2k_command.h` | contract v4；HELLO 的 `tick_hz/capabilities`；STATUS 的 `cmd_ack_seq/cmd_result`；原生能力位 |
+| `docs/wire-spec.md` | wire v2 消息、Stream/Capture 共用 Scope、重试幂等、build-hash 重枚举、独立兼容桥边界 |
 | `contracts/vectors/`、`tools/gen_vectors.py` | HELLO/STATUS/ENUM/CAL/DAQ/CMD/BLOCK golden vectors 与负例 |
 | `cpu2/v2k_sci_service.c/.h` | SCIA 收发、COBS、CRC-32C、请求分派、响应重放、共享平面服务和诊断计数 |
 | `cpu2/cpu2.c` | CPU2 超级循环接入 SCI 服务；本地心跳不进入控制时间 |
 | `cpu1/cpu1.c` | 发布 `tick_hz`，供 HELLO 与 host 时间轴使用 |
-| 同级 `Scope2000` 仓库 | Rust 2024 + egui；codec/transport/service 分层；SCI transport；变量、参数、Live、Snapshot、CSV、控制台 |
+| 同级 `Scope2000` 仓库 | Rust 2024 + egui；codec/transport/service 分层；SCI transport；变量、参数、Stream/Capture 共用 Scope、CSV、控制台 |
 
 尚未完成且**不能跳过**的硬件配置整改：
 
@@ -198,8 +206,8 @@ Phase 3.5 固定使用：
 
 | 项 | 值 |
 |---|---|
-| `V2K_WIRE_VER` | 1 |
-| `V2K_CONTRACT_VER` | 3 |
+| `V2K_WIRE_VER` | 2 |
+| `V2K_CONTRACT_VER` | 4 |
 | 最大 payload | 1024 octets |
 | framing | COBS，`0x00` 定界 |
 | integrity | CRC-32C |
@@ -218,7 +226,7 @@ Phase 3.5 固定使用：
 HELLO 必须报告以下原生能力：
 
 ```text
-ENUM | CAL | DAQ_LIVE | DAQ_SNAPSHOT |
+ENUM | CAL | SCOPE_STREAM | SCOPE_CAPTURE |
 PRE_TRIGGER | SYSTEM_CMD | NATIVE_BLOCK
 ```
 
@@ -273,12 +281,12 @@ host 放弃旧请求并使用新 seq 后，才算新的服务操作。
 | CAL_WRITE | 暂存 GS4 shadow；同地址覆盖 | 尚未发布 |
 | CAL_COMMIT | 最后写 `commit_seq+1` | `applied_seq/result/fail_idx` |
 | CAL_READ | 读 10 Hz value mirror | `mirror_seq` |
-| DAQ_CTRL | 发布每组 scope cfg | `cfg_ack_seq/cfg_result/mode` |
+| DAQ_CTRL | 发布一个 scope cfg | `cfg_ack_seq/cfg_result/mode` |
 | DAQ_BIND | 仅 OFF 状态发布绑定 | `bind_ack_seq/bind_result` |
 | BLOCK_REQ | 每次取 0–2 block，复制完成后 release | `rd_idx/remain_hint` |
 | CMD | 最后写 `cmd_seq+1` | `cmd_ack_seq/cmd_result/sys_state` |
 
-Snapshot 在覆盖采集期间没有消费语义。只有生产者进入 `SNAP_FROZEN` 后，
+CAPTURE_ARMED/CAPTURE_POST 覆盖采集期间没有消费语义。只有生产者进入 `FROZEN` 后，
 CPU2 才从 `frozen_end_idx - frozen_count` 初始化消费者并按时间顺序排空。
 
 ### 3.4 CPU2 诊断量
@@ -295,7 +303,7 @@ CPU2 才从 `frozen_end_idx - frozen_count` 初始化消费者并按时间顺序
 | `g_v2k_sci_good_frames` | 通过完整校验的请求 |
 | `g_v2k_msg_2to1.cpu2_status.link_state` | 最近约 2 s 内是否收到合法帧 |
 | `g_v2k_msg_2to1.cpu2_status.heartbeat` | CPU2 本地诊断心跳 |
-| `g_v2k_gs4.scope_cons[g].rd_idx` | 每组消费者位置 |
+| `g_v2k_gs4.scope_cons.rd_idx` | Scope 消费者位置 |
 
 这些计数只诊断通信核，不得成为控制时间或 block 时间戳来源。
 
@@ -316,10 +324,10 @@ GUI 首版提供：
 
 - 串口枚举、115200/更高试验波特率和连接状态；
 - HELLO 版本、build hash、tick_hz、capability；
-- 运行时变量枚举与最多 8 通道绑定；
+- 运行时变量枚举与最多 16 通道绑定；
 - 参数 Stage/Commit 与 value mirror 刷新；
 - Start/Stop/Clear Fault；
-- Live、Snapshot、触发边沿、阈值、pre-trigger、prescaler、block N；
+- Scope Stream/Capture、触发边沿、阈值、pre-trigger、prescaler、block N；
 - 波形 tiles、断口、CSV 导出和协议控制台。
 
 `V2kSource` 当前调度：
@@ -352,7 +360,7 @@ block_octets = 16 + n_ticks * stride_octets
 ```
 
 BLOCK_DATA 另有 8-octet batch 前缀，wire 帧另有 11-octet header+CRC，并有
-少量 COBS 膨胀。稳定 Live 必须满足：
+少量 COBS 膨胀。稳定 STREAM 必须满足：
 
 ```text
 生产 block 速率 × 每 block 线上开销 < 可用串口吞吐
@@ -360,8 +368,8 @@ BLOCK_DATA 另有 8-octet batch 前缀，wire 帧另有 11-octet header+CRC，�
 
 因此：
 
-- 115200 下 Live 必须提高 `prescaler`、减少通道或使用较合适的 block N；
-- Snapshot 可以全速采集，因为冻结后慢速排空，不要求串口跟上采样瞬时速率；
+- 115200 下 STREAM 必须提高 `prescaler`、减少通道或使用较合适的 block N；
+- CAPTURE_ARMED 触发冻结可以全速采集，因为冻结后慢速排空，不要求串口跟上采样瞬时速率；
 - 故意使用超过 SCI 带宽的配置时，正确结果是 producer overrun + block gap，
   不是 CPU1 降速或阻塞；
 - 逐档提高 baud 只用于寻找 XDS110 VCP 的稳定边界，不能把 SCI 变成最终链路。
@@ -460,8 +468,8 @@ Connect CPU2 -> Load/Resume
 | 字段 | 预期 |
 |---|---|
 | firmware | Viewer2000 固件名 |
-| wire | 1 |
-| contract | 3 |
+| wire | 2 |
+| contract | 4 |
 | build hash | 与 CPU1 描述符表一致 |
 | descriptor count | 与 `entry_count` 一致 |
 | tick_hz | 与 `V2K_ISR_HZ` 一致 |
@@ -473,10 +481,10 @@ Connect CPU2 -> Load/Resume
 ## 9. 验证 B — ENUM 与 build-hash 重枚举
 
 1. 连接后由 Scope2000 每页请求 8 条描述符，直到 `count=0` 或达到 total。
-2. 核对名称、type、kind、地址、prescaler/group；描述符 entry 不包含
+2. 核对名称、type、kind、地址、prescaler；描述符 entry 不包含
    `min/max/scale/offset` 字段。
 3. Scope2000 枚举总数必须等于 HELLO 的 `desc_count`。
-4. 选择若干参数与示波量，确认 UI 只允许最多 8 个 scope 通道。
+4. 选择若干参数与示波量，确认 UI 只允许最多 16 个 scope 通道。
 5. 刷入 build hash 不同但 wire/contract 相同的固件。
 6. STATUS 检出 hash 变化后必须：
    - 清空旧描述符和参数值；
@@ -531,19 +539,19 @@ START -> STOP -> START -> 制造 TZ fault -> CLEAR_FAULT
 
 系统命令只改变应用状态，不得重置 `g_v2k_tick`、block 序号或 CPU1 心跳。
 
-## 12. 验证 E — Live
+## 12. 验证 E — Scope Stream
 
 先使用能落入 §5 带宽预算的配置：
 
-1. `DAQ_CTRL(OFF)`，等 STATUS 确认该组为 OFF。
+1. `DAQ_CTRL(OFF)`，等 STATUS 确认 scope mode 为 OFF。
 2. 选择 2–4 个通道，发送 DAQ_BIND，记录 `bind_seq`。
-3. 设置合适 `prescaler` 和 `block_n_ticks`，发送 `DAQ_CTRL(LIVE)`。
+3. 设置合适 `prescaler` 和 `block_n_ticks`，发送 `DAQ_CTRL(STREAM)`。
 4. Scope2000 持续 BLOCK_REQ，每次最多取 2 块。
 5. 核对每个 block：
 
 | 字段 | 通过条件 |
 |---|---|
-| group | 与请求组一致 |
+| flags | 当前为 0 |
 | bind_seq | 与当前绑定一致 |
 | block_seq | 正常连续，16-bit 回绕按无符号处理 |
 | start_tick | 单调前进，来自 CPU1 |
@@ -564,18 +572,18 @@ START -> STOP -> START -> 制造 TZ fault -> CLEAR_FAULT
    - Scope2000 插入 NaN 断口并记录 expected/received；
    - CPU1 `tick`、ISR overflow、预算违规和状态机不受影响。
 
-LIVE 中重新 BIND 必须返回 BAD_STATE；先 OFF 才允许换绑定。
+STREAM 中重新 BIND 必须返回 BAD_STATE；先 OFF 才允许换绑定。
 
-## 13. 验证 F — Snapshot 与 pre-trigger
+## 13. 验证 F — Scope Capture 与 pre-trigger
 
 1. `DAQ_CTRL(OFF)`，完成通道绑定。
 2. 设置触发通道槽位、阈值、上升/下降沿、pre-trigger 百分比、prescaler 和 block N。
-3. 发送 `DAQ_CTRL(SNAP_ARMED)`。
+3. 发送 `DAQ_CTRL(CAPTURE_ARMED)`。
 4. 制造确定的参数或状态跃迁。
 5. STATUS 观察：
 
 ```text
-SNAP_ARMED -> SNAP_TRIGGERED -> SNAP_FROZEN
+CAPTURE_ARMED -> CAPTURE_POST -> CAPTURE_FROZEN
 ```
 
 6. 只有 FROZEN 后才开始 BLOCK_REQ 排空，直到 `remain_hint=0`。
@@ -590,7 +598,7 @@ SNAP_ARMED -> SNAP_TRIGGERED -> SNAP_FROZEN
 | 重复 ARM | 新 `state_seq`，旧窗口不污染新窗口 |
 | 非法 trigger slot/百分比 | BAD_PARAM，原状态不被破坏 |
 
-Snapshot 可在 CPU1 全速采集后经 115200 慢速排空；串口速度不得反向限制
+触发冻结可在 CPU1 全速采集后经 115200 慢速排空；串口速度不得反向限制
 采样时基。
 
 ## 14. 验证 G — 帧错误、拆包和重试
@@ -618,9 +626,9 @@ Snapshot 可在 CPU1 全速采集后经 115200 慢速排空；串口速度不得
 
 1. Scope OFF、Scope2000 未连接；
 2. Scope OFF、Scope2000 周期 STATUS；
-3. Live 正常消费；
-4. Live host 停止消费并发生 overrun；
-5. Snapshot 全速采集和冻结排空。
+3. STREAM 正常消费；
+4. STREAM host 停止消费并发生 overrun；
+5. ARMED 全速采集和冻结排空。
 
 每档记录：
 
@@ -636,7 +644,7 @@ g_v2k_tick
 通过条件：
 
 - Scope OFF 时，是否连接 host 不得改变 CPU1 热路径；
-- Live/Snapshot 增加的 CPU1 成本只能来自 Phase 3 已定义的 scope producer；
+- STREAM/CAPTURE_ARMED 增加的 CPU1 成本只能来自 Phase 3 已定义的 scope producer；
 - CPU2 codec、串口、重试或断连不得增加 CPU1 block 编码、复制或轮询；
 - host 停止消费时 CPU1 不等待，最多增加 producer overrun。
 
@@ -652,7 +660,7 @@ g_v2k_tick
 
 1. 固件与 Scope2000 使用相同 baud；
 2. 先跑 HELLO/ENUM/CAL/CMD；
-3. 再跑带宽预算内的 Live；
+3. 再跑带宽预算内的 RUN；
 4. 连续至少 30 分钟；
 5. 记录 good/bad frame、RX overflow、重试、block gap、producer overrun。
 
@@ -666,7 +674,7 @@ RAM 全量通过后验证 CPU1/CPU2 FLASH：
 1. 断电重上电，不连接 CCS；
 2. 确认双核启动、保护封锁、CPU2 LED 和 VCP 枚举；
 3. Scope2000 完成 HELLO/ENUM；
-4. 跑一次参数 Commit、START/STOP、短 Live 和 Snapshot；
+4. 跑一次参数 Commit、START/STOP、短 STREAM 和 CAPTURE_ARMED 冻结；
 5. 运行中拔插 USB/VCP；
 6. 确认 CPU1 控制与保护状态不受影响，恢复后可以重新建立会话。
 
@@ -679,8 +687,8 @@ RAM 全量通过后验证 CPU1/CPU2 FLASH：
 | 协议 conformance | Viewer vectors 与 Scope2000 tests 全通过 |
 | HELLO/ENUM/STATUS | 版本、能力、tick、hash、枚举与重枚举正确 |
 | CAL/CMD | 两阶段异步对账、拒绝语义和重试幂等正确 |
-| Live | 原生 block、partial block、连续序号和断口正确 |
-| Snapshot | 触发、pre-trigger、冻结顺序和慢速排空正确 |
+| Scope Stream | 原生 block、partial block、连续序号和断口正确 |
+| Scope Capture | 触发、pre-trigger、冻结顺序和慢速排空正确 |
 | 错误恢复 | CRC/COBS/拆包/粘包/超时/seq 错配均可恢复 |
 | 隔离性 | host/CPU2 异常不影响 CPU1 tick、ISR 预算和保护 |
 | 波特率 | 找到并记录最高长期稳定档 |
@@ -695,8 +703,8 @@ RAM 全量通过后验证 CPU1/CPU2 FLASH：
 - SysConfig 生成的 SCIA CPUSEL、GPIO42/43、baud 与 FIFO 配置；
 - 每档 baud、持续时间和有效载荷配置；
 - good/bad frame、RX overflow、host retry；
-- 每组 block gap、producer overrun、Snapshot frozen count；
+- block gap、producer overrun、frozen count；
 - 五种性能隔离场景的 CPU1 cycle/overflow/budget 数据；
-- 参数、命令、Live、Snapshot、断连和 FLASH smoke test 结论。
+- 参数、命令、STREAM、CAPTURE_ARMED、断连和 FLASH smoke test 结论。
 
 只有本节全部通过并形成实测记录后，Phase 3.5 才算完成。

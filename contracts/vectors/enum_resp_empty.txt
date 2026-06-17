@@ -2,5 +2,5 @@
 # ENUM_RESP 边界：start_idx 越过总数 → count=0（合法的读完信号）
 # raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
 # wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
-raw: 518300040006000a000a00000019bcbf7b
-wire: 03518302040206020a020a01010519bcbf7b00
+raw: 528300040006000a000a000000b6f4c92a
+wire: 03528302040206020a020a010105b6f4c92a00

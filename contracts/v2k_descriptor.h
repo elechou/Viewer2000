@@ -1,5 +1,5 @@
 //=============================================================================
-// v2k_descriptor.h — 共享内存接口：描述符表（平台量枚举 + 默认绑定）
+// v2k_descriptor.h — 共享内存接口：描述符表（平台量枚举 + 默认采样提示）
 //
 // 角色定位（2026-06-11 变量发现架构决策）：
 // 本表**只登记 L1 自动注册的平台量**（plat_in/plat_out 物理量、占空比、
@@ -8,7 +8,7 @@
 // .out(DWARF) 符号树，按地址绑定示波通道 / 参数写入，C 符号是唯一命名来源。
 // 因此本表的职责：
 //   1. 开箱即用：host 不解析 .out 也能枚举到全部平台量并立即出波形；
-//   2. 默认绑定来源：L1 开机把组 0 绑成平台经典 8 通道（v2k_scope.h）。
+//   2. 默认绑定来源：L1 开机按注册序绑定前几个平台可观测量（v2k_scope.h）。
 //
 // 2026-06-17 语义修正：
 // * 线上值就是真实值；描述符不再承载 min/max/scale/offset 语义。
@@ -43,17 +43,17 @@
 // kind 标志位（可调与可观测不互斥，同一变量可两者皆是）
 //-----------------------------------------------------------------------------
 #define V2K_KIND_PARAM  0x0001u  // 可调参数：参与参数平面写入路径（v2k_param.h）
-#define V2K_KIND_SCOPE  0x0002u  // 可观测信号：参与示波采样路径（v2k_scope.h），group/prescaler 有效
+#define V2K_KIND_SCOPE  0x0002u  // 可观测信号：参与示波采样路径（v2k_scope.h），prescaler 为默认采样建议
 // bit2..15 保留，置 0
 
 //-----------------------------------------------------------------------------
 // 描述符条目
 //
 // C28x 布局（word 偏移）:
-//   name@0..15, type@16, kind@17, addr@18, prescaler@20, group@21
+//   name@0..15, type@16, kind@17, addr@18, prescaler@20, reserved@21
 //   → 共 22 words，无填充
 // PC 布局（octet 偏移）:
-//   name@0..15, type@16, kind@18, addr@20, prescaler@24, group@26
+//   name@0..15, type@16, kind@18, addr@20, prescaler@24, reserved@26
 //   → 共 28 octets，无填充
 //-----------------------------------------------------------------------------
 typedef struct {
@@ -61,9 +61,8 @@ typedef struct {
     uint16_t type;               // V2K_TYPE_*
     uint16_t kind;               // V2K_KIND_* 位或
     uint32_t addr;               // CPU1 数据空间 word 地址（CPU2/host 视为不透明）
-    uint16_t prescaler;          // 默认降采样比（L1 开机默认绑定用；运行时
-                                 //   实际速率以 DAQ_BIND/DAQ_CTRL 为准）
-    uint16_t group;              // 默认通道组 id（同上，仅作默认绑定提示）
+    uint16_t prescaler;          // 默认采样分频建议；运行时实际速率以 DAQ_CTRL 为准
+    uint16_t reserved;           // 置 0；保留 28-octet 描述符条目对齐
 } v2k_desc_entry_t;
 
 V2K_ASSERT_SIZE_BITS(v2k_desc_entry_t, V2K_NAME_BITS(V2K_NAME_LEN) + 96u);

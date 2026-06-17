@@ -2,5 +2,5 @@
 # CAL_READ：从 idx0 读 3 条
 # raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
 # wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
-raw: 511200070004000000030048b22071
-wire: 03511202070204010102030548b2207100
+raw: 5212000700040000000300fadc5ecd
+wire: 035212020702040101020305fadc5ecd00

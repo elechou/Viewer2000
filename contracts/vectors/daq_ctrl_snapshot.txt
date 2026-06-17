@@ -1,6 +1,0 @@
-# vector: daq_ctrl_snapshot
-# DAQ_CTRL 新格式：组 0 进 SNAP_ARMED，触发源=通道槽位 1 上升沿过 2.5，pre-trigger 30%，block N=10
-# raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
-# wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
-raw: 51200008000e000002010000002040001e00000a0005230739
-wire: 0351200208020e010302010101032040021e01020a050523073900

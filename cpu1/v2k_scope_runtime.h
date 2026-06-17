@@ -9,7 +9,6 @@
 #define V2K_CCS_VIEW_SAMPLES 2048u
 
 typedef struct {
-    uint16_t group;
     uint16_t channel_slot;
     uint16_t request_seq;
     uint16_t done_seq;
