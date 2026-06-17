@@ -1,16 +1,16 @@
 <!-- DO NOT EDIT - This part is automatically generated. -->
 
-# Claude Code Guidelines
+# Agent Guidelines
 
-## MANDATORY Pre-Task Steps (DO NOT SKIP)
+## CCStudio IDE Installation Directory
 
-**CRITICAL - NO EXCEPTIONS**: Before ANY CCS/Texas Instruments-related task (even simple ones), you MUST complete these steps IN ORDER. Do NOT call any ccs-project, ccs-debug, ccs-sysconfig, or ccs-serial MCP tools until both steps are complete.
+CCStudio IDE is installed at `/Applications/ti/ccs2100`. Save it as `{ccs-install-dir}` for the session — scripts and tools will need it.
 
-1. Read `.claude/ccs.settings.md` to get the CCS installation directory
-2. Read `{installation_directory}/ccs/Code Composer Studio.app/Contents/Resources/ai/CCS.md` using the installation directory from step 1. This file includes information on how to interact with CCS as well as device-specific information (UART backchannel pins, LED setup, transmit best practices, etc.).
-3. ONLY THEN proceed with CCS MCP tool calls or any other task work
+## MANDATORY Pre-Task Requirement (DO NOT SKIP)
 
-Do NOT parallelize these steps with task work. Do NOT skip step 2 regardless of task complexity.
+**CRITICAL - NO EXCEPTIONS**: Before ANY CCS/Texas Instruments-related task (even simple ones), you MUST read `/Applications/ti/ccs2100/ccs/Code Composer Studio.app/Contents/Resources/ai/CCS.md`. This file includes information on how to interact with CCS as well as device-specific information (UART backchannel pins, LED setup, transmit best practices, etc.). 
+
+Do NOT call any ccs-project, ccs-debug, ccs-sysconfig, or ccs-serial MCP tools until CCS.md has been read.
 
 
 <!-- DO NOT EDIT - This part is automatically generated. -->

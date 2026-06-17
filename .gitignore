@@ -1,4 +1,5 @@
 # Local IDE/workspace state
+.private/
 .theia/
 .vscode/
 .metadata/

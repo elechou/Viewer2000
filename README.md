@@ -9,3 +9,6 @@ The protocol authority is [docs/wire-spec.md](docs/wire-spec.md) together with
 the headers under `contracts/` and the golden vectors under
 `contracts/vectors/`. Compatibility with older devices belongs in an external
 bridge process and must not alter the native Viewer2000 protocol or data path.
+
+The local two-repo workspace layout and shared-knowledge boundary are described
+in [docs/workspace-layout.md](docs/workspace-layout.md).

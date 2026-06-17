@@ -1,27 +1,26 @@
 [mcp_servers.ccs-debug]
-command = "/Applications/ti/ccs2051/ccs/tools/node/node"
-args = [
-  "/Applications/ti/ccs2051/ccs/Code Composer Studio.app/Contents/Resources/app/plugins/ccs-ai/extension/dist/mcp-server-proxy.js",
-  "debug",
-]
+__comment = "DO NOT MODIFY: Auto-generated properties"
+command = "/Applications/ti/ccs2100/ccs/tools/node/node"
+args = [ "/Applications/ti/ccs2100/ccs/Code Composer Studio.app/Contents/Resources/app/plugins/ccs-ai/extension/dist/mcp-server-proxy.js", "debug" ]
+default_tools_approval_mode = "approve"
 
 [mcp_servers.ccs-project]
-command = "/Applications/ti/ccs2051/ccs/tools/node/node"
-args = [
-  "/Applications/ti/ccs2051/ccs/Code Composer Studio.app/Contents/Resources/app/plugins/ccs-ai/extension/dist/mcp-server-proxy.js",
-  "project",
-]
+__comment = "DO NOT MODIFY: Auto-generated properties"
+command = "/Applications/ti/ccs2100/ccs/tools/node/node"
+args = [ "/Applications/ti/ccs2100/ccs/Code Composer Studio.app/Contents/Resources/app/plugins/ccs-ai/extension/dist/mcp-server-proxy.js", "project" ]
+default_tools_approval_mode = "approve"
+
+[mcp_servers.ccs-project.tools.changeSysConfigVersion]
+approval_mode = "prompt"
 
 [mcp_servers.ccs-sysconfig]
-command = "/Applications/ti/ccs2051/ccs/tools/node/node"
-args = [
-  "/Applications/ti/ccs2051/ccs/Code Composer Studio.app/Contents/Resources/app/plugins/ccs-ai/extension/dist/mcp-server-proxy.js",
-  "sysconfig",
-]
+__comment = "DO NOT MODIFY: Auto-generated properties"
+command = "/Applications/ti/ccs2100/ccs/tools/node/node"
+args = [ "/Applications/ti/ccs2100/ccs/Code Composer Studio.app/Contents/Resources/app/plugins/ccs-ai/extension/dist/mcp-server-proxy.js", "sysconfig" ]
+default_tools_approval_mode = "approve"
 
 [mcp_servers.ccs-serial]
-command = "/Applications/ti/ccs2051/ccs/tools/node/node"
-args = [
-  "/Applications/ti/ccs2051/ccs/Code Composer Studio.app/Contents/Resources/app/plugins/ccs-ai/extension/dist/mcp-server-proxy.js",
-  "serial",
-]
+__comment = "DO NOT MODIFY: Auto-generated properties"
+command = "/Applications/ti/ccs2100/ccs/tools/node/node"
+args = [ "/Applications/ti/ccs2100/ccs/Code Composer Studio.app/Contents/Resources/app/plugins/ccs-ai/extension/dist/mcp-server-proxy.js", "serial" ]
+default_tools_approval_mode = "approve"
