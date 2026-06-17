@@ -8,11 +8,13 @@
 // 写入目标按地址寻址（与示波通道绑定同一哲学：应用变量来自 viewer 解析
 // .out/DWARF 的符号树，平台量来自描述符表枚举，固件不区分来源）。
 //
-// ---- 查表护栏（guard-if-registered，防呆的固件侧半边）----
-// CPU1 应用每条写入前先在描述符表中查 addr：
-//   * 命中且 kind&PARAM → 强制 min/max 范围检查，越界则整批拒绝；
-//   * 未命中（应用变量）→ 放行原始写入，status.unguarded_cnt 累计 +1，
-//     防呆责任移交 viewer（确认弹窗/写入前回显）。CCS 调参同理不设防。
+// ---- 写入校验（机械一致性，不做范围/单位语义）----
+// CPU1 应用每条写入前只做机械检查：
+//   * type 合法；
+//   * addr 位于允许写入的 CPU1 数据区，32-bit 类型地址对齐；
+//   * 命中描述符表时必须 kind&PARAM 且 type 一致。
+// 固件不做 min/max 范围检查、不 clamp、不做 scale/offset 反算。线上值就是
+// 目标变量的真实原生位模式。
 //
 // 写入路径（两条，机制相同）：
 //   1. 线上：host CAL_WRITE(暂存) ×k → CAL_COMMIT → CPU2 填 shadow + 发布 seq
@@ -20,7 +22,7 @@
 //
 // 应用协议（CPU1 ISR 安全点，user_step 之前；序号握手，无跨界写标志位）：
 //   if (shadow.commit_seq != status.applied_seq) {
-//       逐条护栏校验（见上）；全部通过 → 按 type 写入目标；任一越界 → 整批拒绝
+//       逐条机械校验（见上）；全部通过 → 按 type 写入目标；任一非法 → 整批拒绝
 //       status.result = 结果码; status.applied_seq = shadow.commit_seq;  // 应答
 //   }
 //
@@ -66,9 +68,8 @@ V2K_ASSERT_SIZE_BITS(v2k_param_shadow_t, 64u + 96u * V2K_PARAM_BATCH_MAX);
 //-----------------------------------------------------------------------------
 #define V2K_CAL_OK         0u
 #define V2K_CAL_BAD_TYPE   1u   // type 非法
-#define V2K_CAL_OUT_RANGE  2u   // 注册参数越 min/max（仅护栏命中时可能）
-#define V2K_CAL_BAD_COUNT  3u   // count 超上限
-#define V2K_CAL_BAD_ADDR   4u   // 目标不在 CPU1 可写数据区或 32-bit 未对齐
+#define V2K_CAL_BAD_COUNT  2u   // count 超上限
+#define V2K_CAL_BAD_ADDR   3u   // 目标不在 CPU1 可写数据区或 32-bit 未对齐
 
 //-----------------------------------------------------------------------------
 // 状态 + 值镜像（CPU1 属主：CPU1 写，CPU2/host 只读）
@@ -77,12 +78,10 @@ typedef struct {
     uint32_t applied_seq;   // 最近应用完成的 commit_seq（序号握手应答侧）
     uint16_t result;        // V2K_CAL_*（对应 applied_seq 那一批）
     uint16_t fail_idx;      // 整批拒绝时首个非法条目的批内下标（result!=OK 时有效）
-    uint16_t unguarded_cnt; // 未命中描述符表的"无护栏写入"累计（防呆可观测性）
-    uint16_t reserved;      // 置 0
     uint32_t mirror_seq;    // 镜像每轮刷新 +1（host 判断数据新旧）
     uint32_t value_mirror[V2K_DESC_MAX]; // 描述符表现值位模式，CPU1 后台刷新
 } v2k_param_status_t;
 
-V2K_ASSERT_SIZE_BITS(v2k_param_status_t, 128u + 32u * V2K_DESC_MAX);
+V2K_ASSERT_SIZE_BITS(v2k_param_status_t, 96u + 32u * V2K_DESC_MAX);
 
 #endif // V2K_PARAM_H

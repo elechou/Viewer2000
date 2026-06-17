@@ -95,16 +95,6 @@ static void v2k_put_u32(uint16_t *buf, uint16_t off, uint32_t value)
     v2k_put_u16(buf, (uint16_t)(off + 2u), (uint16_t)(value >> 16u));
 }
 
-static uint32_t v2k_float_bits(float value)
-{
-    union {
-        float f32;
-        uint32_t u32;
-    } bits;
-    bits.f32 = value;
-    return bits.u32;
-}
-
 static uint32_t v2k_crc32c(const uint16_t *buf, uint16_t len)
 {
     uint16_t i;
@@ -274,25 +264,24 @@ static void v2k_handle_status(uint16_t seq)
     v2k_put_u16(s_raw, off, cpu1->sys_state);
     v2k_put_u16(s_raw, (uint16_t)(off + 2u), cpu1->fault_code);
     v2k_put_u16(s_raw, (uint16_t)(off + 4u), cpu1->status_flags);
-    v2k_put_u16(s_raw, (uint16_t)(off + 6u), cal->unguarded_cnt);
-    v2k_put_u32(s_raw, (uint16_t)(off + 8u), cpu1->tick);
-    v2k_put_u32(s_raw, (uint16_t)(off + 12u), cpu1->heartbeat);
-    v2k_put_u32(s_raw, (uint16_t)(off + 16u),
+    v2k_put_u32(s_raw, (uint16_t)(off + 6u), cpu1->tick);
+    v2k_put_u32(s_raw, (uint16_t)(off + 10u), cpu1->heartbeat);
+    v2k_put_u32(s_raw, (uint16_t)(off + 14u),
                 g_v2k_msg_2to1.cpu2_status.heartbeat);
-    v2k_put_u32(s_raw, (uint16_t)(off + 20u), cal->applied_seq);
-    v2k_put_u16(s_raw, (uint16_t)(off + 24u), cal->result);
-    v2k_put_u16(s_raw, (uint16_t)(off + 26u), cal->fail_idx);
-    v2k_put_u32(s_raw, (uint16_t)(off + 28u),
+    v2k_put_u32(s_raw, (uint16_t)(off + 18u), cal->applied_seq);
+    v2k_put_u16(s_raw, (uint16_t)(off + 22u), cal->result);
+    v2k_put_u16(s_raw, (uint16_t)(off + 24u), cal->fail_idx);
+    v2k_put_u32(s_raw, (uint16_t)(off + 26u),
                 V2K_GS0_RO->desc_table.hdr.build_hash);
     for (group = 0u; group < V2K_SCOPE_MAX_GROUPS; group++)
     {
-        s_raw[(uint16_t)(off + 32u + group)] =
+        s_raw[(uint16_t)(off + 30u + group)] =
             V2K_GS0_RO->scope_prod[group].mode & 0xFFu;
     }
-    v2k_put_u32(s_raw, (uint16_t)(off + 36u), cpu1->ack_seq);
-    v2k_put_u16(s_raw, (uint16_t)(off + 40u), cpu1->cmd_result);
-    v2k_put_u16(s_raw, (uint16_t)(off + 42u), 0u);
-    v2k_response_send(44u);
+    v2k_put_u32(s_raw, (uint16_t)(off + 34u), cpu1->ack_seq);
+    v2k_put_u16(s_raw, (uint16_t)(off + 38u), cpu1->cmd_result);
+    v2k_put_u16(s_raw, (uint16_t)(off + 40u), 0u);
+    v2k_response_send(42u);
 }
 
 static void v2k_handle_enum(uint16_t seq, const uint16_t *payload,
@@ -340,17 +329,9 @@ static void v2k_handle_enum(uint16_t seq, const uint16_t *payload,
         v2k_put_u16(s_raw, off, entry->type);
         v2k_put_u16(s_raw, (uint16_t)(off + 2u), entry->kind);
         v2k_put_u32(s_raw, (uint16_t)(off + 4u), entry->addr);
-        v2k_put_u32(s_raw, (uint16_t)(off + 8u),
-                    v2k_float_bits(entry->min_val));
-        v2k_put_u32(s_raw, (uint16_t)(off + 12u),
-                    v2k_float_bits(entry->max_val));
-        v2k_put_u32(s_raw, (uint16_t)(off + 16u),
-                    v2k_float_bits(entry->scale));
-        v2k_put_u32(s_raw, (uint16_t)(off + 20u),
-                    v2k_float_bits(entry->offset));
-        v2k_put_u16(s_raw, (uint16_t)(off + 24u), entry->prescaler);
-        v2k_put_u16(s_raw, (uint16_t)(off + 26u), entry->group);
-        off = (uint16_t)(off + 28u);
+        v2k_put_u16(s_raw, (uint16_t)(off + 8u), entry->prescaler);
+        v2k_put_u16(s_raw, (uint16_t)(off + 10u), entry->group);
+        off = (uint16_t)(off + 12u);
     }
     v2k_response_send((uint16_t)(off - 7u));
 }

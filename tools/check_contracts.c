@@ -24,8 +24,7 @@
 // ---- 描述符条目（name 之后不得有隐式填充）----
 V2K_ASSERT_OFFSET_BITS(v2k_desc_entry_t, type,      V2K_NAME_BITS(V2K_NAME_LEN));
 V2K_ASSERT_OFFSET_BITS(v2k_desc_entry_t, addr,      V2K_NAME_BITS(V2K_NAME_LEN) + 32u);
-V2K_ASSERT_OFFSET_BITS(v2k_desc_entry_t, min_val,   V2K_NAME_BITS(V2K_NAME_LEN) + 64u);
-V2K_ASSERT_OFFSET_BITS(v2k_desc_entry_t, prescaler, V2K_NAME_BITS(V2K_NAME_LEN) + 192u);
+V2K_ASSERT_OFFSET_BITS(v2k_desc_entry_t, prescaler, V2K_NAME_BITS(V2K_NAME_LEN) + 64u);
 
 // ---- 描述符表头 ----
 V2K_ASSERT_OFFSET_BITS(v2k_desc_table_hdr_t, build_hash, 64u);
@@ -49,8 +48,8 @@ V2K_ASSERT_OFFSET_BITS(v2k_param_write_t,  value_bits, 32u);
 V2K_ASSERT_OFFSET_BITS(v2k_param_write_t,  type,       64u);
 V2K_ASSERT_OFFSET_BITS(v2k_param_shadow_t, commit_seq, 32u);
 V2K_ASSERT_OFFSET_BITS(v2k_param_shadow_t, writes,     64u);
-V2K_ASSERT_OFFSET_BITS(v2k_param_status_t, mirror_seq, 96u);
-V2K_ASSERT_OFFSET_BITS(v2k_param_status_t, value_mirror, 128u);
+V2K_ASSERT_OFFSET_BITS(v2k_param_status_t, mirror_seq, 64u);
+V2K_ASSERT_OFFSET_BITS(v2k_param_status_t, value_mirror, 96u);
 
 // ---- 命令/状态平面 ----
 V2K_ASSERT_OFFSET_BITS(v2k_cmd_req_t,      cmd_code,  32u);

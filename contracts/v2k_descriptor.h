@@ -1,15 +1,17 @@
 //=============================================================================
-// v2k_descriptor.h — 共享内存接口：描述符表（平台防呆面）
+// v2k_descriptor.h — 共享内存接口：描述符表（平台量枚举 + 默认绑定）
 //
 // 角色定位（2026-06-11 变量发现架构决策）：
 // 本表**只登记 L1 自动注册的平台量**（plat_in/plat_out 物理量、占空比、
 // 状态字、平台参数）——用户/学生永远不调用注册 API、永远不手打名字字符串
 // （FreeRTOS 式双命名是明确要规避的反模式）。应用变量的发现走 viewer 解析
 // .out(DWARF) 符号树，按地址绑定示波通道 / 参数写入，C 符号是唯一命名来源。
-// 因此本表的三重职责：
-//   1. 防呆面：表内参数带 min/max，写入路径对命中地址强制护栏（v2k_param.h）；
-//   2. 开箱即用：host 不解析 .out 也能枚举到全部平台量并立即出波形；
-//   3. 默认绑定来源：L1 开机把组 0 绑成平台经典 8 通道（v2k_scope.h）。
+// 因此本表的职责：
+//   1. 开箱即用：host 不解析 .out 也能枚举到全部平台量并立即出波形；
+//   2. 默认绑定来源：L1 开机把组 0 绑成平台经典 8 通道（v2k_scope.h）。
+//
+// 2026-06-17 语义修正：
+// * 线上值就是真实值；描述符不再承载 min/max/scale/offset 语义。
 //
 // CPU1 启动时写表（CPU1 属主区，见 v2k_memmap.h），此后只读。
 //
@@ -32,45 +34,39 @@
 // 容量与尺寸常量
 //-----------------------------------------------------------------------------
 #define V2K_NAME_LEN   16u   // 名字定长（含 NUL 填充）；ASCII，每字符 1 octet 上线
-#define V2K_DESC_MAX   64u   // 表容量上限（64 × 30 words ≈ 1.9K words，预算见 memmap）
+#define V2K_DESC_MAX   64u   // 表容量上限（64 × 22 words ≈ 1.4K words，预算见 memmap）
 
 // 线上一条描述符的 octet 数（wire-spec §4.3 ENUM_RESP；与 struct 字段一一镜像）
-#define V2K_DESC_WIRE_OCTETS 44u
+#define V2K_DESC_WIRE_OCTETS 28u
 
 //-----------------------------------------------------------------------------
 // kind 标志位（可调与可观测不互斥，同一变量可两者皆是）
 //-----------------------------------------------------------------------------
-#define V2K_KIND_PARAM  0x0001u  // 可调参数：参与参数平面写入路径（v2k_param.h），min/max 有效
+#define V2K_KIND_PARAM  0x0001u  // 可调参数：参与参数平面写入路径（v2k_param.h）
 #define V2K_KIND_SCOPE  0x0002u  // 可观测信号：参与示波采样路径（v2k_scope.h），group/prescaler 有效
 // bit2..15 保留，置 0
 
 //-----------------------------------------------------------------------------
 // 描述符条目
 //
-// 物理量还原（host 端）: physical = raw * scale + offset
-// 示波通道默认 V2K_TYPE_I16 上行（带宽节约，见 CLAUDE.md），scale/offset
-// 由注册方给出（如 ADC LSB→安培）；F32 通道 scale=1, offset=0。
-//
-// C28x 布局（word 偏移）: name@0..15, type@16, kind@17, addr@18, min@20,
-//   max@22, scale@24, offset@26, prescaler@28, group@29 → 共 30 words，无填充
-// PC 布局（octet 偏移）:  name@0..15, type@16, kind@18, addr@20, min@24,
-//   max@28, scale@32, offset@36, prescaler@40, group@42 → 共 44 octets，无填充
+// C28x 布局（word 偏移）:
+//   name@0..15, type@16, kind@17, addr@18, prescaler@20, group@21
+//   → 共 22 words，无填充
+// PC 布局（octet 偏移）:
+//   name@0..15, type@16, kind@18, addr@20, prescaler@24, group@26
+//   → 共 28 octets，无填充
 //-----------------------------------------------------------------------------
 typedef struct {
     char     name[V2K_NAME_LEN]; // ASCII，NUL 填充；不保证 NUL 结尾（恰好 16 字符时）
     uint16_t type;               // V2K_TYPE_*
     uint16_t kind;               // V2K_KIND_* 位或
     uint32_t addr;               // CPU1 数据空间 word 地址（CPU2/host 视为不透明）
-    float    min_val;            // 参数下限（kind&PARAM 时有效，物理量纲）
-    float    max_val;            // 参数上限（同上）
-    float    scale;              // 物理量换算：physical = raw * scale + offset
-    float    offset;
     uint16_t prescaler;          // 默认降采样比（L1 开机默认绑定用；运行时
                                  //   实际速率以 DAQ_BIND/DAQ_CTRL 为准）
     uint16_t group;              // 默认通道组 id（同上，仅作默认绑定提示）
 } v2k_desc_entry_t;
 
-V2K_ASSERT_SIZE_BITS(v2k_desc_entry_t, V2K_NAME_BITS(V2K_NAME_LEN) + 224u);
+V2K_ASSERT_SIZE_BITS(v2k_desc_entry_t, V2K_NAME_BITS(V2K_NAME_LEN) + 96u);
 
 //-----------------------------------------------------------------------------
 // 表头（位于表数组之前，同一共享 RAM 区）

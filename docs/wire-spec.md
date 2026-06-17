@@ -45,9 +45,12 @@
   I16 符号扩展 / U16 零扩展到 32 bit。
 - **变量寻址的通用键 = `(addr, type)`**（CPU1 数据空间 word 地址 + 类型码）。
   地址有两个来源，固件不区分：① ENUM 枚举的描述符表（**只含 L1 自动注册的
-  平台量**，作为防呆面与开箱即用面）；② viewer 解析与固件同构建的 .out
+  平台量**，作为开箱即用面与默认绑定来源）；② viewer 解析与固件同构建的 .out
   （ELF/DWARF）得到的完整符号树（一切应用变量，含任意 struct 成员/数组元素；
   配对正确性由 build_hash 校验）。用户/学生不写注册代码、不手打名字字符串。
+- **线上值就是真实值**：协议不承载 `min/max/scale/offset` 这类显示或护栏元数据。
+  DAQ block 与 CAL value 都按变量原生类型解释位模式；固件不量化、不换算、不做
+  参数范围裁剪或范围拒绝。
 
 ## 3. 帧适配器
 
@@ -166,44 +169,41 @@ off sz 字段
 
 ### 4.2 STATUS（0x02 / 0x82）
 
-请求 payload 空。响应基础前缀 36 octets，wire v1 当前响应为 44 octets；
-兼任链路心跳（host 周期轮询）：
+请求 payload 空。响应 42 octets；兼任链路心跳（host 周期轮询）：
 
 ```
 0   2  sys_state      V2K_STATE_*（v2k_command.h）
 2   2  fault_code
 4   2  status_flags   V2K_SF_*（含 CPU2 视角的 CPU1 心跳停走位，运行时扩展）
-6   2  cal_unguarded  无护栏写入累计计数（未命中描述符表的地址写，防呆可观测性）
-8   4  tick           CPU1 当前 ISR tick
-12  4  cpu1_heartbeat
-16  4  cpu2_heartbeat
-20  4  applied_seq    参数平面对账（§5.2）
-24  2  cal_result     V2K_CAL_*
-26  2  cal_fail_idx
-28  4  build_hash     会话中检测固件热更换
-32  4  scope_mode     4 组各 1 octet：V2K_SCOPE_*（组 id = octet 下标）
-36  4  cmd_ack_seq     CPU1 已执行的最大系统命令序号
-40  2  cmd_result      V2K_CMDR_*（对应 cmd_ack_seq）
-42  2  reserved
+6   4  tick           CPU1 当前 ISR tick
+10  4  cpu1_heartbeat
+14  4  cpu2_heartbeat
+18  4  applied_seq    参数平面对账（§5.2）
+22  2  cal_result     V2K_CAL_*
+24  2  cal_fail_idx
+26  4  build_hash     会话中检测固件热更换
+30  4  scope_mode     4 组各 1 octet：V2K_SCOPE_*（组 id = octet 下标）
+34  4  cmd_ack_seq    CPU1 已执行的最大系统命令序号
+38  2  cmd_result     V2K_CMDR_*（对应 cmd_ack_seq）
+40  2  reserved
 ```
 
 ### 4.3 ENUM（0x03 / 0x83）
 
-枚举对象 = 描述符表 = **平台量防呆面**（L1 自动注册的物理量/占空比/状态/
-平台参数）。应用变量不在此表，经 DWARF 路径发现（§2 约定）。
+枚举对象 = 描述符表 = L1 自动注册的平台量（物理量/占空比/状态/平台参数），
+用于开箱即用和默认绑定。应用变量不在此表，经 DWARF 路径发现（§2 约定）。
 
 请求（4 octets）：`{0:2 start_idx, 2:1 max_count(≤8), 3:1 reserved}`
-响应（6 + 44×count octets）：
+响应（6 + 28×count octets）：
 
 ```
 0  2  total_count    （= desc_count）
 2  2  start_idx      回显
 4  1  count          本页实际条数
 5  1  reserved
-6  …  count × 描述符条目（44 octets，逐字段镜像 v2k_desc_entry_t）:
-      0:16 name | 16:2 type | 18:2 kind | 20:4 addr | 24:4 min(f32)
-      28:4 max | 32:4 scale | 36:4 offset | 40:2 prescaler | 42:2 group
-      （prescaler/group 为开机默认绑定提示，运行时以 DAQ_BIND/CTRL 为准）
+6  …  count × 描述符条目（28 octets，逐字段镜像当前 v2k_desc_entry_t）:
+      0:16 name | 16:2 type | 18:2 kind | 20:4 addr | 24:2 prescaler | 26:2 group
+      prescaler/group 为开机默认绑定提示，运行时以 DAQ_BIND/CTRL 为准
 ```
 
 `start_idx ≥ total_count` → `count=0`（合法的"读完了"信号）。
@@ -224,9 +224,10 @@ off sz 字段
 回 ACK(OK, data=commit_seq)。应用结果经 STATUS 的 `applied_seq/cal_result`
 对账（§5.2）。
 
-护栏语义（guard-if-registered，详见 v2k_param.h）：CPU1 对每条写入查描述符
-表——addr 命中注册参数则强制 min/max 检查（越界整批拒绝）；未命中（应用变量）
-放行并累计 `cal_unguarded`（STATUS 可见），防呆责任移交 viewer 确认 UI。
+提交语义：CPU1 对每条写入只做机械一致性检查——type 合法、地址位于允许写入的
+CPU1 数据区、32-bit 类型地址对齐；addr 命中描述符表时还要求 `kind&PARAM` 且
+type 一致。**不做 min/max 范围检查，不做 clamp，不做 scale/offset 反算**。
+批内任一条机械检查失败则整批拒绝；检查通过后在 ISR 安全点整批同拍写入。
 
 `CAL_READ` 请求（4 octets）：`{0:2 start_idx, 2:1 count(≤32), 3:1 reserved}`
 响应（8 + 4×count）：
@@ -345,20 +346,20 @@ host                     CPU2                      CPU1 ISR 安全点
  │ ─ CAL_WRITE ×m ─────→ │ 暂存 shadow              │
  │ ←─ ACK(OK) ×m ─────── │                          │
  │ ─ CAL_COMMIT ───────→ │ 发布 commit_seq=s ──────→ │ 见 s≠applied_seq:
- │ ←─ ACK(OK,data=s) ─── │                          │ 护栏校验→整组应用→
+ │ ←─ ACK(OK,data=s) ─── │                          │ 机械校验→整组应用→
  │ ─ STATUS 轮询 ───────→ │ 读参数状态块              │ 写 applied_seq=s
  │ ←─ applied_seq==s? ── │  ←──────────────────────  │
 ```
 
 要点：批内**全有效或全拒绝**（同一拍生效，cal_result/cal_fail_idx 报因；
-未注册地址的写入不拦但计数，见 §4.4 护栏语义）；
+所有成功写入均是原生位模式写入，不做范围或单位换算）；
 host 在 applied_seq 追上 commit_seq 前不得发起下一批 COMMIT。
 
 ### 5.3 示波流
 
 通道选择（任何模式开始前）：`DAQ_CTRL(OFF)` → `DAQ_BIND(group, 通道列表)`
 → ACK(OK) 后方可启动。开机时 L1 已写入默认绑定（组 0 = 平台经典 8 通道），
-host 不发 BIND 也能直接看波形（防呆默认）。
+host 不发 BIND 也能直接看波形。
 
 **Live**：`DAQ_CTRL(mode=LIVE)` → host 持续 `BLOCK_REQ` 轮询（SCI 阶段
 即"软 PDO"；频率按 `remain_hint` 自适应）。环满生产者丢新块 + overrun_cnt++，
@@ -411,7 +412,7 @@ packed struct + memcpy 的现成库都需要重写其序列化核心，"省序�
 | 候选 | 不选的原因 |
 |---|---|
 | **XCP**（本领域行业标准） | 领域模型完美契合（CAL/DAQ 即参数/示波平面），但其变量描述靠离线 A2L（ELF 生成），与运行时枚举的思路相反——加私有枚举扩展后现成 master（CANape 等）即用不了，生态优势缩水大半；最小子集实现量 ~2–3k 行仍要 16-bit char 手写；DAQ 每事件一个 DTO 头在 100 kHz 下开销 20–30%，不如 50-tick 摊一头的 block；EtherCAT 阶段无标准 XCP 绑定。**保留**：语义词汇对齐 + 将来 CPU2 加 XCP 门面的退路。 |
-| MAVLink | 参数微服务是扁平 float 表，装不下 min/max/scale/prescaler 元数据→描述符表仍需自定义消息；payload ≤255 octets→800B block 要 4 片重组；官方 C 生成代码 = packed struct + memcpy，C28x 等于重写生成器后端。保住的只有心跳与 XML 格式。 |
+| MAVLink | 参数微服务是扁平 float 表，装不下 type/kind/prescaler/group 等运行时枚举元数据→描述符表仍需自定义消息；payload ≤255 octets→800B block 要 4 片重组；官方 C 生成代码 = packed struct + memcpy，C28x 等于重写生成器后端。保住的只有心跳与 XML 格式。 |
 | nanopb / protobuf | 官方明确不支持 CHAR_BIT≠8 平台（自维护私有分支）；varint 让 golden vectors 人工不可核；.proto 表达不了共享 RAM 布局，共享 struct 仍需手写对齐——第二数据模型成本照付。 |
 | CBOR（控制面） | 有 Zephyr MCUmgr 先例，字段演进友好；但固件需自写 ~400 行 16-bit-char 安全编解码子集（造了个更通用的轮子），一协议两编码，vectors 需钉确定性编码。演进需求已由"追加字段+长度判别+重枚举机制"低成本覆盖。 |
 
@@ -428,9 +429,9 @@ golden vectors 双端 conformance + 版本字段），针对的正是既有私�
 
 ### ADR-2：变量发现架构（2026-06-11 定稿）
 
-**决策**：描述符表只承载 L1 自动注册的平台量（防呆面 + 开箱即用面 + 默认
+**决策**：描述符表只承载 L1 自动注册的平台量（开箱即用面 + 默认
 绑定来源）；应用变量一律走"viewer 解析 .out(DWARF) → 按 (addr,type) 下发"
-路径，示波经 DAQ_BIND、参数写经 CAL_WRITE（guard-if-registered 护栏）。
+路径，示波经 DAQ_BIND、参数写经 CAL_WRITE。
 
 **否决的中间形态**：① L2 组件 init 自注册（`pi_init(&pi, "vel")`）与
 ② 用户侧字符串化注册宏——两者都要求用户为变量维护第二个名字字符串
@@ -438,10 +439,10 @@ golden vectors 双端 conformance + 版本字段），针对的正是既有私�
 命名来源，而 DWARF 恰好免费提供它。
 
 **代价与对策**：viewer 必须实现 ELF/DWARF 解析（Rust `gimli`/`object`，
-Phase 3.5+）；.out 与固件的配对靠 build_hash 双向校验；未注册地址的
-参数写入无 min/max 护栏——以 `cal_unguarded` 计数暴露 + viewer 确认 UI
-兜底。换得：学生零注册代码、零命名负担、任意 struct 成员/数组元素可观测，
-且通道选择完全运行时化（不重烧）。
+Phase 3.5+）；.out 与固件的配对靠 build_hash 双向校验。协议不承载
+`min/max/scale/offset`：值本身必须已经是要显示、记录、写回的真实量。
+换得：学生零注册代码、零命名负担、任意 struct 成员/数组元素可观测，且
+通道选择完全运行时化（不重烧）。
 
 ## 附录 B：Scope2000 `DataSource` 边界（Phase 3.5）
 
@@ -473,8 +474,8 @@ pub enum SourceEvent {
 ```
 
 `ScopeBlock` 保留 `start_tick/block_seq/bind_seq/stride_octets` 与原生
-`samples: Vec<u8>`；只有绘图或 CSV 导出边界才按绑定类型展开并应用
-`scale/offset`，不在 codec 或 source 热路径统一转换为 `f64`。
+`samples: Vec<u8>`；只有绘图或 CSV 导出边界才按绑定类型展开为数值，不应用
+任何 scale/offset。
 
 旧设备兼容不实现为 Scope2000 内部专用数据源。未来独立 `LegacyBridge`
 进程负责旧协议，另一侧通过通用本地 byte-stream transport 暴露规范化的

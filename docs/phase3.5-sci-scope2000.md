@@ -61,7 +61,7 @@ Phase 6 EtherCAT。SCI 只负责在低成本物理链路上提前暴露双核和
 - **重试不得重复副作用。** CPU2 保留上一条已编码响应；相同请求重放响应，
   不再次执行 COMMIT、CMD、BIND，也不再次推进 Scope 消费索引。
 - **线上数据保留原生形态。** `ScopeBlock` 保留样本位宽、tick、block/bind
-  序号和交错布局；只在绘图或 CSV 边界换算为显示值。
+  序号和交错布局；绘图或 CSV 只按原生类型解码，不做 `scale/offset` 换算。
 - **能力由原生平台定义。** Scope2000 按 Viewer2000 完整 capability 模型设计；
   未来兼容桥只能声明缺失能力，不能反向削减原生协议或热路径。
 - **通信失败不能污染控制域。** Scope2000 停止、串口拔出、CPU2 堵塞或环溢出
@@ -473,7 +473,8 @@ Connect CPU2 -> Load/Resume
 ## 9. 验证 B — ENUM 与 build-hash 重枚举
 
 1. 连接后由 Scope2000 每页请求 8 条描述符，直到 `count=0` 或达到 total。
-2. 核对名称、type、kind、地址、min/max、scale/offset、prescaler/group。
+2. 核对名称、type、kind、地址、prescaler/group；描述符 entry 不包含
+   `min/max/scale/offset` 字段。
 3. Scope2000 枚举总数必须等于 HELLO 的 `desc_count`。
 4. 选择若干参数与示波量，确认 UI 只允许最多 8 个 scope 通道。
 5. 刷入 build hash 不同但 wire/contract 相同的固件。
@@ -500,12 +501,11 @@ Connect CPU2 -> Load/Resume
 
 | 用例 | 预期 |
 |---|---|
-| 越界注册参数 | 整批拒绝，`fail_idx` 指向首个非法项 |
 | 类型不符 | 整批拒绝 |
 | 数量超过 16 | BAD_PARAM |
 | 上一 commit 未完成又提交 | BUSY |
-| 一批中一项合法、一项非法 | 合法项也不得写入 |
-| 未注册但允许的 RAM 地址 | 可写，`cal_unguarded` 增加 |
+| 一批中一项合法、一项机械非法（错类型/错地址等） | 合法项也不得写入 |
+| 未注册但允许的 RAM 地址 | 可写 |
 
 同一地址分多帧 Stage 时，最后一次暂存值覆盖前值。超时重发相同 CAL_COMMIT
 不得产生第二个 `commit_seq`。
@@ -551,7 +551,7 @@ START -> STOP -> START -> 制造 TZ fault -> CLEAR_FAULT
 | n_ch/stride | 与绑定的原生类型一致 |
 | samples | 不在 codec/source 层统一转成 f64 |
 
-6. Scope2000 用 `tick_hz` 和 prescaler 建立横轴，scale/offset 只在显示边界应用。
+6. Scope2000 用 `tick_hz` 和 prescaler 建立横轴，纵轴值直接由样本原生类型解码。
 7. 导出 CSV，检查时间、通道列、断口和显示值与 GUI 一致。
 
 ### 12.1 断口与过载

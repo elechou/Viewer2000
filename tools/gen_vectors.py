@@ -104,9 +104,9 @@ def wire_frame(raw: bytes) -> bytes:
 # ---------------------------------------------------------------------------
 # 消息 payload 构造（wire-spec §4；字段顺序与偏移以 spec 为准）
 # ---------------------------------------------------------------------------
-def desc_entry(name, type_, kind, addr, vmin, vmax, scale, offset, presc, group):
-    return struct.pack("<16sHHIffffHH", name.encode("ascii"),
-                       type_, kind, addr, vmin, vmax, scale, offset, presc, group)
+def desc_entry(name, type_, kind, addr, presc, group):
+    return struct.pack("<16sHHIHH", name.encode("ascii"),
+                       type_, kind, addr, presc, group)
 
 
 # V2K_TYPE_* → (struct 格式码, 样本 octet 宽度)；样本按原生宽度无损直拷
@@ -148,11 +148,10 @@ def build_cases():
     add("status_resp",
         "STATUS_RESP：RUNNING 态，组 0=LIVE 其余 OFF",
         0x82, 0x0002,
-        struct.pack("<HHHHIIIIHHI4BIHH",
+        struct.pack("<HHHIIIIHHI4BIHH",
                     2,            # sys_state = RUNNING
                     0,            # fault_code
                     0,            # status_flags
-                    0,            # cal_unguarded（无护栏写入累计）
                     123456789,    # tick
                     4567,         # cpu1_heartbeat
                     4566,         # cpu2_heartbeat
@@ -172,10 +171,8 @@ def build_cases():
         "ENUM_RESP：总数 10，本页 2 条（vel_kp 参数 + iq_meas 快组示波通道）",
         0x83, 0x0003,
         struct.pack("<HHBB", 10, 0, 2, 0)
-        + desc_entry("vel_kp", 4, 0x0001, 0x0000A012,  # F32, PARAM
-                     0.0, 100.0, 1.0, 0.0, 0, 0)
-        + desc_entry("iq_meas", 0, 0x0002, 0x0000A044,  # I16, SCOPE
-                     0.0, 0.0, 0.01, 0.0, 1, 0))
+        + desc_entry("vel_kp", 4, 0x0001, 0x0000A012, 0, 0)  # F32, PARAM
+        + desc_entry("iq_meas", 0, 0x0002, 0x0000A044, 1, 0))  # I16, SCOPE
     add("enum_resp_empty",
         "ENUM_RESP 边界：start_idx 越过总数 → count=0（合法的读完信号）",
         0x83, 0x0004, struct.pack("<HHBB", 10, 10, 0, 0))

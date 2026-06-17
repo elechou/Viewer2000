@@ -100,7 +100,7 @@ CCS Graph 截图、Expressions 读数等）。验证知识不能只活在 commit
       参数提交放在独立 1 kHz 错相槽位；控制段/scope 段周期分开统计
 - [x] PC 端 contract 静态断言与 24 组 golden vectors 检查通过（2026-06-14）
 - [x] §5 调度与 ISR 预算 实物验收（2026-06-14, RAM/20 kHz, CCS MCP）：1kHz/100Hz due 间隔与错相经 snapshot due_mask 通道实证（1kHz 间隔 20 tick、100Hz 间隔 200 tick、永不同拍）；ISR 预算 isr_max=840 cycles (4.2 µs) « 10000 cycles 预算
-- [x] §6 参数双缓冲与护栏 实物验收（2026-06-14, RAM/20 kHz, CCS MCP 驱动）：合法/越界×2/错类型/错数量/错地址 Flash/错地址未对齐/无护栏/批原子性 7 用例全过；§6 步骤 6 三态照跑（IDLE→APP_START→RUNNING→软 TZ→FAULT→CLEAR_FAULT→IDLE，每态各一次合法写）全过
+- [x] §6 参数双缓冲实物验收（2026-06-14, RAM/20 kHz, CCS MCP 驱动）：合法/旧范围检查×2/错类型/错数量/错地址 Flash/错地址未对齐/未注册地址写/批原子性 7 用例全过；§6 步骤 6 三态照跑（IDLE→APP_START→RUNNING→软 TZ→FAULT→CLEAR_FAULT→IDLE，每态各一次合法写）全过。当前 contract 已删除旧范围检查语义，需按新结果码复测错误路径。
 - [x] §7 Snapshot + CCS Graph 实物验收（用户自检）
 - [x] §8 LIVE + 跨组独立 实物验收（2026-06-14, RAM/20 kHz, CCS MCP）：OFF→host BIND(2ch)→LIVE 序列、block hdr 全字段、自然 overrun 不阻塞控制 ISR、LIVE 中 BIND→BAD_STATE、group 1 慢组 LIVE 与 group 0 独立。**待 Phase 3.5**：CPU2 consumer API (peek/release/begin_snapshot) 语义
 - [x] RAM / 100 kHz 实物验收（2026-06-14, CCS MCP 链内完成切换：ccs-sysconfig EPWM Period 5000→1000 + Edit v2k_timebase.h 默认 V2K_ISR_HZ 20000→100000 + ccs-project buildProject + ccs-debug load/run）：tick 100k/s、tb_check 不停 ESTOP0、isr_cycles_max=1844/2000 (SNAPSHOT 8ch 峰值，余 8%) / OFF 稳态 840 (42%)、budget_violation=0、ovf_cnt=0、§5 due 错相 1kHz=100 tick 1kHz/100Hz 永不同拍、§6 参数链 + 状态机闭环
@@ -116,16 +116,16 @@ CCS Graph 截图、Expressions 读数等）。验证知识不能只活在 commit
 
 | 日期 | 验证项 | 方法 | 实测 | 结论 |
 |---|---|---|---|---|
-| 2026-06-14 | §6 基线 + 地址常量 | CPU1/CPU2 各 `getTargetState`=Running；CPU1 Expressions 读 tick / ovf / budget / param_status；CPU2 读 param_shadow | tick 1.36M 持续递增；`isr_ovf_cnt=1`（基线值，load/connect 窗口一次性）；`budget_violation=0`；`param_status` 全 0、`mirror_seq` 在 10 Hz 推进；shadow.count/commit_seq 全 0。地址锁定：`&g_v2k_pwm_duty_cmd=0xAA46`（F32, kind PARAM\|SCOPE, [0.02,0.98]）；`&g_v2k_scope_cycles_max=0xAA24`（U32, 未注册——案例 6 用） | 基线健康，可起跑 |
+| 2026-06-14 | §6 基线 + 地址常量 | CPU1/CPU2 各 `getTargetState`=Running；CPU1 Expressions 读 tick / ovf / budget / param_status；CPU2 读 param_shadow | tick 1.36M 持续递增；`isr_ovf_cnt=1`（基线值，load/connect 窗口一次性）；`budget_violation=0`；`param_status` 全 0、`mirror_seq` 在 10 Hz 推进；shadow.count/commit_seq 全 0。地址锁定：`&g_v2k_pwm_duty_cmd=0xAA46`（F32, kind PARAM\|SCOPE）；`&g_v2k_scope_cycles_max=0xAA24`（U32, 未注册——案例 6 用） | 基线健康，可起跑 |
 | 2026-06-14 | §6.1 合法写 | CPU2 写 shadow {addr=0xAA46, type=F32(4), value_bits=0x3F000000 (=0.5f), count=1}，最后 `commit_seq=1` | `applied_seq=1`/`result=OK(0)`；`pwm_duty_cmd` 0.25 → 0.5（同拍生效） | ✓ |
-| 2026-06-14 | §6.2a 越界下 | 同上 addr/type，`value_bits=0x3C23D70A`(=0.01f)，`commit_seq=2` | `applied_seq=2`/`result=OUT_RANGE(2)`/`fail_idx=0`；pwm 维持 0.5 | ✓ |
-| 2026-06-14 | §6.2b 越界上 | `value_bits=0x3F800000`(=1.0f)，`commit_seq=3` | `applied_seq=3`/`result=OUT_RANGE(2)`；pwm 维持 0.5 | ✓ |
+| 2026-06-14 | §6.2a 旧范围检查下界（已废弃） | 同上 addr/type，`value_bits=0x3C23D70A`(=0.01f)，`commit_seq=2` | 旧固件曾按范围检查拒绝；当前 contract 已删除范围错误码，这一项不再作为验收条件 | 历史记录 |
+| 2026-06-14 | §6.2b 旧范围检查上界（已废弃） | `value_bits=0x3F800000`(=1.0f)，`commit_seq=3` | 旧固件曾按范围检查拒绝；当前 contract 已删除范围错误码，这一项不再作为验收条件 | 历史记录 |
 | 2026-06-14 | §6.3 错类型 | `type=U32(3)` 写 F32 注册地址 0xAA46，`value_bits=42`，`commit_seq=4` | `applied_seq=4`/`result=BAD_TYPE(1)`；pwm 维持 0.5 | ✓ |
-| 2026-06-14 | §6.4 错数量 | `type` 恢复 F32 + value 0.6f；`count=17`(>16=V2K_PARAM_BATCH_MAX)，`commit_seq=5` | `applied_seq=5`/`result=BAD_COUNT(3)`；pwm 维持 0.5 | ✓ |
-| 2026-06-14 | §6.5a 错地址 Flash | `count=1`、`addr=0x80000`(Flash Bank0)，`commit_seq=6` | `applied_seq=6`/`result=BAD_ADDR(4)`；pwm 维持 0.5 | ✓ |
-| 2026-06-14 | §6.5b 错地址 未对齐 | `addr=0xAA47`(奇地址 + 32-bit type=F32)，`commit_seq=7` | `applied_seq=7`/`result=BAD_ADDR(4)`；pwm 维持 0.5 | ✓ |
-| 2026-06-14 | §6.6 无护栏写 | `addr=0xAA24`(`g_v2k_scope_cycles_max`, 未注册, U32) `value_bits=0`(避免影响 ISR 预算统计)，`commit_seq=8` | `applied_seq=8`/`result=OK`；`unguarded_cnt` 0→1；`scope_cycles_max` 写 0 后下一拍由 ISR 自愈到 67 | ✓ |
-| 2026-06-14 | §6.7 批原子性 | writes[0]={addr=0xAA46,F32,0.6f 合法}, writes[1]={addr=0xAA46,F32,5.0f=0x40A00000 越界}，`count=2`、`commit_seq=9` | `applied_seq=9`/`result=OUT_RANGE(2)`/`fail_idx=1`；pwm 维持 0.5（合法的 writes[0] 也未生效）；`unguarded_cnt` 不增（整批拒绝、不统计 unguarded） | ✓ 批原子性最关键一刀 |
+| 2026-06-14 | §6.4 错数量 | `type` 恢复 F32 + value 0.6f；`count=17`(>16=V2K_PARAM_BATCH_MAX)，`commit_seq=5` | 当前结果码应为 `BAD_COUNT(2)`；pwm 维持 0.5 | 待按新 contract 复测 |
+| 2026-06-14 | §6.5a 错地址 Flash | `count=1`、`addr=0x80000`(Flash Bank0)，`commit_seq=6` | 当前结果码应为 `BAD_ADDR(3)`；pwm 维持 0.5 | 待按新 contract 复测 |
+| 2026-06-14 | §6.5b 错地址 未对齐 | `addr=0xAA47`(奇地址 + 32-bit type=F32)，`commit_seq=7` | 当前结果码应为 `BAD_ADDR(3)`；pwm 维持 0.5 | 待按新 contract 复测 |
+| 2026-06-14 | §6.6 未注册地址写 | `addr=0xAA24`(`g_v2k_scope_cycles_max`, 未注册, U32) `value_bits=0`(避免影响 ISR 预算统计)，`commit_seq=8` | 当前语义：地址落在 CPU1 可写数据区且 type 合法即 `OK`；不再有旧计数 | 待按新 contract 复测 |
+| 2026-06-14 | §6.7 批原子性 | writes[0]={addr=0xAA46,F32,0.6f 合法}, writes[1]={addr=0xAA46,F32,5.0f=0x40A00000 旧范围失败}，`count=2`、`commit_seq=9` | 旧固件曾用范围失败验证批原子性；当前应改用 BAD_TYPE/BAD_ADDR 场景复测 | 历史记录 |
 | 2026-06-14 | §6 步骤 6a IDLE 合法写 | 当前 sys_state=1，写 0.3f (`commit_seq=10`)；记 mirror_seq=15700 | `applied_seq=10`/OK；pwm_duty_cmd=0.3；sys_state 仍 1；mirror_seq → 16182（10 Hz 推进 482） | ✓ IDLE 下参数链与 mirror 照跑 |
 | 2026-06-14 | §6 步骤 6b RUNNING 合法写 | CPU2 写 `g_v2k_msg_2to1.cmd_req` {cmd_code=APP_START(1), cmd_seq=1}；切到 RUNNING 后写 0.45f (`commit_seq=11`) | sys_state 1→2、cmd_result=OK；`applied_seq=11`/OK；`pwm_duty_cmd=pwm_duty_applied=0.45`（RUNNING 下输出真正放行） | ✓ |
 | 2026-06-14 | §6 步骤 6b' 软触发 TZ 进 FAULT | `writeMemory(coreId=0, 0x409B, 0x0004)`(EPWM**9** TZFRC)→无反应；改 `writeMemory(0x309B, 0x0004)`(EPWM**1** TZFRC.OST) | sys_state 2→3(FAULT)；`fault_code` 0→1(`V2K_FAULT_TZ1_EXT`)；`tz_int_cnt` 0→1 | ✓ 顺手识坑：F28P65x EPWM1 base=0x3000（不是 0x4000），调试器符号名显示 `EPwm9Regs_*` 可一眼分辨 |
@@ -152,9 +152,13 @@ CCS Graph 截图、Expressions 读数等）。验证知识不能只活在 commit
 
 ---
 
-## Phase 3.5 - SCI 数据泵 + Scope2000（软件实现完成，CCS/实物验收待进行）
+## Phase 3.5 - SCI 数据泵 + Scope2000（软件实现完成，CCS/实物验收进行中）
 
 操作步骤见 `docs/phase3.5-sci-scope2000.md`。
+
+> **2026-06-17 语义修正**：描述符表不再承载 `min/max/scale/offset` 语义；
+> 线上值就是真实值，host 只按原生类型解码。当前 contract/固件实现已删除旧字段、
+> 范围检查结果码与未注册计数，后续验证只覆盖机械一致性校验。
 
 - [x] wire v1 尾部兼容扩展：HELLO tick_hz/capabilities，STATUS cmd ack/result
 - [x] contract version 3、静态断言、生成器与 24 组 golden vectors 同步
@@ -166,9 +170,10 @@ CCS Graph 截图、Expressions 读数等）。验证知识不能只活在 commit
       参数/命令、Live/Snapshot、断口、CSV、控制台、build-hash 重枚举
 - [x] Scope2000 golden-vector、坏 CRC、COBS 重同步、拆包/粘包、timeout、
       seq 错配与版本不匹配测试
-- [x] 公开源码/文件名品牌扫描通过；原创无文字图标仅改为中立文件名
 - [x] Scope2000 独立 root commit：`0fe4067`（Viewer2000 待 CCS/实物验收后提交）
 - [x] 验证 A — 串口与 HELLO：115200 / `/dev/tty.usbmodemCL6500011`
+- [x] 验证 B — ENUM 分页与描述符字段（wire-level 实物链路）
+- [ ] 验证 B — Scope2000 GUI 枚举 + build-hash 热重枚举（刷入不同 hash 固件）
 - [ ] CCS CPU1/CPU2 RAM + FLASH `buildProject` 0 error
 - [ ] 115200 实物闭环与最高稳定波特率测试
 - [ ] 参数原子提交、命令结果、Live partial block、Snapshot/pre-trigger 实测
@@ -180,3 +185,4 @@ CCS Graph 截图、Expressions 读数等）。验证知识不能只活在 commit
 | 日期 | 验证项 | 方法 | 实测 | 结论 |
 |---|---|---|---|---|
 | 2026-06-14 | 验证 A — 串口与 HELLO timeout 根因 | Scope2000 HELLO 超时后用 CCS Expressions 读 CPU2 诊断量与 SCIA 寄存器；再按 golden HELLO wire frame 经 XDS110 VCP 发包 | 修复前 `g_handshake_state=3`、CPU2 heartbeat 递增，但 `rx_octets=0`；SCIA GPIO42/43 mux 与 CPUSEL 生成正确，`SCICCR/SCICTL1/HBAUD/LBAUD` 却保持 0。根因：CPU2 为省 RAM 绕开 `Board_init()` 直调 `SCIA_BASE_init()`，漏掉 CPU2 `SYSCTL_init()` 里的本地 `SysCtl_enablePeripheral(SCIA)` clock gate，导致 SCIA 配置写入被门控吞掉。修复后寄存器读回 `SCICCR=7`、`SCICTL1=0x23`、`HBAUD=0`、`LBAUD=53`、`RXFFIL=1`；向 `/dev/tty.usbmodemCL6500011` 发 `U` 后 `rx_octets` 0→1；HELLO 响应解码：wire=1、contract=3、build_hash=0x26cd7396、desc_count=16、firmware=viewer2000、tick_hz=20000、capabilities=0x7f；`good_frames=1`、`tx_octets=49` | **验证 A 通过**。正确端口是 `/dev/tty.usbmodemCL6500011`；`...14` 不是本阶段 XDS110 UART backchannel。遗留：Scope2000 GUI 端重连截图/日志、ENUM 及后续 B-G 验证仍待跑 |
+| 2026-06-17 | 验证 B — ENUM 分页与描述符字段（wire-level） | 临时 Python 串口探针直接访问 `/dev/cu.usbmodemCL6500011`，复用 `tools/gen_vectors.py` 的 COBS/CRC-32C/raw frame 实现，依次发送 HELLO、STATUS、ENUM(start=0,max=8)、ENUM(start=8,max=8)；`/dev/cu.usbmodemCL6500014` 先试探无完整 COBS 响应 | HELLO：wire=1、contract=3、build_hash=`0x26cd7396`、desc_count=16、firmware=`viewer2000`、tick_hz=20000、capabilities=0x7f；STATUS：sys_state=IDLE、fault_code=0、status_flags=0、build_hash 同 HELLO；ENUM 两页各 8 条、total=16、total_read=16。字段核对：`pwm1_duty_cmd` 为 F32 PARAM\|SCOPE，addr=0xAA46，group0/prescaler1；group0 前 8 条、group1 后 8 条，group1 prescaler=20 | **ENUM 链路通过（旧固件记录）**：分页、count、字段解码、描述符总数与 HELLO 一致。当前新 contract 已将描述符 entry 收紧为 28 octets；刷入新固件后需重跑该项并更新实测 build_hash |

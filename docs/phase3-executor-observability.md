@@ -32,7 +32,7 @@ CPUTIMER1 静态实例），**C 管运行时**（ISR 内容、多速率调度、
 | `cpu1/v2k_executor.c/.h` | 固定顺序控制 ISR；倒计时分频的多速率调度（1 kHz / 100 Hz / 参数提交三槽相位错开）；CPUTIMER1 自计时秒表分段量 control/scope/total 周期；ADC overflow 与 ISR 预算计数 |
 | `cpu1/v2k_platform.h` | L1 暴露给 L3 的唯一逐拍接口：`user_step(const plat_in_t*, plat_out_t*)`，进 = 本拍物理量 + due 掩码，出 = 本拍占空比 |
 | `cpu1/v2k_user.c` | 默认 L3 示例（**弱符号**，应用可强定义覆盖）：把 `pwm1_duty_cmd` 直通到输出，无内部状态 |
-| `cpu1/v2k_registry.c/.h` | 描述符表注册；参数批次的后台护栏校验 + ISR 安全点原子提交；10 Hz 值镜像刷新 |
+| `cpu1/v2k_registry.c/.h` | 描述符表注册；参数批次的后台机械校验 + ISR 安全点原子提交；10 Hz 值镜像刷新 |
 | `cpu1/v2k_scope_runtime.c/.h` | Live/Snapshot 示波生产者；后台配置/绑定的序号握手与容量计算；冻结后 CCS view 解交错 |
 | `common/v2k_scope_consumer.h` | CPU2/单元测试用的 SPSC 消费者 API（peek/release/begin_snapshot），内联只读 |
 | `cpu1/cpu1.c` | 后台超级循环：按 `g_v2k_tick` deadline 服务四个共享平面，不阻塞等通信核 |
@@ -68,10 +68,11 @@ CPUTIMER1 静态实例），**C 管运行时**（ISR 内容、多速率调度、
   被静默截掉尾部，所以慢组恰好注册 8 个；要更多慢量靠 host 重绑或启用第二慢组。
   未采集时 ISR 示波路径只剩 group 0/1 的一个 active 判断。换通道必须先 `OFF`
   （一个环里不混两套通道布局）。
-- **参数护栏 = guard-if-registered。** 写地址命中描述符表且 `kind&PARAM` →
-  强制 min/max 检查，越界整批拒绝；命中但非 PARAM → 拒绝；未命中（应用自有
-  变量）→ 放行原始写入，`unguarded_cnt` 累加，防呆责任交给 host。**批是原子的**：
-  任一条非法则整批不写，`fail_idx` 指向首个非法条目。
+- **参数提交只做机械校验。** 每条写入按 `(addr,type)` 处理：type 必须合法，
+  地址必须位于允许写入的 CPU1 数据区，32-bit 类型必须对齐；命中描述符表时
+  还要求 `kind&PARAM` 且 type 一致。固件不做 `min/max` 范围检查、不 clamp、
+  不做 `scale/offset` 反算。**批是原子的**：任一条机械非法则整批不写，
+  `fail_idx` 指向首个非法条目。
 - **跨核握手统一序号制，无双写者标志位。** GSx 硬件写保护让"对方清我的标志"
   不可能，于是一切请求/应答都是：请求方在自己属主区**最后写 `xxx_seq`**
   （发布动作），应答方写 `xxx_ack_seq` + 结果码回应。CCS 直接戳 shadow 区
@@ -205,7 +206,7 @@ CPU1 会话常驻 Expressions（开 Continuous Refresh）：
 | `g_v2k_scope_cycles` / `_max` | 仅示波 epilogue 周期 |
 | `g_v2k_isr_budget_violation_cnt` | ISR 耗时达到控制周期预算的次数 |
 | `g_v2k_isr_ovf_cnt` | ADC 中断 overflow（丢拍）计数 |
-| `g_v2k_gs0.param_status` | 参数批次结果/失败下标/unguarded 计数/值镜像 |
+| `g_v2k_gs0.param_status` | 参数批次结果/失败下标/值镜像 |
 | `g_v2k_gs0.scope_prod[0..3]` | 各组示波状态/容量/配置结果/overrun/冻结范围 |
 | `g_v2k_ccs_view` | Snapshot 解交错后的连续 float 数据 |
 
@@ -334,19 +335,18 @@ Sampling Rate Hz = 等效采样率。
 2. 按用例填 `count` 与 `writes[]`（每条 addr / type / value），**最后**把
    `commit_seq` 写成旧值 +1。
 3. 等 `g_v2k_gs0.param_status.applied_seq == commit_seq`：CPU1 后台在下一个约
-   1 ms poll point 稳定复制并校验整批，ISR 在错相参数槽一次性原子写入全部已批准
+   1 ms poll point 稳定复制并机械校验整批，ISR 在错相参数槽一次性原子写入全部已批准
    条目（校验到生效 < 1 ms，发布到生效端到端 < 2 ms）。
-4. 读 `result / fail_idx / unguarded_cnt / value_mirror[]` 对照下表。
+4. 读 `result / fail_idx / value_mirror[]` 对照下表。
 
 | 用例 | 操作 | 预期 |
 |---|---|---|
-| 合法写 | `pwm1_duty_cmd`，type=`F32`，值 ∈ [0.02, 0.98] | `V2K_CAL_OK`，整批同拍生效 |
-| 越界 | `pwm1_duty_cmd = 0.01` 或 `1.0` | `V2K_CAL_OUT_RANGE`，目标值不变 |
+| 合法写 | `pwm1_duty_cmd`，type=`F32`，任意 F32 位模式 | `V2K_CAL_OK`，整批同拍生效 |
 | 错类型 | 对 `pwm1_duty_cmd` 用非 F32 type | `V2K_CAL_BAD_TYPE`，整批不写 |
 | 错数量 | `count > V2K_PARAM_BATCH_MAX` | `V2K_CAL_BAD_COUNT`，整批不写 |
 | 错地址 | Flash/代码/外设/示波环/未对齐 32-bit 地址 | `V2K_CAL_BAD_ADDR`，整批不写 |
-| 无护栏写 | CPU1 `.bss/.data/.bss:output` 中未注册的测试变量 | 写入成功，`unguarded_cnt` 按成功条数 +N |
-| 批原子性 | 一批里先合法项、后非法项 | 整批拒绝、合法项也不变，`fail_idx` 指向首个非法项 |
+| 未注册但允许写地址 | CPU1 `.bss/.data/.bss:output` 中未注册的测试变量 | 写入成功 |
+| 批原子性 | 一批里先合法项、后机械非法项 | 整批拒绝、合法项也不变，`fail_idx` 指向首个非法项 |
 
 5. **命令 vs 应用同线**：合法写入后按 §7 做一次 snapshot（二者在 group 0 槽位
    2 / 3，同一冻结窗口分别取 `channel_slot = 2`、`= 3` 画图），两条曲线 `start_tick`
@@ -485,7 +485,7 @@ Phase 2 已验过的 ePWM/ADC/TZ 与 START/STOP/FAULT/CLEAR_FAULT，按
 | SysConfig 与 linker 对账 | §1、§2 | `v2k_tb_check` 与布局断言不触发 `ESTOP0` |
 | 双核、时基、TZ、命令状态机 | Phase 2 | 原 Phase 2 验收全部回归通过 |
 | 调度、状态连续性、ISR 预算 | §5 | 20/100 kHz 的 due、cycle、overflow、跨状态 scope 全通过 |
-| 参数双缓冲与护栏 | §6 | 合法、各类拒绝、unguarded、批原子性全通过 |
+| 参数双缓冲 | §6 | 合法、机械非法拒绝、批原子性全通过 |
 | Snapshot 与 CCS Graph | §7 | 两种边沿、四档 pre-trigger、partial block、重复 ARM 全通过 |
 | Live 与 CPU2 consumer | §8 | block 头、overrun、换绑拒绝、SPSC 索引语义全通过 |
 | 实时模式（halt 行为） | Phase 2 + §5 | halt 时 TZ6 保持安全，time-critical ISR/tick 继续，overflow 不增长 |
