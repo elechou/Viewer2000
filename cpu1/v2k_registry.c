@@ -43,6 +43,7 @@ typedef struct {
 static v2k_param_ready_t s_ready;
 static volatile uint16_t s_ready_valid;
 static uint32_t s_shadow_seen;
+static v2k_param_read_ref_t s_read_refs[V2K_CAL_READ_MAX];
 
 static uint32_t v2k_addr(const volatile void *ptr)
 {
@@ -57,7 +58,7 @@ static uint16_t v2k_addr_in_range(uint32_t addr, uint16_t words,
     return ((addr >= first) && ((addr + words) <= limit)) ? 1u : 0u;
 }
 
-static uint16_t v2k_addr_is_writable(uint32_t addr, uint16_t type)
+static uint16_t v2k_addr_is_data_accessible(uint32_t addr, uint16_t type)
 {
     uint16_t words;
 
@@ -196,7 +197,7 @@ static uint16_t v2k_validate_write(const v2k_param_write_t *write)
     {
         return V2K_CAL_BAD_TYPE;
     }
-    if (!v2k_addr_is_writable(write->addr, write->type))
+    if (!v2k_addr_is_data_accessible(write->addr, write->type))
     {
         return V2K_CAL_BAD_ADDR;
     }
@@ -315,31 +316,90 @@ void v2k_param_apply_ready(void)
     s_ready_valid = 0u;
 }
 
-static uint32_t v2k_read_value(const v2k_desc_entry_t *entry)
+static uint16_t v2k_validate_read(const v2k_param_read_ref_t *ref)
 {
-    const volatile uint16_t *src16 = (const volatile uint16_t *)entry->addr;
+    if (ref->type >= V2K_TYPE_COUNT)
+    {
+        return V2K_CAL_BAD_TYPE;
+    }
+    if (!v2k_addr_is_data_accessible(ref->addr, ref->type))
+    {
+        return V2K_CAL_BAD_ADDR;
+    }
+    return V2K_CAL_OK;
+}
 
-    if ((entry->type == V2K_TYPE_I16) || (entry->type == V2K_TYPE_U16))
+static uint32_t v2k_read_addr(uint32_t addr, uint16_t type)
+{
+    const volatile uint16_t *src16 = (const volatile uint16_t *)addr;
+
+    if ((type == V2K_TYPE_I16) || (type == V2K_TYPE_U16))
     {
         uint16_t value = *src16;
-        if ((entry->type == V2K_TYPE_I16) && ((value & 0x8000u) != 0u))
+        if ((type == V2K_TYPE_I16) && ((value & 0x8000u) != 0u))
         {
             return 0xFFFF0000uL | value;
         }
         return value;
     }
-    return *(const volatile uint32_t *)entry->addr;
+    return *(const volatile uint32_t *)addr;
 }
 
-void v2k_param_refresh_mirror(void)
+void v2k_param_read_service(void)
 {
-    v2k_desc_table_t *table = &g_v2k_gs0.desc_table;
+    const volatile v2k_param_read_req_t *req = &V2K_GS4_RO->param_read_req;
+    uint32_t seq_before;
+    uint32_t seq_after;
     uint16_t i;
+    uint16_t count;
+    uint16_t result = V2K_CAL_OK;
 
-    for (i = 0u; i < table->hdr.entry_count; i++)
+    seq_before = req->read_seq;
+    if (seq_before == g_v2k_gs0.param_read_resp.ack_seq)
     {
-        g_v2k_gs0.param_status.value_mirror[i] =
-            v2k_read_value(&table->entries[i]);
+        return;
     }
-    g_v2k_gs0.param_status.mirror_seq++;
+    count = req->count;
+    if ((count > 0u) && (count <= V2K_CAL_READ_MAX))
+    {
+        for (i = 0u; i < count; i++)
+        {
+            s_read_refs[i] = req->refs[i];
+        }
+    }
+    seq_after = req->read_seq;
+    if (seq_before != seq_after)
+    {
+        return;
+    }
+
+    if ((count == 0u) || (count > V2K_CAL_READ_MAX))
+    {
+        result = V2K_CAL_BAD_COUNT;
+        count = 0u;
+    }
+    else
+    {
+        for (i = 0u; i < count; i++)
+        {
+            result = v2k_validate_read(&s_read_refs[i]);
+            if (result != V2K_CAL_OK)
+            {
+                break;
+            }
+        }
+    }
+
+    g_v2k_gs0.param_read_resp.result = result;
+    g_v2k_gs0.param_read_resp.count =
+        (result == V2K_CAL_OK) ? count : 0u;
+    if (result == V2K_CAL_OK)
+    {
+        for (i = 0u; i < count; i++)
+        {
+            g_v2k_gs0.param_read_resp.value_bits[i] =
+                v2k_read_addr(s_read_refs[i].addr, s_read_refs[i].type);
+        }
+    }
+    g_v2k_gs0.param_read_resp.ack_seq = seq_before;
 }

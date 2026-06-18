@@ -1,5 +1,5 @@
 //=============================================================================
-// v2k_sci_service.c - Viewer2000 wire v5 over SCIA/XDS110 VCP
+// v2k_sci_service.c - Viewer2000 wire v6 over SCIA/XDS110 VCP
 //
 // RX ISR 只把 8-bit octet 搬进本地 SPSC 环；COBS/CRC、消息解释、共享平面
 // 服务与 TX 均在 CPU2 超级循环执行。所有线上字段显式序列化，禁止 struct
@@ -425,33 +425,70 @@ static void v2k_handle_cal_commit(uint16_t seq, uint16_t payload_len)
 static void v2k_handle_cal_read(uint16_t seq, const uint16_t *payload,
                                 uint16_t payload_len)
 {
-    const volatile v2k_param_status_t *cal = &V2K_GS0_RO->param_status;
-    uint16_t start;
+    volatile v2k_param_read_req_t *req = &g_v2k_gs4.param_read_req;
+    const volatile v2k_param_read_resp_t *resp = &V2K_GS0_RO->param_read_resp;
+    uint32_t read_seq;
     uint16_t count;
     uint16_t i;
     uint16_t off;
-    if (payload_len != 4u)
+    uint16_t result;
+    if (payload_len < 2u)
     {
         v2k_send_ack(V2K_MSG_CAL_READ, seq, V2K_ACK_BAD_PARAM, 0uL);
         return;
     }
-    start = v2k_get_u16(payload, 0u);
-    count = payload[2] & 0xFFu;
-    if ((count > 32u) || ((uint32_t)start + count >
-                          V2K_GS0_RO->desc_table.hdr.entry_count))
+    count = payload[0] & 0xFFu;
+    if ((count == 0u) || (count > V2K_CAL_READ_MAX) ||
+        (payload_len != (uint16_t)(2u + 8u * count)))
     {
         v2k_send_ack(V2K_MSG_CAL_READ, seq, V2K_ACK_BAD_PARAM, 0uL);
+        return;
+    }
+    read_seq = req->read_seq + 1uL;
+    req->count = count;
+    req->reserved = 0u;
+    for (i = 0u; i < count; i++)
+    {
+        uint16_t in = (uint16_t)(2u + 8u * i);
+        req->refs[i].addr = v2k_get_u32(payload, in);
+        req->refs[i].type = v2k_get_u16(payload, (uint16_t)(in + 4u));
+        req->refs[i].reserved = 0u;
+    }
+    req->read_seq = read_seq;
+
+    for (i = 0u; i < 3000u; i++)
+    {
+        if (resp->ack_seq == read_seq)
+        {
+            break;
+        }
+        DEVICE_DELAY_US(1u);
+    }
+    if (resp->ack_seq != read_seq)
+    {
+        v2k_send_ack(V2K_MSG_CAL_READ, seq, V2K_ACK_INTERNAL, read_seq);
+        return;
+    }
+    result = resp->result;
+    if (result != V2K_CAL_OK)
+    {
+        v2k_send_ack(V2K_MSG_CAL_READ, seq, V2K_ACK_BAD_PARAM, read_seq);
+        return;
+    }
+    if (resp->count != count)
+    {
+        v2k_send_ack(V2K_MSG_CAL_READ, seq, V2K_ACK_INTERNAL, read_seq);
         return;
     }
     off = v2k_response_begin(V2K_MSG_CAL_READ, seq);
-    v2k_put_u32(s_raw, off, cal->mirror_seq);
-    v2k_put_u16(s_raw, (uint16_t)(off + 4u), start);
-    s_raw[(uint16_t)(off + 6u)] = count;
-    s_raw[(uint16_t)(off + 7u)] = 0u;
+    v2k_put_u32(s_raw, off, read_seq);
+    s_raw[(uint16_t)(off + 4u)] = count;
+    s_raw[(uint16_t)(off + 5u)] = 0u;
+    v2k_put_u16(s_raw, (uint16_t)(off + 6u), 0u);
     off = (uint16_t)(off + 8u);
     for (i = 0u; i < count; i++)
     {
-        v2k_put_u32(s_raw, off, cal->value_mirror[(uint16_t)(start + i)]);
+        v2k_put_u32(s_raw, off, resp->value_bits[i]);
         off = (uint16_t)(off + 4u);
     }
     v2k_response_send((uint16_t)(off - 7u));

@@ -2,7 +2,7 @@
 """gen_vectors.py — Viewer2000 线上协议 golden test vectors 生成器
 
 本脚本是 docs/wire-spec.md 的可执行伪码：COBS / CRC-32C / 帧构造 /
-全部 v5 消息的参考实现。生成的 contracts/vectors/*.txt 是协议的
+全部 v6 消息的参考实现。生成的 contracts/vectors/*.txt 是协议的
 规范字节样本——固件 C 序列化器与上位机 Rust 解析器各自的 conformance
 test 必须对同一组样本通过。三方不一致时以 vectors 为准（见 spec 文首）。
 
@@ -88,7 +88,7 @@ for _case in (b"", b"\x00\x00", b"\x01" * 300, bytes(range(256))):
 # ---------------------------------------------------------------------------
 # 帧构造（wire-spec §3.1）
 # ---------------------------------------------------------------------------
-VER_MAGIC = 0x55
+VER_MAGIC = 0x56
 
 
 def raw_frame(msg_type: int, seq: int, payload: bytes) -> bytes:
@@ -140,7 +140,7 @@ def build_cases():
     add("hello_req", "HELLO_REQ：空 payload", 0x01, 0x0001, b"")
     add("hello_resp", "HELLO_RESP：版本、build_hash、固件名、tick_hz 与能力位",
         0x81, 0x0001,
-        struct.pack("<HHIHH16sII", 5, 7, BUILD_HASH, 10, 0,
+        struct.pack("<HHIHH16sII", 6, 8, BUILD_HASH, 10, 0,
                     b"viewer2000", 20000, 0x7F))
 
     # ---- 4.2 STATUS ----
@@ -189,11 +189,14 @@ def build_cases():
     add("cal_commit", "CAL_COMMIT：空 payload", 0x11, 0x0006, b"")
     add("ack_cal_commit", "ACK(CAL_COMMIT)：OK，data=commit_seq=8",
         0x91, 0x0006, struct.pack("<BBHI", 0, 0x11, 0, 8))
-    add("cal_read", "CAL_READ：从 idx0 读 3 条", 0x12, 0x0007,
-        struct.pack("<HBB", 0, 3, 0))
-    add("cal_read_resp", "CAL_READ_RESP：镜像第 42 轮的 3 个 value_bits",
+    add("cal_read", "CAL_READ：按 (addr,type) 读 3 条", 0x12, 0x0007,
+        struct.pack("<BB", 3, 0)
+        + struct.pack("<IHH", 0x0000A012, 4, 0)
+        + struct.pack("<IHH", 0x0000A044, 1, 0)
+        + struct.pack("<IHH", 0x0000A046, 0, 0))
+    add("cal_read_resp", "CAL_READ_RESP：read_seq=42 的 3 个 value_bits",
         0x92, 0x0007,
-        struct.pack("<IHBB", 42, 0, 3, 0)
+        struct.pack("<IBBH", 42, 3, 0, 0)
         + struct.pack("<3I",
                       struct.unpack("<I", struct.pack("<f", 3.5))[0],
                       0x00000064, 0xFFFFFFF9))

@@ -15,11 +15,13 @@
 // │ 区块    │ 属主  │ 内容                                         │
 // ├────────┼──────┼─────────────────────────────────────────────┤
 // │ GS0前半│ CPU1 │ v2k_desc_table_t（描述符表）   (1416 words)   │
-// │        │      │ v2k_param_status_t            ( 134 words)   │
+// │        │      │ v2k_param_status_t            (   4 words)   │
+// │        │      │ v2k_param_read_resp_t         (  68 words)   │
 // │        │      │ v2k_scope_prod_t              (  20 words)   │
 // │ GS0后半│ CPU1 │ Stream/Capture 共用示波环 28K words           │
 // │ GS1-3  │ CPU1 │ （与 GS0 后半连续，同一 ring section）         │
 // │ GS4    │ CPU2 │ v2k_param_shadow_t            ( 100 words)   │
+// │        │      │ v2k_param_read_req_t          ( 132 words)   │
 // │        │      │ v2k_scope_cfg_t               (  12 words)   │
 // │        │      │ v2k_scope_bind_t              (  66 words)   │
 // │        │      │ v2k_scope_cons_t              (   2 words)   │

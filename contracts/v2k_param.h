@@ -26,9 +26,9 @@
 //       status.result = 结果码; status.applied_seq = shadow.commit_seq;  // 应答
 //   }
 //
-// 读回路径（值镜像）：CPU2/host 不能解引用 CPU1 私有地址（见 v2k_descriptor.h 注释），
-// 平台参数现值由 CPU1 后台循环周期性（建议 10 Hz）刷进 status.value_mirror[]，
-// 线上 CAL_READ 从镜像取。应用变量的"watch"= 绑到慢速示波组（自带时间戳）。
+// 读回路径：线上 CAL_READ 与 CAL_WRITE 使用同一寻址哲学，host 发送
+// (addr,type) 列表，CPU2 发布到 read request，CPU1 后台 poll point 按需读取一次
+// 并发布 read response。读取不进入 ISR；高速、带时间戳的数据仍走 scope ring。
 //=============================================================================
 #ifndef V2K_PARAM_H
 #define V2K_PARAM_H
@@ -40,6 +40,7 @@
 // 单条参数写入（shadow 区元素）
 //-----------------------------------------------------------------------------
 #define V2K_PARAM_BATCH_MAX 16u   // 一次 commit 的最大条数
+#define V2K_CAL_READ_MAX    32u   // 一次 CAL_READ 的最大条数
 
 typedef struct {
     uint32_t addr;         // 目标 CPU1 数据空间 word 地址（来源：描述符表或 DWARF）
@@ -49,6 +50,14 @@ typedef struct {
 } v2k_param_write_t;
 
 V2K_ASSERT_SIZE_BITS(v2k_param_write_t, 96u);
+
+typedef struct {
+    uint32_t addr;         // 目标 CPU1 数据空间 word 地址
+    uint16_t type;         // V2K_TYPE_*（决定读宽度与符号扩展）
+    uint16_t reserved;     // 置 0
+} v2k_param_read_ref_t;
+
+V2K_ASSERT_SIZE_BITS(v2k_param_read_ref_t, 64u);
 
 //-----------------------------------------------------------------------------
 // shadow 区（CPU2 属主：CPU2 与 CCS 写；CPU1 只读，应答走 status.applied_seq。
@@ -64,6 +73,18 @@ typedef struct {
 V2K_ASSERT_SIZE_BITS(v2k_param_shadow_t, 64u + 96u * V2K_PARAM_BATCH_MAX);
 
 //-----------------------------------------------------------------------------
+// read request 区（CPU2 属主：CPU2 写，CPU1 只读。发布动作 = 最后写 read_seq）
+//-----------------------------------------------------------------------------
+typedef struct {
+    uint16_t count;        // 本次读取条数，1..V2K_CAL_READ_MAX
+    uint16_t reserved;     // 置 0
+    uint32_t read_seq;     // CPU2 每次 read +1，最后写入（发布）
+    v2k_param_read_ref_t refs[V2K_CAL_READ_MAX];
+} v2k_param_read_req_t;
+
+V2K_ASSERT_SIZE_BITS(v2k_param_read_req_t, 64u + 64u * V2K_CAL_READ_MAX);
+
+//-----------------------------------------------------------------------------
 // 应用结果码（status.result）
 //-----------------------------------------------------------------------------
 #define V2K_CAL_OK         0u
@@ -72,16 +93,26 @@ V2K_ASSERT_SIZE_BITS(v2k_param_shadow_t, 64u + 96u * V2K_PARAM_BATCH_MAX);
 #define V2K_CAL_BAD_ADDR   3u   // 目标不在 CPU1 可写数据区或 32-bit 未对齐
 
 //-----------------------------------------------------------------------------
-// 状态 + 值镜像（CPU1 属主：CPU1 写，CPU2/host 只读）
+// 写入状态（CPU1 属主：CPU1 写，CPU2/host 只读）
 //-----------------------------------------------------------------------------
 typedef struct {
     uint32_t applied_seq;   // 最近应用完成的 commit_seq（序号握手应答侧）
     uint16_t result;        // V2K_CAL_*（对应 applied_seq 那一批）
     uint16_t fail_idx;      // 整批拒绝时首个非法条目的批内下标（result!=OK 时有效）
-    uint32_t mirror_seq;    // 镜像每轮刷新 +1（host 判断数据新旧）
-    uint32_t value_mirror[V2K_DESC_MAX]; // 描述符表现值位模式，CPU1 后台刷新
 } v2k_param_status_t;
 
-V2K_ASSERT_SIZE_BITS(v2k_param_status_t, 96u + 32u * V2K_DESC_MAX);
+V2K_ASSERT_SIZE_BITS(v2k_param_status_t, 64u);
+
+//-----------------------------------------------------------------------------
+// read response 区（CPU1 属主：CPU1 写，CPU2/host 只读。发布动作 = 最后写 ack_seq）
+//-----------------------------------------------------------------------------
+typedef struct {
+    uint16_t result;        // V2K_CAL_OK / BAD_TYPE / BAD_COUNT / BAD_ADDR
+    uint16_t count;         // result==OK 时有效，应等于请求 count
+    uint32_t value_bits[V2K_CAL_READ_MAX];
+    uint32_t ack_seq;       // 最近处理完成的 read_seq，最后写入（发布）
+} v2k_param_read_resp_t;
+
+V2K_ASSERT_SIZE_BITS(v2k_param_read_resp_t, 64u + 32u * V2K_CAL_READ_MAX);
 
 #endif // V2K_PARAM_H

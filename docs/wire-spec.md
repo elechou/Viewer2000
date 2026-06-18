@@ -1,4 +1,4 @@
-# Viewer2000 线上协议规范（wire spec）v5
+# Viewer2000 线上协议规范（wire spec）v6
 
 > **文档地位**：本文档与 `contracts/` 头文件共同构成协议的唯一基准；
 > `contracts/vectors/` 的 golden test vectors 是本文档的可执行形态。
@@ -16,7 +16,7 @@
 ┌──────────────────────────────────────────────────────┐
 │ 服务语义层   会话/枚举/参数事务/DAQ 流/命令   （§5）     │  传输无关
 ├──────────────────────────────────────────────────────┤
-│ 消息层      消息目录 v5，定长小端布局        （§4）     │  传输无关
+│ 消息层      消息目录 v6，定长小端布局        （§4）     │  传输无关
 ├──────────────────────────────────────────────────────┤
 │ 帧适配器    per-transport：                 （§3）     │  传输相关
 │             SCI = COBS + 帧头 + CRC-32C               │
@@ -61,7 +61,7 @@ channel / group 概念。
 编码前帧（"裸帧"，CRC 覆盖区 = offset 0 .. 7+n-1）:
 
 off  sz  字段
-0    1   ver_magic   = 0x55（高 nibble 0x5 固定魔数，低 nibble = V2K_WIRE_VER）
+0    1   ver_magic   = 0x56（高 nibble 0x5 固定魔数，低 nibble = V2K_WIRE_VER）
 1    1   msg_type    （§4 目录；响应 = 请求 | 0x80）
 2    1   flags       = 0x00，保留
 3    2   seq         host 每请求 +1（回绕）；响应原样回显，host 据此配对
@@ -108,7 +108,7 @@ off  sz  字段
 
 时间戳始终是 block 头里的 ISR tick，与 EtherCAT DC 时钟体系无关（不用 DC）。
 
-## 4. 消息目录 v5
+## 4. 消息目录 v6
 
 ### 4.0 总表
 
@@ -119,7 +119,7 @@ off  sz  字段
 | 0x03 | ENUM_REQ | H→F | 4 | 0x83 ENUM_RESP |
 | 0x10 | CAL_WRITE | H→F | 2+12k | 0x90 ACK |
 | 0x11 | CAL_COMMIT | H→F | 0 | 0x91 ACK（data=commit_seq） |
-| 0x12 | CAL_READ | H→F | 4 | 0x92 CAL_READ_RESP |
+| 0x12 | CAL_READ | H→F | 2+8k | 0x92 CAL_READ_RESP |
 | 0x20 | DAQ_CTRL | H→F | 20 | 0xA0 ACK |
 | 0x21 | BLOCK_REQ | H→F | 2 | 0xA1 BLOCK_DATA |
 | 0x22 | DAQ_BIND | H→F | 2+8k | 0xA2 ACK（data=bind_seq） |
@@ -140,7 +140,7 @@ off sz 字段
 
 ### 4.1 HELLO（0x01 / 0x81）
 
-请求 payload 空。响应基础前缀 28 octets，wire v5 当前响应为 36 octets；
+请求 payload 空。响应基础前缀 28 octets，wire v6 当前响应为 36 octets；
 新增字段只允许追加在尾部：
 
 ```
@@ -232,15 +232,27 @@ CPU1 数据区、32-bit 类型地址对齐；addr 命中描述符表时还要求
 type 一致。**不做 min/max 范围检查，不做 clamp，不做 scale/offset 反算**。
 批内任一条机械检查失败则整批拒绝；检查通过后在 ISR 安全点整批同拍写入。
 
-`CAL_READ` 请求（4 octets）：`{0:2 start_idx, 2:1 count(≤32), 3:1 reserved}`
+`CAL_READ` 请求（2 + 8k octets）：
+
+```
+0  1  count   本帧读取条数 k（1..V2K_CAL_READ_MAX=32）
+1  1  reserved
+2  …  k × {0:4 addr, 4:2 type, 6:2 reserved}（镜像 v2k_param_read_ref_t）
+```
+
+语义：CPU2 写 GS4 read request 并发布 `read_seq+1`；CPU1 在后台约 1 ms
+poll point 按需读取一次 CPU1 数据区地址，写 GS0 read response 并最后写
+`ack_seq`。CPU2 等待 `ack_seq==read_seq` 后回响应；地址/type 非法回
+ACK(BAD_PARAM)，等待超时回 ACK(INTERNAL)。
+
 响应（8 + 4×count）：
 
 ```
-0  4  mirror_seq   值镜像刷新计数（判新旧）
-4  2  start_idx
-6  1  count
-7  1  reserved
-8  …  count × value_bits(4)    （读自参数平面 value_mirror，≈10Hz 新鲜度）
+0  4  read_seq
+4  1  count
+5  1  reserved
+6  2  reserved
+8  …  count × value_bits(4)
 ```
 
 ### 4.5 DAQ_CTRL / DAQ_BIND（0x20 / 0x22）
@@ -359,6 +371,10 @@ host                     CPU2                      CPU1 ISR 安全点
 所有成功写入均是原生位模式写入，不做范围或单位换算）；
 host 在 applied_seq 追上 commit_seq 前不得发起下一批 COMMIT。
 
+`CAL_READ` 是按需单次读，不走周期镜像：host 发 `(addr,type)` 列表，CPU2
+发布 read request，CPU1 后台读取并 ack。它服务 Variable Map / DWARF watch；
+高速实时波形仍使用 DAQ_BIND + BLOCK_REQ 的 scope ring。
+
 ### 5.3 示波流
 
 通道选择（任何模式开始前）：`DAQ_CTRL(OFF)` → `DAQ_BIND(通道列表)` →
@@ -462,7 +478,7 @@ pub enum SourceCommand {
     Disconnect,
     WriteParams(Vec<ParamWrite>),
     CommitParams,
-    ReadValues { start: u16, count: u8 },
+    ReadValues(Vec<ValueRead>),
     BindChannels { channels: Vec<VarRef> },
     ConfigureScope(ScopeConfig),
     SystemCommand(SystemCommand),

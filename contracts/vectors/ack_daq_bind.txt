@@ -2,5 +2,5 @@
 # ACK(DAQ_BIND)：OK，data=bind_seq=3
 # raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
 # wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
-raw: 55a2000c00080000220000030000003ce3e648
-wire: 0355a2020c02080102220102030101053ce3e64800
+raw: 56a2000c00080000220000030000003fe475e0
+wire: 0356a2020c02080102220102030101053fe475e000

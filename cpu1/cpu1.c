@@ -47,12 +47,10 @@ uint32_t g_ping_cnt;    // IPC ping-pong 完成轮数（持续递增 = 核间中
 uint16_t g_cpu2_alive;  // 1 = CPU2 心跳在走（CPU1 视角；0 仅置标志，不停机）
 
 #define V2K_BG_1MS_TICKS       (V2K_ISR_HZ / 1000u)
-#define V2K_BG_MIRROR_TICKS    (V2K_ISR_HZ / 10u)
 #define V2K_BG_MONITOR_TICKS   ((V2K_ISR_HZ * 256uL) / 1000uL)
 #define V2K_BG_LED_TICKS       (V2K_ISR_HZ / 2u)
 
 V2K_STATIC_ASSERT((V2K_ISR_HZ % 1000u) == 0u);
-V2K_STATIC_ASSERT((V2K_ISR_HZ % 10u) == 0u);
 V2K_STATIC_ASSERT(V2K_BG_MONITOR_TICKS > 0u);
 
 // 无符号减法使 tick 回绕仍然正确。后台落后多个周期时只执行一次并以 now
@@ -105,7 +103,6 @@ static void v2k_assert_layout(void)
 void main(void)
 {
     v2k_tick_t heartbeat_tick = 0u;
-    v2k_tick_t mirror_tick = 0u;
     v2k_tick_t led_tick = 0u;
     v2k_tick_t monitor_tick = 0u;
     uint32_t cpu2_hb_last = 0u;
@@ -216,6 +213,7 @@ void main(void)
             // 没有新 seq/request 时立即返回，不等待通信核或外设。集中在
             // 约 1 ms poll point，避免空闲控制核持续读取 GS4/MSGRAM。
             v2k_param_service();
+            v2k_param_read_service();
             v2k_scope_service();
             v2k_scope_apply_ready();
             v2k_scope_ccs_view_service();
@@ -229,11 +227,6 @@ void main(void)
                 g_ping_cnt++;
                 IPC_setFlagLtoR(IPC_CPU1_L_CPU2_R, IPC_FLAG0);
             }
-        }
-
-        if (v2k_tick_due(now, &mirror_tick, V2K_BG_MIRROR_TICKS))
-        {
-            v2k_param_refresh_mirror();
         }
 
         // 每 256 ms 检查一次 CPU2 心跳；失联只置状态位，控制 ISR 照跑。

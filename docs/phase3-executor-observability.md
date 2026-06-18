@@ -37,7 +37,7 @@ CPUTIMER1 静态实例），**C 管运行时**（ISR 内容、多速率调度、
 | `cpu1/v2k_executor.c/.h` | 固定顺序控制 ISR；倒计时分频的多速率调度（1 kHz / 100 Hz / 参数提交三槽相位错开）；CPUTIMER1 自计时秒表分段量 control/scope/total 周期；ADC overflow 与 ISR 预算计数 |
 | `cpu1/v2k_platform.h` | L1 暴露给 L3 的唯一逐拍接口：`user_step(const plat_in_t*, plat_out_t*)`，进 = 本拍物理量 + due 掩码，出 = 本拍占空比 |
 | `cpu1/v2k_user.c` | 默认 L3 示例（**弱符号**，应用可强定义覆盖）：把 `pwm1_duty_cmd` 直通到输出，无内部状态 |
-| `cpu1/v2k_registry.c/.h` | 描述符表注册；参数批次的后台机械校验 + ISR 安全点原子提交；10 Hz 值镜像刷新 |
+| `cpu1/v2k_registry.c/.h` | 描述符表注册；参数批次的后台机械校验 + ISR 安全点原子提交；CAL_READ 按需读取服务 |
 | `cpu1/v2k_scope_runtime.c/.h` | Stream/Capture 共用示波生产者；后台配置/绑定的序号握手与容量计算；冻结后 CCS view 解交错 |
 | `common/v2k_scope_consumer.h` | CPU2/单元测试用的 SPSC 消费者 API（peek/release/begin_frozen），内联只读 |
 | `cpu1/cpu1.c` | 后台超级循环：按 `g_v2k_tick` deadline 服务四个共享平面，不阻塞等通信核 |
@@ -51,7 +51,7 @@ CPUTIMER1 静态实例），**C 管运行时**（ISR 内容、多速率调度、
   L3 应用的 bring-up 是 Phase 5，本阶段用直通版验收平台骨架。
 - **ISR 里只放"本拍必须做完"的事，其余全进后台超级循环。** 凡是要遍历表、
   复制配置、做容量计算、解交错、跨核传输的活，都在 `cpu1.c` 的 `for(;;)` 里
-  按 `g_v2k_tick` deadline 触发（参数校验、示波配置/绑定、值镜像、CCS view
+  按 `g_v2k_tick` deadline 触发（参数校验、按需读取、示波配置/绑定、CCS view
   生成、心跳、CPU2 健康检查）。这回答了路线图 Phase 3 留的那个问题——
   **平台杂务进后台、不开低优先级软中断**；用户若要做多速率控制，靠 ISR 传进来
   的 `due_mask` 自己在 `user_step` 内分。后台是无固定 `Delay` 的事件循环，
@@ -127,7 +127,7 @@ CPUTIMER1 静态实例），**C 管运行时**（ISR 内容、多速率调度、
 mode=`OFF`。低速健康/保护量仍在描述符表中，host 可重绑后用较大 prescaler 采集。
 
 CPU1 后台是不含固定 `Delay` 的裸机事件循环：约 1 ms 一个 poll point 检查参数/
-示波/命令/CCS view 的 `seq` 变化；心跳、10 Hz 镜像、CPU2 健康检查、LED 各按
+示波/命令/CCS view 的 `seq` 变化；心跳、CPU2 健康检查、LED 各按
 `g_v2k_tick` 算 deadline。**tick 只提供时间**，周期任务仍在后台跑、可被下一次
 控制 ISR 抢占；deadline 没到就不碰 GS4/MSGRAM。
 
@@ -338,7 +338,7 @@ Sampling Rate Hz = 等效采样率。
 3. 等 `g_v2k_gs0.param_status.applied_seq == commit_seq`：CPU1 后台在下一个约
    1 ms poll point 稳定复制并机械校验整批，ISR 在错相参数槽一次性原子写入全部已批准
    条目（校验到生效 < 1 ms，发布到生效端到端 < 2 ms）。
-4. 读 `result / fail_idx / value_mirror[]` 对照下表。
+4. 读 `result / fail_idx` 对照下表；单次读回走 CAL_READ 按需读取。
 
 | 用例 | 操作 | 预期 |
 |---|---|---|

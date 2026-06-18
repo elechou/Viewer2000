@@ -14,7 +14,7 @@ Phase 3 的 CCS Graph 直接读 CPU1 内存，绕过了 CPU2、GS4 消费者索�
 CPU1 ISR
   -> 描述符表 / 参数平面 / Scope SPSC 环 / 命令状态
   -> CPU2 共享接口消费者
-  -> Viewer2000 wire v5（显式序列化）
+  -> Viewer2000 wire v6（显式序列化）
   -> COBS + CRC-32C
   -> SCIA / GPIO42,43 / XDS110 VCP
   -> Scope2000 V2kSource
@@ -31,14 +31,14 @@ Phase 6 EtherCAT。SCI 只负责在低成本物理链路上提前暴露双核和
 > 排空同一种 block。所有 `scope_prod` /
 > `scope_cfg` / `scope_bind` / `scope_cons` 都是单个对象，不再是 `[group]` 数组。
 > 本文后续若出现旧的单入口或 group 说法，按本段和
-> [wire-spec.md](wire-spec.md) v5 为准。
+> [wire-spec.md](wire-spec.md) v6 为准。
 
 ## 我已完成的部分（仅供对照）
 
 | 产物 | 内容 |
 |---|---|
-| `contracts/v2k_common.h`、`v2k_command.h` | contract v6；HELLO 的 `tick_hz/capabilities`；STATUS 的 `cmd_ack_seq/cmd_result`；原生能力位 |
-| `docs/wire-spec.md` | wire v5 消息、Stream/Capture 共用 Scope、重试幂等、build-hash 重枚举、独立兼容桥边界 |
+| `contracts/v2k_common.h`、`v2k_command.h` | contract v8；HELLO 的 `tick_hz/capabilities`；STATUS 的 `cmd_ack_seq/cmd_result`；原生能力位 |
+| `docs/wire-spec.md` | wire v6 消息、Stream/Capture 共用 Scope、重试幂等、build-hash 重枚举、独立兼容桥边界 |
 | `contracts/vectors/`、`tools/gen_vectors.py` | HELLO/STATUS/ENUM/CAL/DAQ/CMD/BLOCK golden vectors 与负例 |
 | `cpu2/v2k_sci_service.c/.h` | SCIA 收发、COBS、CRC-32C、请求分派、响应重放、共享平面服务和诊断计数 |
 | `cpu2/cpu2.c` | CPU2 超级循环接入 SCI 服务；本地心跳不进入控制时间 |
@@ -206,8 +206,8 @@ Phase 3.5 固定使用：
 
 | 项 | 值 |
 |---|---|
-| `V2K_WIRE_VER` | 5 |
-| `V2K_CONTRACT_VER` | 7 |
+| `V2K_WIRE_VER` | 6 |
+| `V2K_CONTRACT_VER` | 8 |
 | 最大 payload | 1024 octets |
 | framing | COBS，`0x00` 定界 |
 | integrity | CRC-32C |
@@ -280,7 +280,7 @@ host 放弃旧请求并使用新 seq 后，才算新的服务操作。
 | ENUM | 分页读描述符表，每页最多 8 项 | `desc_count/build_hash` |
 | CAL_WRITE | 暂存 GS4 shadow；同地址覆盖 | 尚未发布 |
 | CAL_COMMIT | 最后写 `commit_seq+1` | `applied_seq/result/fail_idx` |
-| CAL_READ | 读 10 Hz value mirror | `mirror_seq` |
+| CAL_READ | 发布一次 `(addr,type)` read request | `read_seq/ack_seq` |
 | DAQ_CTRL | 发布一个 scope cfg | `cfg_ack_seq/cfg_result/mode` |
 | DAQ_BIND | 仅 OFF 状态发布绑定 | `bind_ack_seq/bind_result` |
 | BLOCK_REQ | 每次取 0–2 block，复制完成后 release | `rd_idx/remain_hint` |

@@ -23,7 +23,7 @@
     V2K_STATIC_ASSERT((uint32_t)offsetof(t, field) * (uint32_t)CHAR_BIT == (bits))
 
 // ---- 聚合平面尺寸（GS0 含 char[]，PC/C28x char 宽度不同，不能跨平台总尺寸断言）----
-V2K_ASSERT_SIZE_BITS(v2k_gs4_plane_t, 180u * 16u);
+V2K_ASSERT_SIZE_BITS(v2k_gs4_plane_t, 312u * 16u);
 
 // ---- 描述符条目（name 之后不得有隐式填充）----
 V2K_ASSERT_OFFSET_BITS(v2k_desc_entry_t, type,      V2K_NAME_BITS(V2K_NAME_LEN));
@@ -52,10 +52,14 @@ V2K_ASSERT_OFFSET_BITS(v2k_scope_bind_t,  ch,        32u);
 // ---- 参数 shadow 与状态 ----
 V2K_ASSERT_OFFSET_BITS(v2k_param_write_t,  value_bits, 32u);
 V2K_ASSERT_OFFSET_BITS(v2k_param_write_t,  type,       64u);
+V2K_ASSERT_OFFSET_BITS(v2k_param_read_ref_t, type,      32u);
 V2K_ASSERT_OFFSET_BITS(v2k_param_shadow_t, commit_seq, 32u);
 V2K_ASSERT_OFFSET_BITS(v2k_param_shadow_t, writes,     64u);
-V2K_ASSERT_OFFSET_BITS(v2k_param_status_t, mirror_seq, 64u);
-V2K_ASSERT_OFFSET_BITS(v2k_param_status_t, value_mirror, 96u);
+V2K_ASSERT_OFFSET_BITS(v2k_param_read_req_t, read_seq,  32u);
+V2K_ASSERT_OFFSET_BITS(v2k_param_read_req_t, refs,      64u);
+V2K_ASSERT_OFFSET_BITS(v2k_param_status_t, result,      32u);
+V2K_ASSERT_OFFSET_BITS(v2k_param_read_resp_t, value_bits, 32u);
+V2K_ASSERT_OFFSET_BITS(v2k_param_read_resp_t, ack_seq,  1056u);
 
 // ---- 命令/状态平面 ----
 V2K_ASSERT_OFFSET_BITS(v2k_cmd_req_t,      cmd_code,  32u);
