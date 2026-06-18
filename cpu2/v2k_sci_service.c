@@ -875,6 +875,14 @@ void v2k_sci_service(void)
     while (s_rx_rd != s_rx_wr)
     {
         uint16_t value = s_rx_ring[s_rx_rd] & 0xFFu;
+
+        // TX buffer 也是上一响应的重放缓存。响应尚未完全送入 FIFO 时
+        // 暂停解析后续请求，避免粘包场景下把第二帧当作“TX busy”丢掉。
+        if (s_tx_pos != s_tx_len)
+        {
+            break;
+        }
+
         s_rx_rd = (uint16_t)((s_rx_rd + 1u) & V2K_RX_RING_MASK);
         if (value == 0u)
         {
@@ -884,6 +892,10 @@ void v2k_sci_service(void)
             }
             s_rx_frame_len = 0u;
             s_rx_discard = 0u;
+            if (s_tx_pos != s_tx_len)
+            {
+                break;
+            }
         }
         else if (!s_rx_discard)
         {

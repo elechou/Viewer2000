@@ -160,8 +160,8 @@ CCS Graph 截图、Expressions 读数等）。验证知识不能只活在 commit
 > 线上值就是真实值，host 只按原生类型解码。当前 contract/固件实现已删除旧字段、
 > 范围检查结果码与未注册计数，后续验证只覆盖机械一致性校验。
 
-- [x] wire v1 尾部兼容扩展：HELLO tick_hz/capabilities，STATUS cmd ack/result
-- [x] contract version 3、静态断言、生成器与 24 组 golden vectors 同步
+- [x] wire v6：HELLO tick_hz/capabilities，STATUS cmd ack/result，Stream/Capture 单 Scope 入口
+- [x] contract version 8、静态断言、生成器与 golden vectors 同步
 - [x] CPU1 配置 GPIO42/43 与 SCIA CPU2 归属；CPU2 RX ISR + COBS + CRC-32C
 - [x] CPU2 完成 HELLO/ENUM/STATUS/CAL/DAQ_BIND/DAQ_CTRL/BLOCK/CMD 服务
 - [x] 相同 frame seq 超时重试重放缓存响应，不重复执行 COMMIT/CMD/消费 block
@@ -172,13 +172,17 @@ CCS Graph 截图、Expressions 读数等）。验证知识不能只活在 commit
       seq 错配与版本不匹配测试
 - [x] Scope2000 独立 root commit：`0fe4067`（Viewer2000 待 CCS/实物验收后提交）
 - [x] 验证 A — 串口与 HELLO：115200 / `/dev/tty.usbmodemCL6500011`
-- [x] 验证 B — ENUM 分页与描述符字段（wire-level 实物链路）
+- [x] 验证 B — ENUM 分页与描述符字段（wire-level 实物链路，当前 wire v6/contract v8 复测）
 - [ ] 验证 B — Scope2000 GUI 枚举 + build-hash 热重枚举（刷入不同 hash 固件）
-- [ ] CCS CPU1/CPU2 RAM + FLASH `buildProject` 0 error
-- [ ] 115200 实物闭环与最高稳定波特率测试
-- [ ] 参数原子提交、命令结果、Live partial block、Snapshot/pre-trigger 实测
-- [ ] 停止 Scope2000/CPU2 消费时 CPU1 tick、ISR budget、控制状态不受影响
-- [ ] 记录双仓库 commit、持续时间、丢块、overrun 与 CRC 结果
+- [x] CCS CPU1/CPU2 RAM `buildProject` 0 error
+- [ ] CCS CPU1/CPU2 FLASH `buildProject` 0 error
+- [x] 115200 实物闭环短跑（HELLO/ENUM/CAL/STREAM/CAPTURE/G 错误注入/H 隔离）
+- [ ] 最高稳定波特率阶梯与 30 min 长跑
+- [x] 验证 C — 参数事务：stage/commit/读回/原子拒绝/重复 commit 重放
+- [x] 验证 E — Scope Stream：原生 block、序号、BAD_STATE、overrun 断口语义
+- [x] 验证 G — CRC/COBS/超长/拆包/粘包/未知消息/重试恢复
+- [x] 验证 H — 115200 短跑性能隔离：host/status/stream/overrun/capture 均不增加 CPU1 通信负担
+- [ ] 记录双仓库最终 commit、FLASH smoke、GUI 截图/日志与长跑结果
 
 记录区：
 
@@ -186,3 +190,8 @@ CCS Graph 截图、Expressions 读数等）。验证知识不能只活在 commit
 |---|---|---|---|---|
 | 2026-06-14 | 验证 A — 串口与 HELLO timeout 根因 | Scope2000 HELLO 超时后用 CCS Expressions 读 CPU2 诊断量与 SCIA 寄存器；再按 golden HELLO wire frame 经 XDS110 VCP 发包 | 修复前 `g_handshake_state=3`、CPU2 heartbeat 递增，但 `rx_octets=0`；SCIA GPIO42/43 mux 与 CPUSEL 生成正确，`SCICCR/SCICTL1/HBAUD/LBAUD` 却保持 0。根因：CPU2 为省 RAM 绕开 `Board_init()` 直调 `SCIA_BASE_init()`，漏掉 CPU2 `SYSCTL_init()` 里的本地 `SysCtl_enablePeripheral(SCIA)` clock gate，导致 SCIA 配置写入被门控吞掉。修复后寄存器读回 `SCICCR=7`、`SCICTL1=0x23`、`HBAUD=0`、`LBAUD=53`、`RXFFIL=1`；向 `/dev/tty.usbmodemCL6500011` 发 `U` 后 `rx_octets` 0→1；HELLO 响应解码：wire=1、contract=3、build_hash=0x26cd7396、desc_count=16、firmware=viewer2000、tick_hz=20000、capabilities=0x7f；`good_frames=1`、`tx_octets=49` | **验证 A 通过**。正确端口是 `/dev/tty.usbmodemCL6500011`；`...14` 不是本阶段 XDS110 UART backchannel。遗留：Scope2000 GUI 端重连截图/日志、ENUM 及后续 B-G 验证仍待跑 |
 | 2026-06-17 | 验证 B — ENUM 分页与描述符字段（wire-level） | 临时 Python 串口探针直接访问 `/dev/cu.usbmodemCL6500011`，复用 `tools/gen_vectors.py` 的 COBS/CRC-32C/raw frame 实现，依次发送 HELLO、STATUS、ENUM(start=0,max=8)、ENUM(start=8,max=8)；`/dev/cu.usbmodemCL6500014` 先试探无完整 COBS 响应 | HELLO：wire=1、contract=3、build_hash=`0x26cd7396`、desc_count=16、firmware=`viewer2000`、tick_hz=20000、capabilities=0x7f；STATUS：sys_state=IDLE、fault_code=0、status_flags=0、build_hash 同 HELLO；ENUM 两页各 8 条、total=16、total_read=16。字段核对：`pwm1_duty_cmd` 为 F32 PARAM\|SCOPE，addr=0xAA46，group0/prescaler1；group0 前 8 条、group1 后 8 条，group1 prescaler=20 | **ENUM 链路通过（旧固件记录）**：分页、count、字段解码、描述符总数与 HELLO 一致。当前新 contract 已将描述符 entry 收紧为 28 octets；刷入新固件后需重跑该项并更新实测 build_hash |
+| 2026-06-18 | CPU1/CPU2 RAM 构建与串口基线 | CCS MCP：`buildProject(cpu1)`、`buildProject(cpu2)` 均 outputMode=file；debug session 用 `cpu2` launch config，core index 0=CPU1、2=CPU2；串口 MCP 识别 `/dev/tty.usbmodemCL6500011` 与 `...14`，二进制探针独占 `/dev/cu.usbmodemCL6500011` | CPU1 RAM build log：`cpu1/RAM/cpu1_build.log`，CPU2 RAM build log：`cpu2/RAM/cpu2_build.log`，均 success/0 errors。HELLO 只在 `CL6500011` 有合法 COBS/CRC 响应；`CL6500014` 返回乱码 | RAM 构建与正确 VCP 端口确认通过。FLASH 构建/启动 smoke 未做 |
+| 2026-06-18 | 验证 B/C — 当前 wire v6 / contract v8 ENUM 与参数事务 | 串口二进制探针复用 `tools/gen_vectors.py` 的 COBS/CRC-32C；B：HELLO + ENUM 8/8/1 + empty page；C：CAL_READ、CAL_WRITE stage、CAL_COMMIT、STATUS 对账、坏批次、恢复参数 | HELLO：wire=6、contract=8、build_hash=`0x26cd7396`、desc_count=17、tick_hz=20000、capabilities=0x7f。ENUM：17 条，空页 count=0；描述符 payload 尺寸 = 6+28×count；唯一 PARAM 为 `pwm1_duty_cmd`，全部 17 条均为 SCOPE。C：stage 后 `pwm1_duty_cmd` 仍 0.25；commit seq=1 后变 0.37；坏批次 `{pwm=0.61, g_nmi_cnt type=99}` → `cal_result=BAD_TYPE(1)`、`fail_idx=1`、pwm 保持 0.37；恢复到 0.25。补充全量负例：重复同 seq `CAL_COMMIT` 响应逐字节相同且 data 不变；同地址多帧 stage 最后值覆盖；count>16 返回 `BAD_PARAM`，清理 commit 被 CPU1 以 `BAD_ADDR` 拒绝 | **B/C 通过（RAM/115200）**。当前固件只有一个注册 PARAM，因此“两个以上注册 PARAM”无法实测；用注册 PARAM + 未注册但可写 RAM 地址覆盖 DWARF/RAM 地址语义 |
+| 2026-06-18 | 验证 E — Scope Stream 与 overrun | 串口：OFF → BIND 2ch (`dbg_sine_10hz`, `pwm1_duty_cmd`) → STREAM prescaler=200 正常消费；随后 STREAM prescaler=1 暂停消费 0.65–0.75 s 制造 overrun；STREAM 中尝试 BIND | 正常流：收 5 个 block，`bind_seq=1`，`block_seq=0..4` 连续，`start_tick` 每块 +2000，`n_ticks=10`、`n_ch=2`、`stride=8`、`flags=0`，样本保持 F32 原生 octet。STREAM 中 BIND → ACK `BAD_STATE(3)`。过载：`overrun=819`（首次）/`1005`（H4），`remain=510`，恢复 BLOCK_REQ 得到断口后的 block | **E 通过（短跑）**：正常消费无 gap，过载只产生 producer overrun/序号断口，不阻塞 CPU1 |
+| 2026-06-18 | 验证 G — 错误注入、拆包/粘包和重试 | 串口注入坏 CRC、非法 COBS、300 octet 无定界超长帧、拆包 STATUS、粘包 HELLO+STATUS、未知 msg=0x7A、重复同 seq BLOCK_REQ；同时读 CPU2 诊断计数 | 初跑发现粘包失败：第一帧响应后 TX pending，RX loop 继续消费第二帧，`v2k_process_encoded_frame()` 直接 return，随后清空接收帧。修复 `cpu2/v2k_sci_service.c`：TX 未完成时暂停解析后续 RX ring，保留后续帧。复测：坏 CRC/COBS/超长均无响应且随后 STATUS 恢复；拆包返回 STATUS；粘包返回 `(0x81,seq2010)` 与 `(0x82,seq2011)`；未知消息 ACK `UNSUPPORTED(4)`；重复 BLOCK_REQ 两次 payload 完全相同 `[0,1]`，下一新请求只推进到 `[2]`。最终 CPU2：`good_frames=118`、`bad_frames=3`、`rx_overflow=0` | **G 通过，且修复一个真实粘包丢帧 bug**。错误注入期间 CPU1 `isr_ovf_cnt=0`、`budget_violation_cnt=0` |
+| 2026-06-18 | 验证 H — 115200 短跑性能隔离 | 每个场景前用 CCS debug 写 0 到 `g_v2k_isr_cycles_max/control_cycles_max/scope_cycles_max`；串口执行对应 host 行为后读 CPU1 Expressions | 场景读数（cycles）：OFF/no host = `938/728/58`；OFF + 250 ms STATUS（9 次，tick 22443898→22485498）= `938/728/58`；STREAM presc=200 正常消费 20 blocks/0 gap = `1315/728/455`；STREAM presc=1 停消费产生 `overrun=1005` = `1315/728/455`；CAPTURE_ARMED presc=1 record=200 → modes `[2,4]`，排空 20 blocks、`trig_tick=27502993` = `1459/728/598`。全部场景 `g_v2k_isr_ovf_cnt=0`、`g_v2k_isr_budget_violation_cnt=0`，最终 `g_v2k_tick=29901049`、`pwm1_duty_cmd=0.25` | **H 的隔离性短跑通过**：host 是否轮询、CPU2 串口/codec、STREAM 正常/overrun、CAPTURE 排空均未引入 CPU1 通信等待。未做 230400+ 阶梯与每档 30 min 长跑 |

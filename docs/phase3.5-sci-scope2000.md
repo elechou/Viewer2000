@@ -468,8 +468,8 @@ Connect CPU2 -> Load/Resume
 | 字段 | 预期 |
 |---|---|
 | firmware | Viewer2000 固件名 |
-| wire | 2 |
-| contract | 4 |
+| wire | 6 |
+| contract | 8 |
 | build hash | 与 CPU1 描述符表一致 |
 | descriptor count | 与 `entry_count` 一致 |
 | tick_hz | 与 `V2K_ISR_HZ` 一致 |
