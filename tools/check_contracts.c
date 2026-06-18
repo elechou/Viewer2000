@@ -16,10 +16,14 @@
 #include "../contracts/v2k_param.h"
 #include "../contracts/v2k_command.h"
 #include "../contracts/v2k_memmap.h"
+#include "../common/v2k_planes.h"
 
 // bit 偏移断言（offsetof 以 char 计 → ×CHAR_BIT 得 bit，双平台通用）
 #define V2K_ASSERT_OFFSET_BITS(t, field, bits) \
     V2K_STATIC_ASSERT((uint32_t)offsetof(t, field) * (uint32_t)CHAR_BIT == (bits))
+
+// ---- 聚合平面尺寸（GS0 含 char[]，PC/C28x char 宽度不同，不能跨平台总尺寸断言）----
+V2K_ASSERT_SIZE_BITS(v2k_gs4_plane_t, 180u * 16u);
 
 // ---- 描述符条目（name 之后不得有隐式填充）----
 V2K_ASSERT_OFFSET_BITS(v2k_desc_entry_t, type,      V2K_NAME_BITS(V2K_NAME_LEN));
@@ -39,7 +43,8 @@ V2K_ASSERT_OFFSET_BITS(v2k_scope_prod_t, wr_idx,   160u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_prod_t, trig_tick, 192u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_prod_t, bind_ack_seq, 272u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_cfg_t,  trig_level, 32u);
-V2K_ASSERT_OFFSET_BITS(v2k_scope_cfg_t,  block_n_ticks, 112u);
+V2K_ASSERT_OFFSET_BITS(v2k_scope_cfg_t,  trig_hysteresis, 64u);
+V2K_ASSERT_OFFSET_BITS(v2k_scope_cfg_t,  block_n_ticks, 144u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_ch_bind_t, type,    32u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_bind_t,  ch,        32u);
 

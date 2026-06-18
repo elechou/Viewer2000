@@ -3,5 +3,5 @@
 # raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
 # wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
 # 本帧 CRC 故意损坏，wire 行仍按损坏后内容编码
-raw: 520200ff000000a0865b81
-wire: 03520202ff010105a0865b8100
+raw: 540200ff000000e11abdf4
+wire: 03540202ff010105e11abdf400

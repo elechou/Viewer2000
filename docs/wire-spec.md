@@ -1,4 +1,4 @@
-# Viewer2000 线上协议规范（wire spec）v2
+# Viewer2000 线上协议规范（wire spec）v4
 
 > **文档地位**：本文档与 `contracts/` 头文件共同构成协议的唯一基准；
 > `contracts/vectors/` 的 golden test vectors 是本文档的可执行形态。
@@ -16,7 +16,7 @@
 ┌──────────────────────────────────────────────────────┐
 │ 服务语义层   会话/枚举/参数事务/DAQ 流/命令   （§5）     │  传输无关
 ├──────────────────────────────────────────────────────┤
-│ 消息层      消息目录 v2，定长小端布局        （§4）     │  传输无关
+│ 消息层      消息目录 v4，定长小端布局        （§4）     │  传输无关
 ├──────────────────────────────────────────────────────┤
 │ 帧适配器    per-transport：                 （§3）     │  传输相关
 │             SCI = COBS + 帧头 + CRC-32C               │
@@ -61,7 +61,7 @@ channel / group 概念。
 编码前帧（"裸帧"，CRC 覆盖区 = offset 0 .. 7+n-1）:
 
 off  sz  字段
-0    1   ver_magic   = 0x52（高 nibble 0x5 固定魔数，低 nibble = V2K_WIRE_VER）
+0    1   ver_magic   = 0x54（高 nibble 0x5 固定魔数，低 nibble = V2K_WIRE_VER）
 1    1   msg_type    （§4 目录；响应 = 请求 | 0x80）
 2    1   flags       = 0x00，保留
 3    2   seq         host 每请求 +1（回绕）；响应原样回显，host 据此配对
@@ -108,7 +108,7 @@ off  sz  字段
 
 时间戳始终是 block 头里的 ISR tick，与 EtherCAT DC 时钟体系无关（不用 DC）。
 
-## 4. 消息目录 v2
+## 4. 消息目录 v4
 
 ### 4.0 总表
 
@@ -120,7 +120,7 @@ off  sz  字段
 | 0x10 | CAL_WRITE | H→F | 2+12k | 0x90 ACK |
 | 0x11 | CAL_COMMIT | H→F | 0 | 0x91 ACK（data=commit_seq） |
 | 0x12 | CAL_READ | H→F | 4 | 0x92 CAL_READ_RESP |
-| 0x20 | DAQ_CTRL | H→F | 16 | 0xA0 ACK |
+| 0x20 | DAQ_CTRL | H→F | 20 | 0xA0 ACK |
 | 0x21 | BLOCK_REQ | H→F | 2 | 0xA1 BLOCK_DATA |
 | 0x22 | DAQ_BIND | H→F | 2+8k | 0xA2 ACK（data=bind_seq） |
 | 0x30 | CMD | H→F | 8 | 0xB0 ACK（data=ack_seq） |
@@ -140,7 +140,7 @@ off sz 字段
 
 ### 4.1 HELLO（0x01 / 0x81）
 
-请求 payload 空。响应基础前缀 28 octets，wire v2 当前响应为 36 octets；
+请求 payload 空。响应基础前缀 28 octets，wire v4 当前响应为 36 octets；
 新增字段只允许追加在尾部：
 
 ```
@@ -245,7 +245,7 @@ type 一致。**不做 min/max 范围检查，不做 clamp，不做 scale/offset
 
 ### 4.5 DAQ_CTRL / DAQ_BIND（0x20 / 0x22）
 
-`DAQ_CTRL` 请求 16 octets。它选择并配置 Scope 入口：`STREAM` 是连续 block 流；
+`DAQ_CTRL` 请求 20 octets。它选择并配置 Scope 入口：`STREAM` 是连续 block 流；
 `CAPTURE_ARMED` 是设备侧触发冻结窗口。两者使用同一套绑定和 block 格式，但对
 host 来说是两个入口。
 
@@ -254,10 +254,11 @@ host 来说是两个入口。
 2  2  trig_ch_slot  触发源 = 当前绑定的通道槽位 0..n_ch-1（STREAM 时忽略）
 4  4  trig_level    f32，**源值域**（f32 变量=值本身，ADC 计数=计数值；
                     固件无物理换算知识，host 按显示元数据折算后下发）
-8  2  trig_edge     V2K_TRIG_*（STREAM 时忽略）
-10 2  pre_trig_pct  0..100（STREAM 时忽略）
-12 2  prescaler     0 = 维持当前值
-14 2  block_n_ticks 0 = 维持当前值
+8  4  trig_hysteresis f32，触发迟滞半宽，源值域绝对值；0 = 最敏感
+12 2  trig_edge     V2K_TRIG_*（STREAM 时忽略）
+14 2  pre_trig_pct  0..100（STREAM 时忽略）
+16 2  prescaler     0 = 维持当前值
+18 2  block_n_ticks 0 = 维持当前值
 ```
 
 CPU2 写 cfg 并发布 `cfg_seq`，回 ACK(OK)=已受理；
@@ -284,7 +285,7 @@ CPU2 写 bind 区并发布 `bind_seq`，然后短暂等待（≤1 ms）CPU1 的
 ### 4.6 BLOCK_REQ / BLOCK_DATA（0x21 / 0xA1）
 
 请求（2 octets）：`{0:1 max_blocks(1..2), 1:1 reserved}`
-响应（8 + Σblock octets）：
+响应（12 + Σblock octets）：
 
 ```
 0  1  count        0..max_blocks（0 = 当前无数据，合法）
@@ -292,7 +293,8 @@ CPU2 写 bind 区并发布 `bind_seq`，然后短暂等待（≤1 ms）CPU1 的
 2  2  reserved
 4  2  overrun_cnt  生产侧累计丢块数（host 据此报"采集端过载"）
 6  2  remain_hint  环内尚可取的 block 数（host 调轮询节奏；冻结排空进度）
-8  …  count × block
+8  4  trigger_tick CAPTURE_FROZEN 时为触发命中的 ISR tick；其他 mode 置 0
+12 …  count × block
 ```
 
 block = 示波平面内存布局原样上线（**热路径零重编码**）：

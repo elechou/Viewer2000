@@ -14,7 +14,7 @@ Phase 3 的 CCS Graph 直接读 CPU1 内存，绕过了 CPU2、GS4 消费者索�
 CPU1 ISR
   -> 描述符表 / 参数平面 / Scope SPSC 环 / 命令状态
   -> CPU2 共享接口消费者
-  -> Viewer2000 wire v2（显式序列化）
+  -> Viewer2000 wire v4（显式序列化）
   -> COBS + CRC-32C
   -> SCIA / GPIO42,43 / XDS110 VCP
   -> Scope2000 V2kSource
@@ -31,14 +31,14 @@ Phase 6 EtherCAT。SCI 只负责在低成本物理链路上提前暴露双核和
 > 排空同一种 block。所有 `scope_prod` /
 > `scope_cfg` / `scope_bind` / `scope_cons` 都是单个对象，不再是 `[group]` 数组。
 > 本文后续若出现旧的单入口或 group 说法，按本段和
-> [wire-spec.md](wire-spec.md) v2 为准。
+> [wire-spec.md](wire-spec.md) v4 为准。
 
 ## 我已完成的部分（仅供对照）
 
 | 产物 | 内容 |
 |---|---|
-| `contracts/v2k_common.h`、`v2k_command.h` | contract v4；HELLO 的 `tick_hz/capabilities`；STATUS 的 `cmd_ack_seq/cmd_result`；原生能力位 |
-| `docs/wire-spec.md` | wire v2 消息、Stream/Capture 共用 Scope、重试幂等、build-hash 重枚举、独立兼容桥边界 |
+| `contracts/v2k_common.h`、`v2k_command.h` | contract v6；HELLO 的 `tick_hz/capabilities`；STATUS 的 `cmd_ack_seq/cmd_result`；原生能力位 |
+| `docs/wire-spec.md` | wire v4 消息、Stream/Capture 共用 Scope、重试幂等、build-hash 重枚举、独立兼容桥边界 |
 | `contracts/vectors/`、`tools/gen_vectors.py` | HELLO/STATUS/ENUM/CAL/DAQ/CMD/BLOCK golden vectors 与负例 |
 | `cpu2/v2k_sci_service.c/.h` | SCIA 收发、COBS、CRC-32C、请求分派、响应重放、共享平面服务和诊断计数 |
 | `cpu2/cpu2.c` | CPU2 超级循环接入 SCI 服务；本地心跳不进入控制时间 |
@@ -206,8 +206,8 @@ Phase 3.5 固定使用：
 
 | 项 | 值 |
 |---|---|
-| `V2K_WIRE_VER` | 2 |
-| `V2K_CONTRACT_VER` | 4 |
+| `V2K_WIRE_VER` | 4 |
+| `V2K_CONTRACT_VER` | 6 |
 | 最大 payload | 1024 octets |
 | framing | COBS，`0x00` 定界 |
 | integrity | CRC-32C |
@@ -359,7 +359,7 @@ Viewer2000 原生数据模型。
 block_octets = 16 + n_ticks * stride_octets
 ```
 
-BLOCK_DATA 另有 8-octet batch 前缀，wire 帧另有 11-octet header+CRC，并有
+BLOCK_DATA 另有 12-octet batch 前缀，wire 帧另有 11-octet header+CRC，并有
 少量 COBS 膨胀。稳定 STREAM 必须满足：
 
 ```text

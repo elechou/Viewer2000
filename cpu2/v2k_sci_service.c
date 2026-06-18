@@ -462,12 +462,12 @@ static void v2k_handle_daq_ctrl(uint16_t seq, const uint16_t *payload,
 {
     uint16_t block_n_ticks;
     volatile v2k_scope_cfg_t *cfg;
-    if (payload_len != 16u)
+    if (payload_len != 20u)
     {
         v2k_send_ack(V2K_MSG_DAQ_CTRL, seq, V2K_ACK_BAD_PARAM, 0uL);
         return;
     }
-    block_n_ticks = v2k_get_u16(payload, 14u);
+    block_n_ticks = v2k_get_u16(payload, 18u);
     if (block_n_ticks != 0u)
     {
         const volatile v2k_scope_prod_t *prod = &V2K_GS0_RO->scope_prod;
@@ -500,10 +500,12 @@ static void v2k_handle_daq_ctrl(uint16_t seq, const uint16_t *payload,
         } level;
         level.u32 = v2k_get_u32(payload, 4u);
         cfg->trig_level = level.f32;
+        level.u32 = v2k_get_u32(payload, 8u);
+        cfg->trig_hysteresis = level.f32;
     }
-    cfg->trig_edge = v2k_get_u16(payload, 8u);
-    cfg->pre_trig_pct = v2k_get_u16(payload, 10u);
-    cfg->prescaler = v2k_get_u16(payload, 12u);
+    cfg->trig_edge = v2k_get_u16(payload, 12u);
+    cfg->pre_trig_pct = v2k_get_u16(payload, 14u);
+    cfg->prescaler = v2k_get_u16(payload, 16u);
     cfg->block_n_ticks = block_n_ticks;
     cfg->reserved = 0u;
     cfg->cfg_seq++;
@@ -609,6 +611,10 @@ static void v2k_handle_block_req(uint16_t seq, const uint16_t *payload,
     off = (uint16_t)(off + 2u);
     v2k_put_u16(s_raw, off, 0u);
     off = (uint16_t)(off + 2u);
+    v2k_put_u32(s_raw, off,
+                (prod->mode == V2K_SCOPE_CAPTURE_FROZEN) ?
+                prod->trig_tick : 0uL);
+    off = (uint16_t)(off + 4u);
     // 触发覆盖写期间 rd_idx 没有消费语义，只允许冻结后排空。
     if ((prod->mode != V2K_SCOPE_STREAM) &&
         (prod->mode != V2K_SCOPE_CAPTURE_FROZEN))

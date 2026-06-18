@@ -2,5 +2,5 @@
 # CAL_COMMIT：空 payload
 # raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
 # wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
-raw: 521100060000007487ad66
-wire: 03521102060101057487ad6600
+raw: 54110006000000351b4b13
+wire: 0354110206010105351b4b1300

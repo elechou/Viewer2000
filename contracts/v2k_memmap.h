@@ -20,7 +20,7 @@
 // │ GS0后半│ CPU1 │ Stream/Capture 共用示波环 28K words           │
 // │ GS1-3  │ CPU1 │ （与 GS0 后半连续，同一 ring section）         │
 // │ GS4    │ CPU2 │ v2k_param_shadow_t            ( 100 words)   │
-// │        │      │ v2k_scope_cfg_t               (  10 words)   │
+// │        │      │ v2k_scope_cfg_t               (  12 words)   │
 // │        │      │ v2k_scope_bind_t              (  66 words)   │
 // │        │      │ v2k_scope_cons_t              (   2 words)   │
 // │        │      │ 余量 ~7.7K words 留 CPU2（EtherCAT 缓冲等）    │

@@ -2,5 +2,5 @@
 # ACK(CMD)：mailbox 忙 → BUSY
 # raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
 # wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
-raw: 52b0000b0008000230000000000000c2c9d6ab
-wire: 0352b0020b0208030230010101010105c2c9d6ab00
+raw: 54b0000b000800023000000000000035b11cff
+wire: 0354b0020b020803023001010101010535b11cff00

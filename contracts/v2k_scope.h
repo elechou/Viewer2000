@@ -57,7 +57,7 @@
 #define V2K_SCOPE_MAX_CH       16u   // 单次 Stream/Capture 通道数上限
 #define V2K_SCOPE_DEFAULT_CH    8u   // 开机默认绑定的平台快量数量
 #define V2K_BLOCK_HDR_OCTETS   16u   // block 头线上尺寸
-#define V2K_BLOCK_DATA_PREFIX_OCTETS 8u
+#define V2K_BLOCK_DATA_PREFIX_OCTETS 12u
 
 // block n_ticks 基准（SCI 哑泵：10 tick × 8ch × f32 = 320 octets 样本区）
 #define V2K_BLOCK_NTICKS_SCI  10u
@@ -151,6 +151,7 @@ typedef struct {
     uint16_t mode_req;        // 目标模式：OFF / STREAM / CAPTURE_ARMED
     uint16_t trig_ch_slot;    // 触发源 = 当前绑定的通道槽位 0..n_ch-1
     float    trig_level;      // 触发阈值，源值域；固件无物理换算知识
+    float    trig_hysteresis; // 触发迟滞半宽，源值域绝对值；0 = 裸阈值
     uint16_t trig_edge;       // V2K_TRIG_*
     uint16_t pre_trig_pct;    // pre-trigger 占环深百分比 0..100
     uint16_t prescaler;       // Scope 速率覆盖（0 = 维持当前值）
@@ -159,7 +160,7 @@ typedef struct {
     uint16_t reserved;        // 置 0
 } v2k_scope_cfg_t;
 
-V2K_ASSERT_SIZE_BITS(v2k_scope_cfg_t, 160u);
+V2K_ASSERT_SIZE_BITS(v2k_scope_cfg_t, 192u);
 
 //-----------------------------------------------------------------------------
 // 通道绑定请求（CPU2 属主区 = host 经 DAQ_BIND 写入，CPU1 应用）

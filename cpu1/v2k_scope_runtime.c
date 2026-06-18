@@ -29,8 +29,7 @@ typedef struct {
     uint16_t block_seq;
     uint16_t active_bind_seq;
     uint16_t drop_block;
-    uint16_t prev_valid;
-    float prev_trigger;
+    uint16_t trigger_armed;
     uint32_t post_remaining;
     uint16_t published_count;
 } v2k_scope_runtime_t;
@@ -266,6 +265,7 @@ static uint16_t v2k_validate_cfg(const v2k_scope_cfg_t *cfg)
     if (cfg->mode_req == V2K_SCOPE_CAPTURE_ARMED)
     {
         if ((cfg->pre_trig_pct > 100u) ||
+            !(cfg->trig_hysteresis >= 0.0f) ||
             (cfg->trig_ch_slot >= prod->n_ch) ||
             ((cfg->trig_edge != V2K_TRIG_RISE) &&
              (cfg->trig_edge != V2K_TRIG_FALL)))
@@ -390,6 +390,7 @@ static void v2k_apply_cfg(void)
         s_scope_active = 0u;
         s_scope.sample_in_block = 0u;
         s_scope.drop_block = 0u;
+        s_scope.trigger_armed = 0u;
         s_scope.post_remaining = 0u;
         v2k_scope_transition(prod, V2K_SCOPE_OFF);
         prod->cfg_result = V2K_SCOPE_RESULT_OK;
@@ -416,7 +417,7 @@ static void v2k_apply_cfg(void)
         s_scope.sample_in_block = 0u;
         s_scope.drop_block = 0u;
         s_scope.prescale_count = 1u;
-        s_scope.prev_valid = 0u;
+        s_scope.trigger_armed = 0u;
         s_scope.post_remaining = 0u;
         s_scope.published_count = 0u;
         prod->frozen_count = 0u;
@@ -484,6 +485,32 @@ static float v2k_source_float(const v2k_scope_ch_bind_t *bind)
             value.u32 = *(const volatile uint32_t *)bind->addr;
             return value.f32;
     }
+}
+
+static uint32_t v2k_capture_total_samples(const v2k_scope_prod_t *prod)
+{
+    return (uint32_t)prod->ring_capacity * prod->block_n_ticks;
+}
+
+static uint32_t v2k_capture_post_samples(uint32_t total, uint16_t pre_trig_pct)
+{
+    uint32_t pre = (total * pre_trig_pct) / 100u;
+    uint32_t post = total - pre;
+    return (post == 0u) ? 1u : post;
+}
+
+static uint16_t v2k_capture_trigger_ready(const v2k_scope_prod_t *prod)
+{
+    uint32_t total = v2k_capture_total_samples(prod);
+    uint32_t post = v2k_capture_post_samples(total, s_active_cfg.pre_trig_pct);
+    uint32_t required_pre = total - post;
+    uint32_t stored = (uint32_t)s_scope.published_count * prod->block_n_ticks +
+                      s_scope.sample_in_block;
+    if (stored > total)
+    {
+        stored = total;
+    }
+    return ((stored > 0u) && ((stored - 1u) >= required_pre)) ? 1u : 0u;
 }
 
 static void v2k_copy_sample(volatile uint16_t *dst)
@@ -580,23 +607,41 @@ static void v2k_scope_sample_one(v2k_tick_t tick)
     {
         const v2k_scope_cfg_t *cfg = &s_active_cfg;
         float current = v2k_source_float(&s_scope.bind[cfg->trig_ch_slot]);
-        if (s_scope.prev_valid)
+        float lower = cfg->trig_level - cfg->trig_hysteresis;
+        float upper = cfg->trig_level + cfg->trig_hysteresis;
+        if (v2k_capture_trigger_ready(prod))
         {
-            if ((cfg->trig_edge == V2K_TRIG_RISE) &&
-                (s_scope.prev_trigger < cfg->trig_level) &&
-                (current >= cfg->trig_level))
+            if (cfg->trig_edge == V2K_TRIG_RISE)
             {
-                hit = 1u;
+                if (!s_scope.trigger_armed)
+                {
+                    if (current <= lower)
+                    {
+                        s_scope.trigger_armed = 1u;
+                    }
+                }
+                else if (current >= upper)
+                {
+                    hit = 1u;
+                    s_scope.trigger_armed = 0u;
+                }
             }
-            else if ((cfg->trig_edge == V2K_TRIG_FALL) &&
-                     (s_scope.prev_trigger > cfg->trig_level) &&
-                     (current <= cfg->trig_level))
+            else
             {
-                hit = 1u;
+                if (!s_scope.trigger_armed)
+                {
+                    if (current >= upper)
+                    {
+                        s_scope.trigger_armed = 1u;
+                    }
+                }
+                else if (current <= lower)
+                {
+                    hit = 1u;
+                    s_scope.trigger_armed = 0u;
+                }
             }
         }
-        s_scope.prev_trigger = current;
-        s_scope.prev_valid = 1u;
     }
 
     if (s_scope.sample_in_block >= prod->block_n_ticks)
@@ -616,13 +661,9 @@ static void v2k_scope_sample_one(v2k_tick_t tick)
 
     if (hit)
     {
-        uint32_t total = (uint32_t)prod->ring_capacity * prod->block_n_ticks;
-        uint32_t pre = (total * s_active_cfg.pre_trig_pct) / 100u;
-        uint32_t post = total - pre;
-        if (post == 0u)
-        {
-            post = 1u;
-        }
+        uint32_t post =
+            v2k_capture_post_samples(v2k_capture_total_samples(prod),
+                                     s_active_cfg.pre_trig_pct);
         prod->trig_tick = tick;
         s_scope.post_remaining = post - 1u;
         v2k_scope_transition(prod, V2K_SCOPE_CAPTURE_POST);

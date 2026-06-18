@@ -9,6 +9,10 @@
 #include "v2k_timebase.h"
 #include "v2k_fault.h"
 
+#define V2K_SCI_DBG_SCOPE_HZ 200u
+
+V2K_STATIC_ASSERT((V2K_ISR_HZ % V2K_SCI_DBG_SCOPE_HZ) == 0u);
+
 extern uint16_t V2K_BssStart;
 extern uint16_t V2K_BssEnd;
 extern uint16_t V2K_BssOutputStart;
@@ -17,6 +21,7 @@ extern uint16_t V2K_DataStart;
 extern uint16_t V2K_DataEnd;
 
 extern volatile float g_v2k_adc_a0_v;
+extern volatile float g_v2k_dbg_sine_10hz;
 extern volatile float g_v2k_pwm_duty_cmd;
 extern volatile float g_v2k_pwm_duty_applied;
 extern volatile uint32_t g_v2k_isr_cycles;
@@ -116,6 +121,7 @@ void v2k_registry_init(v2k_build_hash_t build_hash)
 {
     v2k_desc_table_t *table = &g_v2k_gs0.desc_table;
     uint16_t slow_div = (uint16_t)(V2K_ISR_HZ / 1000u);
+    uint16_t sci_dbg_div = (uint16_t)(V2K_ISR_HZ / V2K_SCI_DBG_SCOPE_HZ);
 
     memset(table, 0, sizeof(*table));
     table->hdr.contract_ver = V2K_CONTRACT_VER;
@@ -126,6 +132,8 @@ void v2k_registry_init(v2k_build_hash_t build_hash)
                  &g_v2k_adc_a0, 1u);
     v2k_desc_add("adc_a0_v", V2K_TYPE_F32, V2K_KIND_SCOPE,
                  &g_v2k_adc_a0_v, 1u);
+    v2k_desc_add("dbg_sine_10hz", V2K_TYPE_F32, V2K_KIND_SCOPE,
+                 &g_v2k_dbg_sine_10hz, sci_dbg_div);
     v2k_desc_add("pwm1_duty_cmd", V2K_TYPE_F32,
                  V2K_KIND_PARAM | V2K_KIND_SCOPE,
                  &g_v2k_pwm_duty_cmd, 1u);
