@@ -1,5 +1,5 @@
 //=============================================================================
-// v2k_sci_service.c - Viewer2000 wire v2 over SCIA/XDS110 VCP
+// v2k_sci_service.c - Viewer2000 wire v5 over SCIA/XDS110 VCP
 //
 // RX ISR 只把 8-bit octet 搬进本地 SPSC 环；COBS/CRC、消息解释、共享平面
 // 服务与 TX 均在 CPU2 超级循环执行。所有线上字段显式序列化，禁止 struct
@@ -460,37 +460,18 @@ static void v2k_handle_cal_read(uint16_t seq, const uint16_t *payload,
 static void v2k_handle_daq_ctrl(uint16_t seq, const uint16_t *payload,
                                 uint16_t payload_len)
 {
-    uint16_t block_n_ticks;
+    uint16_t i;
+    uint16_t cfg_seq;
+    uint16_t result;
+    uint16_t ack;
     volatile v2k_scope_cfg_t *cfg;
     if (payload_len != 20u)
     {
         v2k_send_ack(V2K_MSG_DAQ_CTRL, seq, V2K_ACK_BAD_PARAM, 0uL);
         return;
     }
-    block_n_ticks = v2k_get_u16(payload, 18u);
-    if (block_n_ticks != 0u)
-    {
-        const volatile v2k_scope_prod_t *prod = &V2K_GS0_RO->scope_prod;
-        uint16_t stride_words;
-        uint32_t block_octets;
-        if ((prod->block_n_ticks == 0u) || (prod->block_slot_words < 8u))
-        {
-            v2k_send_ack(V2K_MSG_DAQ_CTRL, seq,
-                         V2K_ACK_BAD_STATE, 0uL);
-            return;
-        }
-        stride_words = (uint16_t)(
-            (prod->block_slot_words - 8u) / prod->block_n_ticks);
-        block_octets = 16uL +
-            (uint32_t)block_n_ticks * (uint32_t)stride_words * 2uL;
-        if (block_octets > (V2K_MAX_PAYLOAD - V2K_BLOCK_DATA_PREFIX_OCTETS))
-        {
-            v2k_send_ack(V2K_MSG_DAQ_CTRL, seq,
-                         V2K_ACK_BAD_PARAM, 0uL);
-            return;
-        }
-    }
     cfg = &g_v2k_gs4.scope_cfg;
+    cfg_seq = (uint16_t)(cfg->cfg_seq + 1u);
     cfg->mode_req = v2k_get_u16(payload, 0u);
     cfg->trig_ch_slot = v2k_get_u16(payload, 2u);
     {
@@ -506,10 +487,24 @@ static void v2k_handle_daq_ctrl(uint16_t seq, const uint16_t *payload,
     cfg->trig_edge = v2k_get_u16(payload, 12u);
     cfg->pre_trig_pct = v2k_get_u16(payload, 14u);
     cfg->prescaler = v2k_get_u16(payload, 16u);
-    cfg->block_n_ticks = block_n_ticks;
+    cfg->record_points = v2k_get_u16(payload, 18u);
     cfg->reserved = 0u;
-    cfg->cfg_seq++;
-    v2k_send_ack(V2K_MSG_DAQ_CTRL, seq, V2K_ACK_OK, 0uL);
+    cfg->cfg_seq = cfg_seq;
+    for (i = 0u; i < 3000u; i++)
+    {
+        if (V2K_GS0_RO->scope_prod.cfg_ack_seq == cfg_seq)
+        {
+            result = V2K_GS0_RO->scope_prod.cfg_result;
+            ack = (result == V2K_SCOPE_RESULT_OK) ?
+                  V2K_ACK_OK :
+                  ((result == V2K_SCOPE_RESULT_BAD_STATE) ?
+                   V2K_ACK_BAD_STATE : V2K_ACK_BAD_PARAM);
+            v2k_send_ack(V2K_MSG_DAQ_CTRL, seq, ack, cfg_seq);
+            return;
+        }
+        DEVICE_DELAY_US(1u);
+    }
+    v2k_send_ack(V2K_MSG_DAQ_CTRL, seq, V2K_ACK_INTERNAL, cfg_seq);
 }
 
 static void v2k_handle_daq_bind(uint16_t seq, const uint16_t *payload,

@@ -2,7 +2,7 @@
 """gen_vectors.py — Viewer2000 线上协议 golden test vectors 生成器
 
 本脚本是 docs/wire-spec.md 的可执行伪码：COBS / CRC-32C / 帧构造 /
-全部 v4 消息的参考实现。生成的 contracts/vectors/*.txt 是协议的
+全部 v5 消息的参考实现。生成的 contracts/vectors/*.txt 是协议的
 规范字节样本——固件 C 序列化器与上位机 Rust 解析器各自的 conformance
 test 必须对同一组样本通过。三方不一致时以 vectors 为准（见 spec 文首）。
 
@@ -88,7 +88,7 @@ for _case in (b"", b"\x00\x00", b"\x01" * 300, bytes(range(256))):
 # ---------------------------------------------------------------------------
 # 帧构造（wire-spec §3.1）
 # ---------------------------------------------------------------------------
-VER_MAGIC = 0x54
+VER_MAGIC = 0x55
 
 
 def raw_frame(msg_type: int, seq: int, payload: bytes) -> bytes:
@@ -140,7 +140,7 @@ def build_cases():
     add("hello_req", "HELLO_REQ：空 payload", 0x01, 0x0001, b"")
     add("hello_resp", "HELLO_RESP：版本、build_hash、固件名、tick_hz 与能力位",
         0x81, 0x0001,
-        struct.pack("<HHIHH16sII", 4, 6, BUILD_HASH, 10, 0,
+        struct.pack("<HHIHH16sII", 5, 7, BUILD_HASH, 10, 0,
                     b"viewer2000", 20000, 0x7F))
 
     # ---- 4.2 STATUS ----
@@ -201,11 +201,11 @@ def build_cases():
     # ---- 4.5 DAQ_CTRL / DAQ_BIND ----
     add("daq_ctrl_capture",
         "DAQ_CTRL：Capture 入口进入 CAPTURE_ARMED，触发源=通道槽位 1 上升沿过 2.5，"
-        "hysteresis=0.05，pre-trigger 30%，prescaler=1，block N=10",
+        "hysteresis=0.05，pre-trigger 30%，prescaler=1，record=1000 pts",
         0x20, 0x0008,
-        struct.pack("<HHffHHHH", 2, 1, 2.5, 0.05, 0, 30, 1, 10))
+        struct.pack("<HHffHHHH", 2, 1, 2.5, 0.05, 0, 30, 1, 1000))
     add("daq_ctrl_stream",
-        "DAQ_CTRL：Stream 入口连续流，trigger 字段被忽略，prescaler=1，默认 block N",
+        "DAQ_CTRL：Stream 入口连续流，trigger 与 record_points 字段被忽略，prescaler=1",
         0x20, 0x000D,
         struct.pack("<HHffHHHH", 1, 0, 0.0, 0.0, 0, 0, 1, 0))
     add("daq_bind_2ch",

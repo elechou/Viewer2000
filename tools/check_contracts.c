@@ -44,7 +44,8 @@ V2K_ASSERT_OFFSET_BITS(v2k_scope_prod_t, trig_tick, 192u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_prod_t, bind_ack_seq, 272u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_cfg_t,  trig_level, 32u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_cfg_t,  trig_hysteresis, 64u);
-V2K_ASSERT_OFFSET_BITS(v2k_scope_cfg_t,  block_n_ticks, 144u);
+V2K_ASSERT_OFFSET_BITS(v2k_scope_cfg_t,  record_points, 144u);
+V2K_ASSERT_OFFSET_BITS(v2k_scope_cfg_t,  cfg_seq, 176u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_ch_bind_t, type,    32u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_bind_t,  ch,        32u);
 

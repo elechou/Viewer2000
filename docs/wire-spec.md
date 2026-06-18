@@ -1,4 +1,4 @@
-# Viewer2000 线上协议规范（wire spec）v4
+# Viewer2000 线上协议规范（wire spec）v5
 
 > **文档地位**：本文档与 `contracts/` 头文件共同构成协议的唯一基准；
 > `contracts/vectors/` 的 golden test vectors 是本文档的可执行形态。
@@ -16,7 +16,7 @@
 ┌──────────────────────────────────────────────────────┐
 │ 服务语义层   会话/枚举/参数事务/DAQ 流/命令   （§5）     │  传输无关
 ├──────────────────────────────────────────────────────┤
-│ 消息层      消息目录 v4，定长小端布局        （§4）     │  传输无关
+│ 消息层      消息目录 v5，定长小端布局        （§4）     │  传输无关
 ├──────────────────────────────────────────────────────┤
 │ 帧适配器    per-transport：                 （§3）     │  传输相关
 │             SCI = COBS + 帧头 + CRC-32C               │
@@ -61,7 +61,7 @@ channel / group 概念。
 编码前帧（"裸帧"，CRC 覆盖区 = offset 0 .. 7+n-1）:
 
 off  sz  字段
-0    1   ver_magic   = 0x54（高 nibble 0x5 固定魔数，低 nibble = V2K_WIRE_VER）
+0    1   ver_magic   = 0x55（高 nibble 0x5 固定魔数，低 nibble = V2K_WIRE_VER）
 1    1   msg_type    （§4 目录；响应 = 请求 | 0x80）
 2    1   flags       = 0x00，保留
 3    2   seq         host 每请求 +1（回绕）；响应原样回显，host 据此配对
@@ -108,7 +108,7 @@ off  sz  字段
 
 时间戳始终是 block 头里的 ISR tick，与 EtherCAT DC 时钟体系无关（不用 DC）。
 
-## 4. 消息目录 v4
+## 4. 消息目录 v5
 
 ### 4.0 总表
 
@@ -140,7 +140,7 @@ off sz 字段
 
 ### 4.1 HELLO（0x01 / 0x81）
 
-请求 payload 空。响应基础前缀 28 octets，wire v4 当前响应为 36 octets；
+请求 payload 空。响应基础前缀 28 octets，wire v5 当前响应为 36 octets；
 新增字段只允许追加在尾部：
 
 ```
@@ -258,11 +258,12 @@ host 来说是两个入口。
 12 2  trig_edge     V2K_TRIG_*（STREAM 时忽略）
 14 2  pre_trig_pct  0..100（STREAM 时忽略）
 16 2  prescaler     0 = 维持当前值
-18 2  block_n_ticks 0 = 维持当前值
+18 2  record_points Capture 目标样本点数；STREAM/OFF 时置 0 并忽略
 ```
 
-CPU2 写 cfg 并发布 `cfg_seq`，回 ACK(OK)=已受理；
-模式实际跃迁经 STATUS 的 `scope_mode` 确认。
+CPU2 写 cfg 并发布 `cfg_seq`，等待 CPU1 `cfg_ack_seq/cfg_result` 后回 ACK：
+OK=配置已应用；BAD_PARAM=字段非法或 record_points 超过当前绑定下的 ring 容量；
+BAD_STATE=当前状态不接受该配置。模式也可经 STATUS 的 `scope_mode` 复核。
 
 `DAQ_BIND` 请求（2 + 8k octets）——**运行时选通道，不重烧**：
 
@@ -364,14 +365,14 @@ host 在 applied_seq 追上 commit_seq 前不得发起下一批 COMMIT。
 ACK(OK) 后方可启动。开机时 L1 已写入默认绑定（前 8 个平台可观测量），host
 不发 BIND 也能直接看波形。
 
-**Stream 入口**：`DAQ_CTRL(mode=STREAM, prescaler, block_n_ticks)` → host
+**Stream 入口**：`DAQ_CTRL(mode=STREAM, prescaler, record_points=0)` → host
 持续 `BLOCK_REQ` 轮询（SCI 阶段即"软 PDO"；频率按 `remain_hint` 自适应）。
 环满生产者丢新块 + overrun_cnt++，流不停，host 凭 block_seq 画断口。
 
 **Capture 入口**：同一套通道绑定下发
-`DAQ_CTRL(mode=CAPTURE_ARMED, trig…, pre_trig_pct, prescaler, block_n_ticks)` →
+`DAQ_CTRL(mode=CAPTURE_ARMED, trig…, pre_trig_pct, prescaler, record_points)` →
 CPU1 按同一 block 格式覆盖写环并逐拍判定触发 → 命中后进入 CAPTURE_POST 补采
-post 段（深度 = 环深×(100-pre_trig_pct)%）→ CAPTURE_FROZEN
+post 段（深度 = record_points×(100-pre_trig_pct)%）→ CAPTURE_FROZEN
 （STATUS.scope_mode 可见）→ host `BLOCK_REQ` 慢速排空（remain_hint 递减到 0）→
 host 重新 ARM 或切回 STREAM。
 pre-trigger 历史由环形结构天然保存；block 顺序由 host 按 `start_tick` 重建。

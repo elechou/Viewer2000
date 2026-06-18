@@ -2,5 +2,5 @@
 # ACK(DAQ_BIND) 负例语义：scope 非 OFF → BAD_STATE（须先 DAQ_CTRL(OFF)）
 # raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
 # wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
-raw: 54a2000d0008000322000004000000aef55ddc
-wire: 0354a2020d0208030322010204010105aef55ddc00
+raw: 55a2000d0008000322000004000000af08d3bb
+wire: 0355a2020d0208030322010204010105af08d3bb00

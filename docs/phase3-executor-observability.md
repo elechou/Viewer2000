@@ -123,7 +123,7 @@ CPUTIMER1 静态实例），**C 管运行时**（ISR 内容、多速率调度、
 | GS4 前 `0x200` words | `0x18000..` | 参数 shadow + 示波 cfg/bind/cons（**CPU2 属主**） |
 | RAMD2 | `0x1A000..` | 冻结后的 CCS view：解交错出的连续 `float data[2048]` |
 
-默认档位：前 8 个平台可观测量已绑定，prescaler=1、`block_n_ticks=10`、
+默认档位：前 8 个平台可观测量已绑定，prescaler=1、内部 `block_n_ticks=10`、
 mode=`OFF`。低速健康/保护量仍在描述符表中，host 可重绑后用较大 prescaler 采集。
 
 CPU1 后台是不含固定 `Delay` 的裸机事件循环：约 1 ms 一个 poll point 检查参数/
@@ -291,7 +291,7 @@ Sampling Rate Hz = 等效采样率。
    `g_v2k_ccs_view.channel_slot = 6` 画图。曲线是每拍的 due 位模式
    （`1`=1 kHz、`2`=100 Hz、`3`=两者同拍）：数相邻非零样本的 tick 间隔按下方 due
    间隔表核对，并确认**全程无值 3 的样本**（两个 due 永不同拍）。若环深不足以显出
-   100 Hz 的 200-tick 间隔，把 `g_v2k_gs4.scope_cfg.block_n_ticks` 调大再触发。
+   100 Hz 的 200-tick 间隔，把 `g_v2k_gs4.scope_cfg.record_points` 调大再触发。
 4. **参数提交槽**：跑一次 §6 的合法写，确认提交槽也与两个 due 错开、发布到生效
    端到端 < 2 ms。
 5. **ISR 预算**：连跑一段（中途按 §7/§8 开关一次 scope），读

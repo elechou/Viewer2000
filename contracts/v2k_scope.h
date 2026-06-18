@@ -155,9 +155,9 @@ typedef struct {
     uint16_t trig_edge;       // V2K_TRIG_*
     uint16_t pre_trig_pct;    // pre-trigger 占环深百分比 0..100
     uint16_t prescaler;       // Scope 速率覆盖（0 = 维持当前值）
-    uint16_t block_n_ticks;   // block 拍数覆盖（0 = 维持当前值）
-    uint16_t cfg_seq;         // CPU2 最后写（发布）；应答在 prod.cfg_ack_seq
+    uint16_t record_points;   // Capture 目标样本点数；STREAM/OFF 忽略
     uint16_t reserved;        // 置 0
+    uint16_t cfg_seq;         // CPU2 最后写（发布）；应答在 prod.cfg_ack_seq
 } v2k_scope_cfg_t;
 
 V2K_ASSERT_SIZE_BITS(v2k_scope_cfg_t, 192u);

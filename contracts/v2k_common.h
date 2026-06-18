@@ -68,13 +68,13 @@ V2K_ASSERT_SIZE_BITS(float, 32);
 // 线上协议版本：帧头 ver_magic 低 nibble。高 nibble 固定 0x5 作 resync 校验。
 // 版本语义：不兼容的帧格式/消息布局变更才允许 +1（描述符表内容变化不算——
 // 那由 build_hash 强制重枚举机制覆盖）。
-#define V2K_WIRE_VER        0x4u
-#define V2K_WIRE_VER_MAGIC  (0x50u | V2K_WIRE_VER)   /* = 0x54, 帧首 octet */
+#define V2K_WIRE_VER        0x5u
+#define V2K_WIRE_VER_MAGIC  (0x50u | V2K_WIRE_VER)   /* = 0x55, 帧首 octet */
 #define V2K_WIRE_MAX_PAYLOAD 1024u
 
 // 共享内存布局版本：任何共享 struct 字段变更必须 +1（CPU1/CPU2 固件不同期
 // 烧录时的握手自检用，见 v2k_command.h 握手流程）。
-#define V2K_CONTRACT_VER    6u
+#define V2K_CONTRACT_VER    7u
 
 //-----------------------------------------------------------------------------
 // 设备能力位（HELLO capabilities；只追加，不复用）

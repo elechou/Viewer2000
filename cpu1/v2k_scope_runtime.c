@@ -31,6 +31,10 @@ typedef struct {
     uint16_t drop_block;
     uint16_t trigger_armed;
     uint32_t post_remaining;
+    uint32_t capture_total_samples;
+    uint32_t capture_post_samples;
+    uint32_t capture_required_pre;
+    uint16_t capture_target_blocks;
     uint16_t published_count;
 } v2k_scope_runtime_t;
 
@@ -209,7 +213,6 @@ void v2k_scope_init(void)
     prod->cfg_result = V2K_SCOPE_RESULT_OK;
     prod->bind_result = V2K_SCOPE_RESULT_OK;
     s_active_cfg.trig_edge = V2K_TRIG_RISE;
-    s_active_cfg.block_n_ticks = V2K_BLOCK_NTICKS_SCI;
     v2k_default_bind();
 }
 
@@ -243,7 +246,6 @@ static uint16_t v2k_validate_bind(const v2k_scope_bind_t *bind)
 static uint16_t v2k_validate_cfg(const v2k_scope_cfg_t *cfg)
 {
     const v2k_scope_prod_t *prod = &g_v2k_gs0.scope_prod;
-    uint16_t n_ticks;
     uint16_t prescaler;
     uint16_t slot_words;
     uint16_t capacity;
@@ -251,6 +253,10 @@ static uint16_t v2k_validate_cfg(const v2k_scope_cfg_t *cfg)
     if ((cfg->mode_req != V2K_SCOPE_OFF) &&
         (cfg->mode_req != V2K_SCOPE_STREAM) &&
         (cfg->mode_req != V2K_SCOPE_CAPTURE_ARMED))
+    {
+        return V2K_SCOPE_RESULT_BAD_PARAM;
+    }
+    if (cfg->reserved != 0u)
     {
         return V2K_SCOPE_RESULT_BAD_PARAM;
     }
@@ -268,20 +274,56 @@ static uint16_t v2k_validate_cfg(const v2k_scope_cfg_t *cfg)
             !(cfg->trig_hysteresis >= 0.0f) ||
             (cfg->trig_ch_slot >= prod->n_ch) ||
             ((cfg->trig_edge != V2K_TRIG_RISE) &&
-             (cfg->trig_edge != V2K_TRIG_FALL)))
+             (cfg->trig_edge != V2K_TRIG_FALL)) ||
+            (cfg->record_points == 0u))
         {
             return V2K_SCOPE_RESULT_BAD_PARAM;
         }
     }
-    n_ticks = (cfg->block_n_ticks == 0u) ?
-              prod->block_n_ticks : cfg->block_n_ticks;
     prescaler = (cfg->prescaler == 0u) ? prod->prescaler : cfg->prescaler;
     if (prescaler == 0u)
     {
         return V2K_SCOPE_RESULT_BAD_PARAM;
     }
-    return v2k_scope_layout(n_ticks, s_scope.stride_words,
-                            &slot_words, &capacity);
+    if (v2k_scope_layout(prod->block_n_ticks, s_scope.stride_words,
+                         &slot_words, &capacity) != V2K_SCOPE_RESULT_OK)
+    {
+        return V2K_SCOPE_RESULT_NO_CAPACITY;
+    }
+    if ((cfg->mode_req == V2K_SCOPE_CAPTURE_ARMED) &&
+        ((uint32_t)cfg->record_points >
+         ((uint32_t)capacity * (uint32_t)prod->block_n_ticks)))
+    {
+        return V2K_SCOPE_RESULT_BAD_PARAM;
+    }
+    return V2K_SCOPE_RESULT_OK;
+}
+
+static uint32_t v2k_capture_post_samples(uint32_t total,
+                                         uint16_t pre_trig_pct)
+{
+    uint32_t pre = (total * pre_trig_pct) / 100u;
+    uint32_t post = total - pre;
+    return (post == 0u) ? 1u : post;
+}
+
+static uint16_t v2k_capture_target_blocks(uint32_t total,
+                                          uint16_t block_n_ticks)
+{
+    return (uint16_t)((total + (uint32_t)block_n_ticks - 1u) /
+                      (uint32_t)block_n_ticks);
+}
+
+static void v2k_prepare_capture_window(v2k_scope_prod_t *prod,
+                                       const v2k_scope_cfg_t *cfg)
+{
+    uint32_t total = cfg->record_points;
+    uint32_t post = v2k_capture_post_samples(total, cfg->pre_trig_pct);
+    s_scope.capture_total_samples = total;
+    s_scope.capture_post_samples = post;
+    s_scope.capture_required_pre = total - post;
+    s_scope.capture_target_blocks =
+        v2k_capture_target_blocks(total, prod->block_n_ticks);
 }
 
 void v2k_scope_service(void)
@@ -373,7 +415,6 @@ static void v2k_apply_cfg(void)
 {
     v2k_scope_prod_t *prod = &g_v2k_gs0.scope_prod;
     uint16_t result = s_cfg_pending.result;
-    uint16_t n_ticks;
     uint16_t prescaler;
     uint16_t slot_words = 0u;
     uint16_t capacity = 0u;
@@ -392,6 +433,10 @@ static void v2k_apply_cfg(void)
         s_scope.drop_block = 0u;
         s_scope.trigger_armed = 0u;
         s_scope.post_remaining = 0u;
+        s_scope.capture_total_samples = 0u;
+        s_scope.capture_post_samples = 0u;
+        s_scope.capture_required_pre = 0u;
+        s_scope.capture_target_blocks = 0u;
         v2k_scope_transition(prod, V2K_SCOPE_OFF);
         prod->cfg_result = V2K_SCOPE_RESULT_OK;
         prod->cfg_ack_seq = s_cfg_pending.cfg.cfg_seq;
@@ -399,19 +444,16 @@ static void v2k_apply_cfg(void)
         return;
     }
 
-    n_ticks = (s_cfg_pending.cfg.block_n_ticks == 0u) ?
-              prod->block_n_ticks : s_cfg_pending.cfg.block_n_ticks;
     prescaler = (s_cfg_pending.cfg.prescaler == 0u) ?
                 prod->prescaler : s_cfg_pending.cfg.prescaler;
     if (result == V2K_SCOPE_RESULT_OK)
     {
-        result = v2k_scope_layout(n_ticks, s_scope.stride_words,
+        result = v2k_scope_layout(prod->block_n_ticks, s_scope.stride_words,
                                   &slot_words, &capacity);
     }
     if (result == V2K_SCOPE_RESULT_OK)
     {
         prod->prescaler = prescaler;
-        prod->block_n_ticks = n_ticks;
         prod->block_slot_words = slot_words;
         prod->ring_capacity = capacity;
         s_scope.sample_in_block = 0u;
@@ -419,12 +461,15 @@ static void v2k_apply_cfg(void)
         s_scope.prescale_count = 1u;
         s_scope.trigger_armed = 0u;
         s_scope.post_remaining = 0u;
+        s_scope.capture_total_samples = 0u;
+        s_scope.capture_post_samples = 0u;
+        s_scope.capture_required_pre = 0u;
+        s_scope.capture_target_blocks = 0u;
         s_scope.published_count = 0u;
         prod->frozen_count = 0u;
         prod->frozen_end_idx = 0u;
         s_active_cfg = s_cfg_pending.cfg;
         s_active_cfg.prescaler = prescaler;
-        s_active_cfg.block_n_ticks = n_ticks;
         if (s_cfg_pending.cfg.mode_req == V2K_SCOPE_STREAM)
         {
             prod->wr_idx = s_cons_rd_cache;
@@ -432,6 +477,7 @@ static void v2k_apply_cfg(void)
         else if (s_cfg_pending.cfg.mode_req == V2K_SCOPE_CAPTURE_ARMED)
         {
             prod->wr_idx = 0u;
+            v2k_prepare_capture_window(prod, &s_active_cfg);
         }
         v2k_scope_transition(prod, s_cfg_pending.cfg.mode_req);
         // 所有运行态字段就绪后，最后发布给 ISR。
@@ -487,25 +533,16 @@ static float v2k_source_float(const v2k_scope_ch_bind_t *bind)
     }
 }
 
-static uint32_t v2k_capture_total_samples(const v2k_scope_prod_t *prod)
-{
-    return (uint32_t)prod->ring_capacity * prod->block_n_ticks;
-}
-
-static uint32_t v2k_capture_post_samples(uint32_t total, uint16_t pre_trig_pct)
-{
-    uint32_t pre = (total * pre_trig_pct) / 100u;
-    uint32_t post = total - pre;
-    return (post == 0u) ? 1u : post;
-}
-
 static uint16_t v2k_capture_trigger_ready(const v2k_scope_prod_t *prod)
 {
-    uint32_t total = v2k_capture_total_samples(prod);
-    uint32_t post = v2k_capture_post_samples(total, s_active_cfg.pre_trig_pct);
-    uint32_t required_pre = total - post;
+    uint32_t total = s_scope.capture_total_samples;
+    uint32_t required_pre = s_scope.capture_required_pre;
     uint32_t stored = (uint32_t)s_scope.published_count * prod->block_n_ticks +
                       s_scope.sample_in_block;
+    if (total == 0u)
+    {
+        return 0u;
+    }
     if (stored > total)
     {
         stored = total;
@@ -547,12 +584,19 @@ static void v2k_publish_block(uint16_t n_ticks)
 static void v2k_freeze(void)
 {
     v2k_scope_prod_t *prod = &g_v2k_gs0.scope_prod;
+    uint16_t frozen_count;
     if (s_scope.sample_in_block != 0u)
     {
         v2k_publish_block(s_scope.sample_in_block);
     }
+    frozen_count = s_scope.published_count;
+    if ((s_scope.capture_target_blocks != 0u) &&
+        (frozen_count > s_scope.capture_target_blocks))
+    {
+        frozen_count = s_scope.capture_target_blocks;
+    }
     prod->frozen_end_idx = prod->wr_idx;
-    prod->frozen_count = s_scope.published_count;
+    prod->frozen_count = frozen_count;
     v2k_scope_transition(prod, V2K_SCOPE_CAPTURE_FROZEN);
     s_scope_active = 0u;
 }
@@ -661,11 +705,8 @@ static void v2k_scope_sample_one(v2k_tick_t tick)
 
     if (hit)
     {
-        uint32_t post =
-            v2k_capture_post_samples(v2k_capture_total_samples(prod),
-                                     s_active_cfg.pre_trig_pct);
         prod->trig_tick = tick;
-        s_scope.post_remaining = post - 1u;
+        s_scope.post_remaining = s_scope.capture_post_samples - 1u;
         v2k_scope_transition(prod, V2K_SCOPE_CAPTURE_POST);
         if (s_scope.post_remaining == 0u)
         {
