@@ -5,8 +5,8 @@
 // 因此一切参数写入走 shadow 双缓冲 + commit 标志，由 CPU1 ISR 在每周期
 // 固定安全点整组交换——一批参数要么全部生效于同一拍，要么全不生效。
 //
-// 写入目标按地址寻址（与示波通道绑定同一哲学：应用变量来自 viewer 解析
-// .out/DWARF 的符号树，平台量来自描述符表枚举，固件不区分来源）。
+// 写入目标按地址寻址（与示波通道绑定同一哲学：平台量与用户应用变量都来自
+// 描述符表枚举，用户变量由 Phase 4.5 构建期从 DWARF 烤入，固件不区分来源）。
 //
 // ---- 写入校验（机械一致性，不做范围/单位语义）----
 // CPU1 应用每条写入前只做机械检查：
@@ -43,7 +43,7 @@
 #define V2K_CAL_READ_MAX    32u   // 一次 CAL_READ 的最大条数
 
 typedef struct {
-    uint32_t addr;         // 目标 CPU1 数据空间 word 地址（来源：描述符表或 DWARF）
+    uint32_t addr;         // 目标 CPU1 数据空间 word 地址（来源：描述符表，含 Phase 4.5 构建期烤入的用户变量）
     uint32_t value_bits;   // 新值位模式（约定见 v2k_common.h）
     uint16_t type;         // V2K_TYPE_*（决定写宽度与转换）
     uint16_t reserved;     // 置 0

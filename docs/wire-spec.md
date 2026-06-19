@@ -9,17 +9,17 @@
 ## 1. Layered model
 
 ```
-┌──────────────────────────────────────────────────────┐
-│ Service-semantics layer  session/enum/param txn/DAQ stream/command (§5) │ transport-agnostic
-├──────────────────────────────────────────────────────┤
-│ Message layer  message catalog v6, fixed-length little-endian layout (§4) │ transport-agnostic
-├──────────────────────────────────────────────────────┤
-│ Frame adapter  per-transport:                 (§3)     │ transport-dependent
-│             SCI = COBS + frame header + CRC-32C       │
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Service-semantics layer  session/enum/param txn/DAQ stream/command (§5)     │ transport-agnostic
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Message layer  message catalog v6, fixed-length little-endian layout (§4)   │ transport-agnostic
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Frame adapter  per-transport:                 (§3)                          │ transport-dependent
+│             SCI = COBS + frame header + CRC-32C                             │
 │             EtherCAT = mailbox/PDO self-delimited, the frame layer vanishes │
-├──────────────────────────────────────────────────────┤
-│ Physical layer  SCI(XDS110 VCP) → EtherCAT 100M       │
-└──────────────────────────────────────────────────────┘
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Physical layer  SCI(XDS110 VCP) → EtherCAT 100M                             │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 Design invariant: **everything above the message layer is transport-agnostic**. Swapping the physical layer only swaps the frame adapter (the entire migration of Phase 3.5 → 6); the messages and shared interfaces (`contracts/*.h`) don't move a bit.
@@ -34,7 +34,7 @@ The service semantics keep the generic vocabulary CAL/DAQ/prescaler from XCP (AS
 - In the offset tables, `off:sz` is in octets.
 - Master/slave model: **the host is the sole initiator** (request-response), the firmware has no spontaneous frames. This is isomorphic to EtherCAT's master polling model — what Phase 3.5 validates is the semantics of Phase 6.
 - The `value_bits` (parameter value bit pattern) convention is in `v2k_common.h`: F32 native bit pattern, I16 sign-extended / U16 zero-extended to 32 bit.
-- **The universal key for variable addressing = `(addr, type)`** (CPU1 data-space word address + type code). The address has two sources, which the firmware doesn't distinguish: ① the descriptor table enumerated by ENUM (**contains only the platform quantities L1 auto-registers**, serving as the out-of-the-box surface and default-binding source); ② the full symbol tree obtained by the viewer parsing the `.out` (ELF/DWARF) built from the same source as the firmware (every application variable, including any struct member / array element; pairing correctness verified by build_hash). Users/students write no registration code and type no name strings.
+- **The universal key for variable addressing = `(addr, type)`** (CPU1 data-space word address + type code). All addresses come from one source the host enumerates over the wire: **the descriptor table**, which holds the platform quantities (registered by L0/L1) plus the user's application variables (**baked into the table at build time from the firmware DWARF — Phase 4.5**; struct members / array elements expanded into named scalar entries; pairing guarded by build_hash). The names therefore travel with the device — the host needs no `.out`. Users/students write plain C: no registration code, no name strings, no mandated declaration style.
 - **The on-wire value is the real value**: the protocol carries no `min/max/scale/offset` display or guard-rail metadata. Both the DAQ block and the CAL value interpret the bit pattern by the variable's native type; the firmware does no quantization, no conversion, no parameter range clamping or range rejection.
 
 ## 3. Frame adapter
@@ -160,7 +160,7 @@ Request payload empty. Response 42 octets; doubles as the link heartbeat (host p
 
 ### 4.3 ENUM (0x03 / 0x83)
 
-The enumeration object = the descriptor table = the platform quantities L1 auto-registers (physical quantities/duty/state/platform parameters), for out-of-the-box use and default binding. Application variables are not in this table, discovered via the DWARF path (§2 convention).
+The enumeration object = the descriptor table = the platform quantities L1/L0 register (physical quantities/duty/state/platform parameters) plus the user's application variables baked in at build time from the firmware DWARF (Phase 4.5, §2 convention) — so a host with no `.out` still enumerates everything by name.
 
 Request (4 octets): `{0:2 start_idx, 2:1 max_count(≤8), 3:1 reserved}`
 Response (6 + 28×count octets):
@@ -238,7 +238,7 @@ CPU2 writes cfg and publishes `cfg_seq`, waits for CPU1's `cfg_ack_seq/cfg_resul
       0:4 addr | 4:2 type | 6:2 reserved
 ```
 
-Semantics: addr from any source (descriptor table or DWARF); samples are losslessly direct-copied at **native width** (I16/U16→2 octets, I32/U32/F32→4 octets, bit pattern verbatim, firmware zero-conversion zero-quantization — accuracy first). Physical-quantity conversion (e.g. ADC count→ampere) is pure host-side display metadata, not on the wire, not in the firmware. **Bindable only when scope mode==OFF.** CPU2 writes the bind region and publishes `bind_seq`, then briefly waits (≤1 ms) for CPU1's `bind_ack_seq/bind_result`, putting the final result into the ACK: OK / BAD_STATE (not OFF, DAQ_CTRL(OFF) first) / BAD_PARAM (n_ch or type illegal), data=bind_seq; a timeout returns INTERNAL (CPU1 ISR not running).
+Semantics: addr comes from the descriptor table (platform quantities + build-time-baked user variables, §2); samples are losslessly direct-copied at **native width** (I16/U16→2 octets, I32/U32/F32→4 octets, bit pattern verbatim, firmware zero-conversion zero-quantization — accuracy first). Physical-quantity conversion (e.g. ADC count→ampere) is pure host-side display metadata, not on the wire, not in the firmware. **Bindable only when scope mode==OFF.** CPU2 writes the bind region and publishes `bind_seq`, then briefly waits (≤1 ms) for CPU1's `bind_ack_seq/bind_result`, putting the final result into the ACK: OK / BAD_STATE (not OFF, DAQ_CTRL(OFF) first) / BAD_PARAM (n_ch or type illegal), data=bind_seq; a timeout returns INTERNAL (CPU1 ISR not running).
 
 ### 4.6 BLOCK_REQ / BLOCK_DATA (0x21 / 0xA1)
 
@@ -279,37 +279,37 @@ CPU2 checks the mailbox is free (`cmd_seq == ack_seq`) → writes the command ma
 ### 5.1 Session establishment and forced re-enumeration
 
 ```
-host                          firmware(CPU2)
- │ ──── HELLO_REQ ────────────→ │
- │ ←─── HELLO_RESP ──────────── │  proto_ver mismatch → host aborts and reports an error
- │ ──── ENUM_REQ(0,8) ────────→ │
- │ ←─── ENUM_RESP ───────────── │  … page until count < max or start≥total
- │ (then periodic STATUS polling, suggested 2–10 Hz) │
+host                                                     firmware(CPU2)
+ │ ─────────────────────── HELLO_REQ ──────────────────────→ │
+ │ ←────────────────────── HELLO_RESP ────────────────────── │  proto_ver mismatch → host aborts and reports an error
+ │ ─────────────────────── ENUM_REQ(0,8) ──────────────────→ │
+ │ ←────────────────────── ENUM_RESP ─────────────────────── │  … page until count < max or start≥total
+ │ (then periodic STATUS polling, suggested 2–10 Hz)         │
 ```
 
 The host caches the descriptor table, keyed by `build_hash`. At any time (in HELLO or STATUS), detecting a `build_hash` change → **invalidate the entire cache and re-enumerate**. Prevents reading new firmware with an old table.
 
-Application-variable discovery (DWARF path, viewer-side Phase 3.5+): the viewer loads the `.out` built by the user (ELF+DWARF, a standard cl2000 EABI product), parses the symbol tree for the GUI to browse/select; at load it verifies the build_hash embedded in the `.out` matches the value the firmware reported in HELLO, refusing to load on mismatch (prevents computing new-firmware addresses with an old symbol table). The firmware is unaware of this path.
+User application-variable discovery (build-time baking, Phase 4.5): a build tool reads the firmware `.out` DWARF and bakes each user variable's `name→addr→type` into the descriptor table (struct members / array elements expanded into named scalar entries). The host enumerates them over ENUM like any platform quantity — no `.out` on the host, no stale-ELF risk (the addresses come from the same build that is flashed; build_hash still guards the host cache). The student writes plain C.
 
 ### 5.2 Parameter transaction (two-stage + async reconcile)
 
 ```
-host                     CPU2                      CPU1 ISR safe point
- │ ─ CAL_WRITE ×m ─────→ │ stage shadow             │
- │ ←─ ACK(OK) ×m ─────── │                          │
- │ ─ CAL_COMMIT ───────→ │ publish commit_seq=s ───→ │ sees s≠applied_seq:
- │ ←─ ACK(OK,data=s) ─── │                          │ mechanical check→apply whole set→
- │ ─ STATUS poll ──────→ │ read the parameter-status block │ write applied_seq=s
- │ ←─ applied_seq==s? ── │  ←──────────────────────  │
+host                         CPU2                       CPU1 ISR safe point
+ │ ─────── CAL_WRITE ×m ─────→ │ stage shadow                    │
+ │ ←────── ACK(OK) ×m ──────── │                                 │
+ │ ─────── CAL_COMMIT ───────→ │ publish commit_seq=s ─────────→ │ sees s≠applied_seq:
+ │ ←────── ACK(OK,data=s) ──── │                                 │ mechanical check→apply whole set→
+ │ ─────── STATUS poll ──────→ │ read the parameter-status block │ write applied_seq=s
+ │ ←────── applied_seq==s? ─── │  ←────────────────────────────  │
 ```
 
 Key points: within a batch **all valid or all rejected** (takes effect on the same tick, cal_result/cal_fail_idx report the cause; all successful writes are native-bit-pattern writes, with no range or unit conversion); the host must not issue the next COMMIT batch before applied_seq catches up to commit_seq.
 
-`CAL_READ` is an on-demand single read, not the periodic mirror: the host sends an `(addr,type)` list, CPU2 publishes the read request, CPU1's background reads and acks. It serves the Variable Map / DWARF watch; high-speed real-time waveforms still use the DAQ_BIND + BLOCK_REQ scope ring.
+`CAL_READ` is an on-demand single read, not the periodic mirror: the host sends an `(addr,type)` list, CPU2 publishes the read request, CPU1's background reads and acks. It serves the Variable Map / on-demand watch; high-speed real-time waveforms still use the DAQ_BIND + BLOCK_REQ scope ring.
 
 ### 5.3 Scope flow
 
-Channel selection (before any mode starts): `DAQ_CTRL(OFF)` → `DAQ_BIND(channel list)` → only after ACK(OK) may you start. At power-up L1 has written the default binding (the first 8 platform observables), so the host can see a waveform directly without sending BIND.
+Channel selection (before any mode starts): `DAQ_CTRL(OFF)` → `DAQ_BIND(channel list)` → only after ACK(OK) may you start. (Phase 3 wrote a boot default binding of the first 8 platform observables; Phase 4 removes it — binding is on-demand.)
 
 **Stream entry**: `DAQ_CTRL(mode=STREAM, prescaler, record_points=0)` → the host continuously `BLOCK_REQ` polls (a "soft PDO" in the SCI phase; frequency adapts by `remain_hint`). When the ring fills the producer drops new blocks + overrun_cnt++, the flow doesn't stop, and the host draws a gap by block_seq.
 
@@ -356,11 +356,11 @@ The "watch window" of an application variable = after selecting variables, run S
 
 ### ADR-2: variable-discovery architecture (finalized 2026-06-11)
 
-**Decision**: the descriptor table carries only the platform quantities L1 auto-registers (the out-of-the-box surface + default-binding source); application variables all go the "viewer parses `.out`(DWARF) → send by (addr,type)" path, scoping via DAQ_BIND, parameter writing via CAL_WRITE.
+**Decision (revised 2026-06-19, see [Phase 4.5](../docs/phase4.5-symbol-baking.md))**: the descriptor table carries platform quantities (registered by L0/L1) **plus user application variables baked in at build time from the firmware DWARF** — so the names travel with the device and the host needs no `.out`. Discovery is over ENUM; scoping via DAQ_BIND, parameter writing via CAL_WRITE, both keyed by (addr,type).
 
-**Rejected intermediate forms**: ① L2-component init self-registration (`pi_init(&pi, "vel")`) and ② user-side stringified registration macros — both require the user to maintain a second name string per variable (the FreeRTOS-style double-naming antipattern) or register each one manually; the C symbol itself is the only acceptable naming source, and DWARF happens to provide it for free.
+**Rejected forms**: ① L2-component init self-registration (`pi_init(&pi, "vel")`) and ② user-side stringified registration macros — both force a second name string or a mandated declaration style; the C symbol is the only acceptable name source. ③ **Host-side runtime `.out`/DWARF parsing** (the original 2026-06-11 plan) — rejected 2026-06-19 because it ties Scope2000 to the project directory and risks a stale/wrong ELF writing to the wrong address. The C symbol is still the only name source, but it is harvested **at build time** and baked into the device.
 
-**Cost and countermeasure**: the viewer must implement ELF/DWARF parsing (Rust `gimli`/`object`, Phase 3.5+); the `.out`-to-firmware pairing relies on bidirectional build_hash verification. The protocol carries no `min/max/scale/offset`: the value itself must already be the real quantity to display, log, and write back. In exchange: zero registration code and zero naming burden for students, any struct member / array element observable, and fully runtime channel selection (no reflash).
+**Cost and countermeasure**: a build tool must parse the firmware `.out` DWARF (Python `pyelftools`, Phase 4.5) and bake a compact `name→addr→type` table into the descriptor table; the `.out`-to-device pairing is automatic (same build) and build_hash guards the host cache. The protocol carries no `min/max/scale/offset`: the value itself must already be the real quantity to display, log, and write back. In exchange: zero registration code and zero naming burden for students, any struct member / array element observable, fully runtime channel selection (no reflash), and **names that travel with the device — no `.out` on the host**.
 
 ## Appendix B: Scope2000 `DataSource` boundary (Phase 3.5)
 

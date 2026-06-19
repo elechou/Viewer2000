@@ -142,27 +142,27 @@ void user_step(const plat_in_t *in, plat_out_t *out);
 ### Architecture diagram
 
 ```
-                ┌──────────────────────────────────────────────┐
-                │  Scope2000 = Rust + egui front-end             │
-                │  DataSource: V2k (native) / Sim (long-term)    │
-                └────┬───────────────┬────────────────┬────────┘
-                     │ JTAG/CCS      │ SCI (XDS110     │ EtherCAT
-                     │ (Phase 1–)    │  VCP, Ph 3.5)   │ (ethercrab, Ph 6)
-   ┌─────────────────┴────────────┐  ┌┴────────────────┴────────────┐
+            ┌────────────────────────────────────────────────┐
+            │  Scope2000 = Rust + egui front-end             │
+            │  DataSource: V2k (native) / Sim (long-term)    │
+            └────┬─────────────────────┬────────────────┬────┘
+                 │ JTAG/CCS            │ SCI (XDS110    │ EtherCAT
+                 │ (Phase 1–)          │  VCP, Ph 3.5)  │ (ethercrab, Ph 6)
+   ┌─────────────┴─────────────────┐  ┌┴────────────────┴─────────────┐
    │ CPU1 — control core           │  │ CPU2 — comms core             │
    │  L3 user control app          │  │  EtherCAT data pump (Phase 6) │
    │  L2 control math              │  │  SCI dumb-pump (Phase 3.5)    │
    │     (user: SDK / Simulink)    │  │  param service / heartbeat    │
    │  L1 executor: ISR sched+prot  │  │  / firmware update            │
    │  L0 ePWM ADC eQEP CMPSS       │  │  L0: SCI / MCAN / ESC(PDI)    │
-   └──────────────┬───────────────┘  └──────────────┬───────────────┘
-                  │   shared-memory interfaces (GSx RAM + MSGRAM) │
-                  │  ┌──────────────────────────────┐ │
-                  └──┤ 1. descriptor table (param/ch/build hash)├┘
-                     │ 2. param plane: double-buf + commit │
-                     │ 3. scope plane: SPSC ring + dual-mode│
-                     │ 4. command/status: IPC mailbox + hb  │
-                     └──────────────────────────────┘
+   └───────┬───────────────────────┘  └──────────────────────┬────────┘
+           │   shared-memory interfaces (GSx RAM + MSGRAM)   │
+           │  ┌──────────────────────────────────────────┐   │
+           └──┤ 1. descriptor table (param/ch/build hash)├───┘
+              │ 2. param plane: double-buf + commit      │
+              │ 3. scope plane: SPSC ring + dual-mode    │
+              │ 4. command/status: IPC mailbox + hb      │
+              └──────────────────────────────────────────┘
    Hardware protection chain (CMPSS → ePWM X-BAR → Trip Zone): goes through
    no CPU at all, let alone across cores
 ```
@@ -192,10 +192,11 @@ void user_step(const plat_in_t *in, plat_out_t *out);
 - **Phase 2 — Time-base proof + protection**: the EPWM → ADC SOC → EOC ISR chain is up, GPIO toggle + scope-measured interrupt latency and jitter; configure FREE_SOFT; CMPSS hardware trip + fault-latch state machine.
 - **Phase 3 — Executor + observability**: the ISR multi-rate scheduling framework (software division + **phase staggering** — slow loops don't all bunch onto the same `k%N==0` tick, flattening WCET; whether slow loops run inline or are handed to a low-priority soft interrupt is decided here), the dual-mode RAM scope (snapshot first, consumed by CCS Graph), the parameter double-buffer, the descriptor table.
 - **Phase 3.5 — SCI dumb data pump**: CPU2 runs a minimal protocol subset over the XDS110 VCP (enumerate the descriptor table + Live small-N blocks + snapshot drain). **Significance: the first real consumer of the descriptor table, scope plane, and command plane** — CCS Graph reads memory directly over JTAG, bypassing CPU2 / the SPSC consumer side / IPC, so it doesn't count; the biggest architectural risk point, the dual-core split, is validated early here rather than left to Phase 6. Scope2000 lands the first cut of `V2kSource` in parallel; the compatibility bridge only reserves the transport/capability boundary.
-- **Phase 4 — User-interface boundary (L1↔user)**: turn `user_step` into a genuinely usable **generic named-port contract** — pin down platform-side count↔physical-quantity conversion, the path for user observables/parameters to register into the descriptor table, and the in/out port-table shape; drive it with a single C2000Ware MOTORCONTROL-SDK control block as the first real client to validate the descriptor table / scope plane / parameter plane end to end. **No control math is written here.** (Note: the originally-planned "platform-owned L2 control library + PC simulation" is dropped — rationale in Language strategy / Decisions; control math is user-supplied, and the dual-core plumbing is dogfooded here on a real control client before live hardware in Phase 5.)
+- **Phase 4 — User-interface boundary (L1↔user)** ([plan](docs/phase4-user-interface.md)): firmware boundary work — the user surface becomes Arduino-style **`setup()` / `control()`** (`void`) over a global `v2k_io.in/.out`; the port table + count↔physical + all driverlib pushed into a chip-agnostic **L0↔L1 compile-time seam** (`l0_acquire/apply/cycle_count/...`, zero ISR cost, FreeRTOS-port-layer style) so the L1 control core is portable; **stop/start = an unconditional full reset of all user state to declared initial values** (a safety guarantee — a wound-up integrator can never restart from its FAULT value), replacing an opt-in `on_start`; three-layer packaging (logical seam now, physical `runtime/` move later); remove the boot default binding. First real client = one C2000Ware DCL block, loopback-fed, no motor. **No control math is written here.** (The originally-planned "platform-owned L2 control library + PC simulation" is dropped — rationale in Language strategy / Decisions.)
+- **Phase 4.5 — Build-time symbol baking** ([plan](docs/phase4.5-symbol-baking.md)): a build tool reads the firmware `.out` DWARF and bakes user plain-C variable `name→addr→type` into the descriptor table, so the names travel with the device and Scope2000 shows them by name on any PC with no `.out` present (host unchanged; no registration macro, no mandated declaration style). A parallel build-tooling effort that does not gate the Phase 4 mainline.
 - **Phase 5 — Motor bring-up (platform acceptance)**: open-loop V/f → current-sense calibration → current loop → encoder → speed loop → position loop. Each step is a small L3 application, validating the platform interface design along the way.
 - **Phase 6 — EtherCAT link maturity**: SSC port, ESI/EEPROM, state machine to OP, PDO mapping; ethercrab master @ 2 kHz loop. **Acceptance = 100 kHz × 8ch lossless continuous stream (zero sequence loss × long duration) + record-and-replay.**
-- **(Long-term) portability option**: the shared interfaces + host are chip-agnostic; control math is user-supplied. When swapping chips (F29x / AM26x) later, only L0/L1 are rewritten. The platform's accumulated value lives in the interface definitions, not the chip.
+- **(Long-term) portability option**: the shared interfaces + host are chip-agnostic, and the **L1 control core is chip-agnostic** (it touches no registers — the L0↔L1 seam quarantines driverlib in L0). When swapping chips (F29x / AM26x) later, the rewrite is **L0 + the board substrate** (linker/memory map/dual-core/IPC), not L1. The platform's accumulated value lives in the interface definitions and the L1 core, not the chip.
 
 ## Workflow conventions
 
@@ -210,8 +211,12 @@ void user_step(const plat_in_t *in, plat_out_t *out);
 - [x] Chip and board: **TMS320F28P650DK9 / LAUNCHXL-F28P65X** (onboard XDS110 + VCP; no on-chip USB)
 - [x] Host-link physical layer: **SCI dumb-pump (3.5) → EtherCAT (6)**, decided by elimination from the 100 kHz × 8ch requirement; CAN-FD/W5500 do not meet it
 - [x] CLA ownership: one per core; **whether to use it** is still open (keeping control code in plain C preserves the option)
-- [x] **L2 ownership: the platform ships no L2 control library; control math is user-supplied in L3** (C2000Ware MOTORCONTROL-SDK / DCL / hand-written / Simulink-generated C). The platform only defines the `user_step` boundary. Rationale: duplicating a documented vendor SDK is a maintenance/pedagogical liability, and PC-SIL is low-value for this single-developer + strong on-target-observability context. (Decided 2026-06-19.)
-- [x] **`user_step` in/out contract = generic named-port table** (a motor demo is one thin view over it), chosen over a motor-hardcoded struct to fit the general-RCP scope and Simulink root-port binding. (Decided 2026-06-19; concrete struct shape is the first cut of Phase 4.)
+- [x] **L2 ownership: the platform ships no L2 control library; control math is user-supplied in L3** (C2000Ware MOTORCONTROL-SDK / DCL / hand-written / Simulink-generated C). The platform only defines the `setup()`/`control()` boundary. Rationale: duplicating a documented vendor SDK is a maintenance/pedagogical liability, and PC-SIL is low-value for this single-developer + strong on-target-observability context. (Decided 2026-06-19.)
+- [x] **User API = Arduino-style `setup()` / `control()` (`void`) over a global `v2k_io.in/.out`** named-port struct (a motor build is one thin view; ports come from the L0 port table). Chosen over `user_step(in,out)` params for the C2000/DCL idiom + non-programmer simplicity; over a motor-hardcoded struct for general-RCP scope + Simulink root-port binding. `loop()` rejected (hides the deterministic-ISR identity); `on_start()` eliminated (the auto-reset replaces it). (Decided 2026-06-19.)
+- [x] **Stop/start = unconditional full reset of all user state**: on every IDLE→RUNNING the platform re-copies the entire user data section (`user.obj` `.data`/`.bss`) to declared initial values (flash golden image / RAM snapshot) before output is enabled — a safety guarantee (a wound-up integrator/PLL can never restart from its FAULT value) that does not depend on the user writing a reset hook. Tuned parameters reset too; each run starts reproducibly from the source-declared values. (Decided 2026-06-19.)
+- [x] **L0↔L1 portability seam**: the executor (L1 control core) calls a thin compile-time HAL (`l0_acquire/l0_apply/l0_cycle_count/...`); all driverlib + the port table + count↔physical live in L0. Zero ISR cost (direct/inline calls, not a runtime function-pointer HAL — the FreeRTOS-port-layer model). (Decided 2026-06-19.)
+- [x] **Observability of user variables = build-time symbol baking (Phase 4.5)**, not host `.out` parsing (would tie Scope2000 to the project + risk a stale/wrong ELF) and not a registration macro (mandated declaration style). The student writes plain C; names are baked into the descriptor table from DWARF at build time and travel with the device; the host is unchanged. (Decided 2026-06-19.)
+- [x] **Control-math sourcing**: generic primitives (PID/LPF/ramp) from C2000Ware DCL; PMSM transforms from MOTORCONTROL-SDK; SRM-specific control hand-written (the standard FOC SDK has no SRM equivalent — not wheel-reinvention). The platform ships none; demos/examples reach these via the include path. (Decided 2026-06-19.)
 - [ ] ESC process-data RAM size and SM configuration ceiling (TRM verification, decides the block ceiling)
 - [ ] The specific tiers for scope channel groups and decimation ratios
 - [ ] Flash bank partitioning and where the CPU2 image is stored
