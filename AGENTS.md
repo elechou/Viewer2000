@@ -17,196 +17,201 @@ Do NOT call any ccs-project, ccs-debug, ccs-sysconfig, or ccs-serial MCP tools u
 
 <!-- User instructions should be added below this line -->
 
-# AGNENTS Guidelines
+# Commit & Language Rule
 
-# Commit Rule
+Going forward, write **code comments in English**. Existing Chinese comments are kept as-is and translated opportunistically when a file is next edited. **Commit messages and documentation (`.md`) are English.** (History: the repo was bilingual — Chinese comments/docs, English identifiers — until the 2026-06-19 switch that makes the whole repo referenceable by non-native-Chinese readers.)
 
-在开发过程中的注释为方便进度可以以中文标注。commit 信息等后期难以一次性更改的信息切换为英文标注。
+# AGENTS.md — Viewer2000 (C2000 RCP platform)
 
-# AGENTS.md — Viewer2000（C2000 RCP 平台）
+## Project positioning
 
-## 项目定位
+A rapid control prototyping (RCP) platform built from scratch on the TI C2000 **F28P65x (dual C28x core, 200 MHz)**, targeting general power-electronics rapid control prototyping.
 
-基于 TI C2000 **F28P65x（双 C28x 核, 200MHz）** 从零构建一个快速控制原型平台（RCP, Rapid Control Prototyping），面向通用电力电子快速控制原型场景。
+**Core premise: the product of this project is the platform itself, not a motor controller.** Platform = deterministic control-task scheduling + peripheral abstraction + parameter tuning / data scoping + protection. FOC motor control is merely the first example application running on the platform, doubling as the platform acceptance test.
 
-**核心认知：本项目的产品是平台本身，不是电机控制器。** 平台 = 确定性控制任务调度 + 外设抽象 + 参数整定/数据示波 + 保护。FOC 电机控制只是跑在平台上的第一个示例应用，兼做平台验收测试。
+**Performance anchor: 20–100 kHz (TBD) × 8ch × f32 lossless, 0.64–3.2 MB/s.** This number drives the physical-layer choice by elimination (see "Communication architecture").
 
-**性能锚点：20–100 kHz（待定）× 8ch × f32 无损，0.64–3.2 MB/s**。这个数字以排除法决定了物理层选型（见「通信架构」）。
+**Repo boundary: this repo is firmware only** (the part flashed into the F28P65x). The host side is a sibling standalone repo **Scope2000** (Rust + egui); the native transport implementation is `V2kSource`. A future `SimSource` is a long-term/optional path (see "Language strategy") — note the platform no longer ships a portable L2 control library, so PC simulation, where wanted, rides Simulink SIL/PIL or the portable subset a given demo happens to use, rather than an FFI binding to a platform L2. Legacy-device compatibility is handled by a separate bridge process that presents normalized Viewer2000 message semantics to Scope2000 over a generic local byte-stream transport, staying out of the `V2kSource` native hot path.
 
-**仓库边界：本 repo 只做固件**（烧进 F28P65x 的部分）。上位机是同级独立仓库 **Scope2000**（Rust + egui），原生通讯实现为 `V2kSource`；未来 `SimSource` 可接 L2 FFI。旧设备兼容由独立桥接进程完成，桥接器通过通用本地 byte-stream transport 向 Scope2000 提供规范化 Viewer2000 消息语义，不进入 `V2kSource` 原生热路径。
+Design principles: **protection first, observability first, platform/application separation.**
 
-本项目的设计原则：**保护先行、可观测性先行、平台与应用分离**。
+## Hardware
 
-## 硬件
-
-| 项 | 内容 | 状态 |
+| Item | Content | Status |
 |---|---|---|
-| 板子 | LAUNCHXL-F28P65X | 在手 |
-| MCU | TMS320F28P650DK9，双 C28x @ 200MHz，两核 ISA 完全相同（共享 struct 无 ABI 问题）；双 CLA（每核一个） | 已确认 |
-| 调试器 | 板载 XDS110（带虚拟串口 VCP → 早期 SCI 链路零额外硬件） | 前中期主人机接口 |
-| 片上通信 | SCI / MCAN（板载 CAN 收发器）/ FSI / **EtherCAT ESC（板载双 PHY + RJ45）**。**无片上 USB、无以太网 MAC** | 已确认 |
+| Board | LAUNCHXL-F28P65X | in hand |
+| MCU | TMS320F28P650DK9, dual C28x @ 200 MHz, both cores ISA-identical (shared structs → no ABI issues); dual CLA (one per core) | confirmed |
+| Debugger | onboard XDS110 (with virtual COM port VCP → zero extra hardware for the early SCI link) | primary host interface for the early/mid phases |
+| On-chip comms | SCI / MCAN (onboard CAN transceiver) / FSI / **EtherCAT ESC (onboard dual PHY + RJ45)**. **No on-chip USB, no Ethernet MAC** | confirmed |
 
-前期参数整定、状态机指令、变量观测通过 CCS 实时模式（CPU 不停机读写内存）+ Expressions / Graph 窗口完成。但与前身项目不同：**线上协议与四个共享内存接口同在 Phase 0 定稿**（上位机需求与前端基础已知），最小 SCI 数据泵提前到 Phase 3.5，不写一次性 ASCII 解析器。
+Early parameter tuning, state-machine commands, and variable observation are done via CCS real-time mode (read/write memory without halting the CPU) + Expressions / Graph windows. But unlike the predecessor project: **the wire protocol and the four shared-memory interfaces are frozen together in Phase 0** (host requirements and front-end basics are known), and the minimal SCI data pump is pulled forward to Phase 3.5 — no throwaway ASCII parser.
 
-## 通信架构
+## Communication architecture
 
-物理层由 100 kHz × 8ch 全速率需求排除法决定：
+The physical layer is decided by elimination from the full-rate 100 kHz × 8ch requirement:
 
-| 链路 | 现实吞吐 | 结论 |
+| Link | Realistic throughput | Verdict |
 |---|---|---|
-| SCI（XDS110 VCP） | 几 Mbps | bring-up 哑泵专用 |
-| CAN-FD | 有效 2–3 Mbps | 排除 |
-| W5500/SPI 以太网桥 | 个位数 Mbps | 排除 |
-| FSI | 50–100 Mbps 但 PC 不认，需自制桥 | 排除 |
-| **EtherCAT** | 100 Mbps 线速，实用 8–10 MB/s | **满足要求，采用** |
+| SCI (XDS110 VCP) | a few Mbps | bring-up dumb-pump only |
+| CAN-FD | effective 2–3 Mbps | excluded |
+| W5500/SPI Ethernet bridge | single-digit Mbps | excluded |
+| FSI | 50–100 Mbps but the PC doesn't speak it, needs a custom bridge | excluded |
+| **EtherCAT** | 100 Mbps line rate, ~8–10 MB/s practical | **meets the requirement, adopted** |
 
-**阶梯只有两级：SCI 哑泵（Phase 3.5，验证接口与架构）→ EtherCAT（Phase 6，最终链路）。** 协议（block、描述符）活在管道里面，换物理层只换管道。
+**Only two rungs: SCI dumb-pump (Phase 3.5, validates the interfaces and architecture) → EtherCAT (Phase 6, final link).** The protocol (blocks, descriptors) lives inside the pipe; swapping the physical layer only swaps the pipe.
 
-EtherCAT 要点：
+EtherCAT key points:
 
-- **最小可用集**：free-run 模式（**不用 DC**——时间戳是 block 头里的 ISR tick，与 EtherCAT 时钟体系无关）、不用 EoE/FoE、CoE 砍到最简。SSC 协议栈 / ESI / 状态机是**一次性工作**：打通 OP + PDO 映射后不再触碰，后续加通道、改协议都在管道内部进行。
-- **设计点**：block = 50 tick × 8ch × int16 = **800 B**；master 2 kHz 循环，PDO 每周期装 **0–2 个 block + count 字段**（有数据就多拿，吸收两端晶振 ppm 偏差，见示波平面）；单标准帧装载（过程数据上限 ~1486 B）；线缆利用率平均 ~15%、峰值 ~30%。三缓冲 SyncManager 按 2-block PDO 计 3 × 1.6 KB = 4.8 KB ESC RAM——逼近 8 KB 量级预算，**ESC RAM 核对 TODO 的优先级因此提高**。
-- **余量**：8→16ch 基本白送（2 kHz × 1.6 KB 或 4 kHz × 800 B）；24–32ch 为工程极限区（ESC RAM 与 master 抖动同时收紧）。更多名义通道靠**多速率通道组**与 **snapshot 模式**，不靠蛮力。CPU1 生产侧紧张时可把量化打包挪给 CPU2（片内环加倍换 ISR 周期）。
-- **PC master 纯软件 + 普通网卡**：首选 ethercrab（纯 Rust，直接长在上位机里），SOEM 作 C 参考。Linux + RT 优先级线程跑 2 kHz；Windows 跑 master 是受罪，提前认知。
-- 全部工作在 CPU2，与控制核开发并行——EtherCAT bring-up 调的是"管子通不通"，接口对不对在 Phase 3.5 已由 SCI 泵验证过，两种失败模式不叠加。
+- **Minimal usable set**: free-run mode (**no DC** — the timestamp is the ISR tick in the block header, unrelated to the EtherCAT clock system), no EoE/FoE, CoE trimmed to the bare minimum. The SSC stack / ESI / state machine is **one-time work**: once OP + PDO mapping is up it is never touched again; later channel additions and protocol changes all happen inside the pipe.
+- **Design point**: block = 50 tick × 8ch × int16 = **800 B**; the master loops at 2 kHz, and each PDO cycle carries **0–2 blocks + a count field** (grab more when there's data, absorbing the ppm crystal mismatch at both ends, see the scope plane); single standard-frame payload (process data ceiling ~1486 B); average cable utilization ~15%, peak ~30%. A triple-buffered SyncManager at a 2-block PDO is 3 × 1.6 KB = 4.8 KB ESC RAM — approaching the 8 KB-class budget, so **the ESC RAM verification TODO rises in priority**.
+- **Headroom**: 8→16ch is basically free (2 kHz × 1.6 KB or 4 kHz × 800 B); 24–32ch is the engineering-limit zone (ESC RAM and master jitter tighten simultaneously). More nominal channels come from **multi-rate channel groups** and **snapshot mode**, not brute force. If the CPU1 producer side gets tight, quantize/pack can be moved to CPU2 (double the on-chip ring in exchange for ISR cycles).
+- **PC master in pure software + an ordinary NIC**: ethercrab preferred (pure Rust, lives directly inside the host), with SOEM as the C reference. Linux + an RT-priority thread runs the 2 kHz loop; running the master on Windows is misery — know this up front.
+- All of it lives on CPU2, in parallel with control-core development — EtherCAT bring-up tunes "does the pipe carry"; "are the interfaces right" was already validated by the SCI pump in Phase 3.5, so the two failure modes don't stack.
 
-## 架构
+## Architecture
 
-### 双核分工
+### Dual-core division of labor
 
-- **CPU1 = 控制核**：boot master，负责外设/内存归属分配、引导 CPU2、NMI/trip 配置。拥有全部功率级外设（ePWM / ADC / eQEP / CMPSS / SDFM）。跑 ISR 执行器 + 控制应用。**无 printf、无通信栈。**
-- **CPU2 = 通信核**：拥有通信外设（SCI / MCAN / EtherCAT ESC）。跑参数服务、示波数据泵、心跳监视；Phase 3.5 起跑 SCI 哑泵，Phase 6 起跑 EtherCAT 链路与固件升级。
+- **CPU1 = control core**: boot master, responsible for peripheral/memory ownership assignment, booting CPU2, NMI/trip configuration. Owns all power-stage peripherals (ePWM / ADC / eQEP / CMPSS / SDFM). Runs the ISR executor + control application. **No printf, no comms stack.**
+- **CPU2 = comms core**: owns the comms peripherals (SCI / MCAN / EtherCAT ESC). Runs the parameter service, scope data pump, heartbeat monitor; from Phase 3.5 it runs the SCI dumb-pump, and from Phase 6 the EtherCAT link and firmware update.
 
-核分离的本质是**隔离故障域 + 隔离时间域**：控制域的确定性不被通信域的抖动/断连污染；保护在两个域之下的纯硬件层。
+The essence of core separation is **isolating fault domains + isolating time domains**: the control domain's determinism is not polluted by the comms domain's jitter/disconnects; protection is the pure-hardware layer beneath both domains.
 
-驱动方式对称：**CPU1 时间驱动，CPU2 事件驱动。** CPU1 全片唯一控制时基：ePWM 主定时器（同步组锁相）→ ADC SOC → **EOC 中断**进控制 ISR（中断源挂 EOC 不挂周期事件，进 ISR 时数据已就绪），慢环软件分频；ISR tick 是**全平台唯一的控制/采样时间**，示波时间戳、分频、心跳纪元全部由它派生。CPU2 不采样任何东西，也不产生控制时间——它消费的全是 CPU1 盖好时间戳的数据；其负载（环有新 block、SM 被 master 读走、mailbox 来命令、SSC 主循环）全是事件，结构 = ISR 收事件 + 超级循环干活。CPU2 可以有低速本地诊断心跳/timeout，用来证明通信核自身活着或判断链路超时，但该本地时间不得进入采样、block 时间戳或控制调度。它的本职是 CPU1 晶振与 PC 时钟两个外部时钟域之间的**弹性联轴器**——给联轴器装控制节拍器没有意义，上 RTOS 同理（规则 6 不开口子）。
+The drive models are symmetric: **CPU1 is time-driven, CPU2 is event-driven.** CPU1 holds the chip's single control time base: the ePWM master timer (sync-group phase-locked) → ADC SOC → **EOC interrupt** into the control ISR (the interrupt source hangs off EOC, not the period event, so data is already ready on ISR entry), with slow loops software-divided; the ISR tick is **the platform's single control/sampling time**, from which scope timestamps, rate division, and heartbeat epochs are all derived. CPU2 samples nothing and produces no control time — it consumes only data already timestamped by CPU1; its load (the ring has a new block, an SM was read by the master, a command arrived in the mailbox, the SSC main loop) is all events, so its structure = ISR collects events + super-loop does the work. CPU2 may have a low-rate local diagnostic heartbeat/timeout to prove the comms core is itself alive or to judge link timeout, but that local time must not enter sampling, block timestamps, or control scheduling. Its real job is an **elastic coupling** between two external clock domains — the CPU1 crystal and the PC clock; putting a control metronome on the coupling is pointless, and so is an RTOS (rule 6 leaves no opening).
 
-### 分层
+### Layering
 
-| 层 | 内容 | 归属 |
+| Layer | Content | Owner |
 |---|---|---|
-| L3 | 用户控制应用（FOC demo 等） | CPU1 |
-| L2 | 控制库：Clarke/Park、PI、PLL、滤波、斜坡 — **纯可移植 C（C99），PC 上可单元测试/仿真** | CPU1 |
-| L1 | 平台核心：ISR 调度执行器、保护管理器、参数注册表、RAM 示波器 | CPU1（消费端可在 CPU2） |
-| L0 | 驱动层，基于 C2000Ware driverlib | 各核各自 |
+| L3 | User control application (FOC demo, etc.) | User (on CPU1) |
+| L2 | Control math (**user-supplied**): C2000Ware MOTORCONTROL-SDK / DCL / hand-written / Simulink-generated C — **not provided by the platform; plugged in through the `user_step` boundary** | User (runs on CPU1) |
+| L1 | Platform core: ISR scheduling executor, protection manager, parameter/descriptor registry, RAM scope | CPU1 (consumer side may be on CPU2) |
+| L0 | Driver layer, on C2000Ware driverlib | Each core separately |
 
-**ISR 所有权归 L1，不归用户。** 用户代码以 `user_step(in, out)` 回调形式被执行器调用：进 = 本拍物理量，出 = 本拍占空比。ISR 固定序列 = `plat_acquire → user_step → plat_apply → scope_sample_all（遍历描述符表）→ trigger_eval → g_tick++`，示波采样与触发判定在 epilogue 由平台完成——用户仅在 init 注册，**没有不被采样的路径**（规则 7 的机制化）。约束随附：可观测量须为可寻址静态量（非栈上局部变量）；每快通道约 5 周期/tick 计入 ISR 预算。这是规则 4 在时间维度的镜像：**L3 不碰寄存器，也不碰时钟。**
+**ISR ownership belongs to L1, not the user.** User code is invoked by the executor as a `user_step(in, out)` callback: in = this tick's named input ports (physical quantities), out = this tick's output ports. The fixed ISR sequence = `plat_acquire → user_step → plat_apply → scope_sample_all (walk the descriptor table) → trigger_eval → g_tick++`; scope sampling and trigger evaluation are done by the platform in the epilogue — the user only registers at init, so **there is no un-sampled path** (rule 7, mechanized). Attached constraint: observables must be addressable static storage (not stack locals); budget ~5 cycles/tick per fast channel into the ISR. This mirrors rule 4 in the time dimension: **L3 touches no registers, and no clock either.**
 
-### 语言策略
+### Language strategy
 
-**目标侧固件（两个核、L0–L3 全部）纯 C，C99 + stdint 固定宽度类型，不用 C++。** 理由：
+**Target-side firmware (both cores, all of L0–L3) is pure C, C99 + stdint fixed-width types, no C++.** Reasons:
 
-- 主 HMI 是 CCS Expressions/Graph：扁平 C struct 直观可读；C++ 名字修饰、模板、私有成员在 map 文件和 watch 窗口里全是阻力（cl2000 的 C++ 支持本身也是二等公民）；
-- CLA 编译器只接受 C 子集：L2 保持纯 C，将来才有把快环搬上 CLA 的选项（每核各有一个 CLA）；
-- 共享内存 struct 必须是固定布局 POD，要被 CPU1 / CPU2 / 上位机三方读懂，C 是最大公约数；
-- C2000Ware / MotorControl SDK / DCL 全是 C，平台目标用户（新手）的语言也是 C；ODrive 的重 C++ 是其学习门槛的一部分，不复制；
-- 规避全局对象构造顺序、隐式构造等裸机 C++ 坑。
+- The primary HMI is CCS Expressions/Graph: flat C structs are directly readable; C++ name mangling, templates, and private members are all friction in the map file and watch window (cl2000's C++ support is itself a second-class citizen);
+- The CLA compiler accepts only a C subset: keeping control code in plain C preserves the option of later moving the fast loop onto the CLA (one CLA per core). Since L2 control math is now user-supplied, this is the user's option to keep — the platform only guarantees its own L1 boundary stays C;
+- Shared-memory structs must be fixed-layout PODs readable by all three parties (CPU1 / CPU2 / host); C is the greatest common denominator;
+- C2000Ware / MotorControl SDK / DCL are all C, and the platform's target users (beginners) speak C too; ODrive's heavy C++ is part of its learning barrier — not replicated;
+- Avoids bare-metal C++ pitfalls like global-object construction order and implicit constructors.
 
-弥补 C++ 缺失的三条编码约定（对齐 TI DCL 风格）：多实例 = struct 实例 + 操作函数（`pi_update(&pi_vel, err)`）；命名空间 = 模块前缀；init 完成后禁止动态分配。
+Three coding conventions that make up for the absence of C++ (aligned with TI DCL style): multiple instances = struct instance + operation functions (`pi_update(&pi_vel, err)`); namespaces = module prefixes; no dynamic allocation after init completes.
 
-**PC 侧统一用 Rust + egui**：Scope2000 使用 `DataSource` 边界；`V2kSource` 服务原生 SCI/EtherCAT，未来 `SimSource` 经 FFI（bindgen）接 L2 控制库与电机模型。旧设备由独立桥接进程适配为相同消息语义，Scope2000 不增加专用兼容数据源。
+**The host side is uniformly Rust + egui**: Scope2000 uses a `DataSource` boundary; `V2kSource` serves native SCI/EtherCAT. A `SimSource` is a long-term/optional path — and since the platform no longer ships a portable L2 control library, PC simulation does not FFI-bind to a platform L2; if wanted later it rides Simulink SIL/PIL (which subsumes it) or whatever portable subset a specific demo uses. Legacy devices are adapted to the same message semantics by a separate bridge process; Scope2000 adds no dedicated compatibility data source.
 
-### 四个共享内存接口（先于一切代码定稿）
+### The four shared-memory interfaces (frozen before any code)
 
-1. **描述符表**：控制核启动时把可调参数/可观测信号注册成表 `{名字, 类型, 地址, kind, 默认降采样比, 默认组}` 写入共享 RAM；通信核与上位机**枚举**该表，不预先知道任何变量。要点：
-   - **线上值就是真实值**：固件不上线 `min/max/scale/offset` 这类显示或护栏元数据，不做 float→int 压缩、量化或物理量还原；host 端按变量原生类型解释位模式，F32 就是 F32，I16/U16/I32/U32 就是对应整数值；
-   - **降采样比字段实现多速率通道组**：8 个快通道（100 kHz）+ N 个慢通道（1 kHz 的温度/母线/状态量，带宽零头）；
-   - 表头携带 **firmware build hash**：host 重连检测到变更即强制重新枚举，杜绝拿旧表读新固件。
-2. **参数平面**（主机→控制）：双缓冲。任何写入先进 shadow 区 → 置 commit 标志 → 控制 ISR 在每周期固定安全点整组交换。解决多参数非原子写问题；XDS100/CCS 调参同样戳 shadow 区。
-3. **示波平面**（控制→主机）：无锁 SPSC 环形缓冲。控制 ISR 是唯一生产者（**采样在 ISR 上下文，所有通道天然同拍**），通信核/后台循环是唯一消费者。**双模式 + block 化**：
-   - **Live 模式**：降采样连续流，在线监控/调参看趋势；
-   - **Snapshot 模式**：全速率采进环形缓冲，触发后冻结、慢速排空——环形结构天然支持 **pre-trigger**（查瞬态故障的关键）。触发判定（变量过阈值、状态机事件）在控制 ISR 内完成。CCS Graph 是 snapshot 模式的第零个消费者；
-   - **帧 = block**：N tick × M ch + 头部（起始 tick、序号、通道组 id）。N 是参数：SCI 用小 N，EtherCAT 用 N=50（=800 B）。host 凭序号检测丢块——丢块画断口，控制核照跑；
-   - **PDO 每周期装 0–2 个 block + count 字段**：master 有数据就多拿。两端晶振永远差几十 ppm，环形缓冲会缓慢涨/空，长时间录盘必撞——带宽余量正好花在这；序号机制顺便覆盖去重与断口检测；
-   - 环形缓冲尺寸即 master 端抖动吸收余量（几十 KB ≈ 几十 ms @ 1.6 MB/s）。
-4. **命令/状态平面**：状态机请求（启动/停止/清故障）走 IPC mailbox；两核互发心跳。
+1. **Descriptor table**: at control-core startup, tunable parameters / observable signals are registered into a table `{name, type, address, kind, default decimation ratio, default group}` written to shared RAM; the comms core and the host **enumerate** this table and know nothing about any variable in advance. Key points:
+   - **The on-wire value is the real value**: the firmware does not put `min/max/scale/offset` display or guard-rail metadata on the wire, and does no float→int compression, quantization, or physical-quantity reconstruction; the host interprets the bit pattern by the variable's native type — F32 is F32, I16/U16/I32/U32 are the corresponding integer values;
+   - **The decimation-ratio field implements multi-rate channel groups**: 8 fast channels (100 kHz) + N slow channels (1 kHz temperature/bus/status, a rounding error of bandwidth);
+   - The table header carries a **firmware build hash**: when the host reconnects and detects a change it forces re-enumeration, preventing an old table from reading new firmware.
+2. **Parameter plane** (host → control): double-buffered. Any write first lands in the shadow region → sets a commit flag → the control ISR swaps the whole set at a fixed safe point each cycle. Solves the non-atomic multi-parameter write problem; XDS100/CCS tuning also pokes the shadow region.
+3. **Scope plane** (control → host): lock-free SPSC ring buffer. The control ISR is the sole producer (**sampling is in ISR context, so all channels are naturally same-tick**), and the comms core / background loop is the sole consumer. **Dual-mode + blocked**:
+   - **Live mode**: decimated continuous stream, for online monitoring / watching trends while tuning;
+   - **Snapshot mode**: sampled into the ring at full rate, frozen on trigger, drained slowly — the ring structure naturally supports **pre-trigger** (the key to catching transient faults). Trigger evaluation (variable crosses threshold, state-machine event) is done inside the control ISR. CCS Graph is the zeroth consumer of snapshot mode;
+   - **Frame = block**: N tick × M ch + header (start tick, sequence number, channel-group id). N is a parameter: SCI uses a small N, EtherCAT uses N=50 (=800 B). The host detects dropped blocks by sequence number — a dropped block draws a gap, the control core keeps running;
+   - **Each PDO cycle carries 0–2 blocks + a count field**: the master grabs more when there's data. The two crystals always differ by tens of ppm, so the ring buffer slowly fills/empties and a long recording session is bound to collide — the bandwidth headroom is spent exactly here; the sequence mechanism incidentally covers dedup and gap detection;
+   - The ring-buffer size is the master-side jitter-absorption headroom (tens of KB ≈ tens of ms @ 1.6 MB/s).
+4. **Command/status plane**: state-machine requests (start/stop/clear-fault) go over an IPC mailbox; the two cores exchange heartbeats.
 
-**线上协议 = 四个共享接口的序列化视图**，与接口同在 Phase 0 定稿：枚举描述符表 = 一条请求，参数提交 = 一个事务，示波流 = block。内存布局与线上格式是同一个数据模型，不允许各长各的。
+**The wire protocol = the serialized view of the four shared interfaces**, frozen together with the interfaces in Phase 0: enumerating the descriptor table = one request, a parameter commit = one transaction, the scope stream = blocks. The memory layout and the wire format are the same data model — they are not allowed to drift apart.
 
-用户代码 API 草案：
+User-code API draft:
 
 ```c
-// 用户无需声明监控变量，platform自动注册可用参数表
+// The user does not declare monitored variables; the platform auto-registers
+// the available parameter/observable table.
+// in/out are generic named-port structs (typed physical-quantity ports);
+// a motor demo is one concrete port mapping over them.
 
 // The only user-owned slot, called by the L1 executor every tick
 void user_step(const plat_in_t *in, plat_out_t *out);
 ```
 
-### 跨 repo 接口管理（固件 ↔ 上位机）
+### Cross-repo interface management (firmware ↔ host)
 
-- **禁止 struct memcpy 上线**（16-bit char + 端序），两侧各写显式序列化器；
-- 唯一基准 = wire spec 文档 + **golden test vectors**（十六进制帧样本）：固件序列化器在 PC 上编译跑单元测试，Rust 解析器跑 conformance test，双端对同一组 vectors；
-- 描述符表运行时枚举 → 两 repo 无需 codegen，天然解耦。
+- **No struct memcpy on the wire** (16-bit char + endianness); each side writes its own explicit serializer;
+- The single source of truth = the wire-spec document + **golden test vectors** (hex frame samples): the firmware serializer compiles and runs unit tests on the PC, the Rust parser runs conformance tests, both ends against the same set of vectors;
+- The descriptor table is enumerated at runtime → the two repos need no codegen, and are naturally decoupled.
 
-### 架构图
+### Architecture diagram
 
 ```
                 ┌──────────────────────────────────────────────┐
-                │  Scope2000 = Rust + egui 前端                  │
-                │  DataSource: V2k(原生) / Sim(未来)             │
+                │  Scope2000 = Rust + egui front-end             │
+                │  DataSource: V2k (native) / Sim (long-term)    │
                 └────┬───────────────┬────────────────┬────────┘
                      │ JTAG/CCS      │ SCI (XDS110     │ EtherCAT
                      │ (Phase 1–)    │  VCP, Ph 3.5)   │ (ethercrab, Ph 6)
    ┌─────────────────┴────────────┐  ┌┴────────────────┴────────────┐
-   │ CPU1 — 控制核                 │  │ CPU2 — 通信核                 │
-   │  L3 用户控制应用               │  │  EtherCAT 数据泵 (Phase 6)    │
-   │  L2 控制库 (可移植/PC可测)     │  │  SCI 哑泵 (Phase 3.5)         │
-   │  L1 执行器: ISR调度+保护       │  │  参数服务 / 心跳监视/升级       │
-   │  L0 ePWM ADC eQEP CMPSS      │  │  L0: SCI / MCAN / ESC(PDI)   │
+   │ CPU1 — control core           │  │ CPU2 — comms core             │
+   │  L3 user control app          │  │  EtherCAT data pump (Phase 6) │
+   │  L2 control math              │  │  SCI dumb-pump (Phase 3.5)    │
+   │     (user: SDK / Simulink)    │  │  param service / heartbeat    │
+   │  L1 executor: ISR sched+prot  │  │  / firmware update            │
+   │  L0 ePWM ADC eQEP CMPSS       │  │  L0: SCI / MCAN / ESC(PDI)    │
    └──────────────┬───────────────┘  └──────────────┬───────────────┘
-                  │      共享内存接口 (GSx RAM + MSGRAM)│
+                  │   shared-memory interfaces (GSx RAM + MSGRAM) │
                   │  ┌──────────────────────────────┐ │
-                  └──┤ 1. 描述符表 (参数/通道/build哈希)├─┘
-                     │ 2. 参数平面: 双缓冲 + commit   │
-                     │ 3. 示波平面: SPSC 环 + 双模式   │
-                     │ 4. 命令/状态: IPC mailbox+心跳 │
+                  └──┤ 1. descriptor table (param/ch/build hash)├┘
+                     │ 2. param plane: double-buf + commit │
+                     │ 3. scope plane: SPSC ring + dual-mode│
+                     │ 4. command/status: IPC mailbox + hb  │
                      └──────────────────────────────┘
-      硬件保护链 (CMPSS → ePWM X-BAR → Trip Zone): 不经过任何 CPU，更不经过核间
+   Hardware protection chain (CMPSS → ePWM X-BAR → Trip Zone): goes through
+   no CPU at all, let alone across cores
 ```
 
-## 基本规则（所有代码必须遵守）
+## Basic rules (all code must obey)
 
-1. **控制核在任何路径上都不阻塞等待通信核。** IPC 满则丢、示波缓冲满则覆盖或停采、链路丢块则丢块，控制 ISR 照跑。CPU2 死 → 电机继续稳定运行，只是"失联"；CPU1 死 → 关 PWM 靠硬件 trip 和各核独立看门狗，不靠 CPU2。
-2. **保护是纯硬件链路**：CMPSS → ePWM X-BAR → Trip Zone 关 PWM，不经过任何 CPU。**上功率之前保护必须就位。**
-3. **平台固定双核运行**：Viewer2000 固定面向 F28P65x 双 C28x 架构。CPU1/CPU2 分工是平台边界，不提供单核编译退路；调试问题通过缩小功能、关闭外设消费者或替换 host 数据源解决，不通过把通信核逻辑搬回 CPU1。
-4. **L2/L3 不碰寄存器**：输入相电流 [A]、角度 [rad]、母线电压 [V]；输出三相占空比。这个接口边界就是平台暴露给用户代码的边界。
-5. **控制时间所有权归 CPU1**：PWM 时基、ISR tick、采样时间戳与 block 时间由 CPU1 发布；CPU2 可有本地诊断心跳/timeout，但不得把本地时间写入控制调度或示波时间戳。
-6. **不用 RTOS**：采用典型裸机前后台架构——控制在 ISR，状态机/杂务在后台循环。
-7. **可观测性 day 0 就位**，不允许"遇到查不了的问题再补工具"（前身项目的最大教训）。
+1. **The control core never blocks waiting on the comms core, on any path.** IPC full → drop, scope buffer full → overwrite or stop sampling, link drops a block → drop the block; the control ISR keeps running. CPU2 dies → the motor keeps running stably, just "out of contact"; CPU1 dies → PWM is shut off by hardware trip and each core's independent watchdog, not by CPU2.
+2. **Protection is a pure-hardware chain**: CMPSS → ePWM X-BAR → Trip Zone shuts off PWM, going through no CPU. **Protection must be in place before power is applied.**
+3. **The platform always runs dual-core**: Viewer2000 is permanently targeted at the F28P65x dual-C28x architecture. The CPU1/CPU2 division of labor is a platform boundary; there is no single-core build fallback. Debugging problems are solved by narrowing functionality, disabling peripheral consumers, or swapping the host data source — not by moving comms-core logic back onto CPU1.
+4. **L2/L3 touch no registers**: the platform exposes a **generic named-port table** to user code through `user_step` — named, typed physical-quantity input ports plus output ports the user writes back; count↔physical-quantity conversion is done by the platform in L0/L1. The FOC demo is one concrete port mapping (phase currents [A] / angle [rad] / bus voltage [V] → three-phase duty). This port table is the boundary the platform exposes to user code.
+5. **Control-time ownership belongs to CPU1**: the PWM time base, ISR tick, sample timestamps, and block time are published by CPU1; CPU2 may have a local diagnostic heartbeat/timeout, but must not write its local time into control scheduling or scope timestamps.
+6. **No RTOS**: a classic bare-metal foreground/background architecture — control in the ISR, state machine / chores in the background loop.
+7. **Observability in place from day 0**, no "add tooling once you hit a problem you can't inspect" (the predecessor project's biggest lesson).
 
-## C2000 特有的坑
+## C2000-specific pitfalls
 
-- **EPWM TBCTL.FREE_SOFT 第一天就配**：决定调试器 halt 时 PWM 的行为。默认配置下挂断点 PWM 可能维持输出 → 电机带电时炸管。主调试手段是调试器，此项优先级最高。
-- **C28x 的 char 是 16 位**：一切按字节打包的代码（memcpy 字节流、packed struct、字节缓冲区）都有坑。线上协议以**显式序列化器 + golden vectors** 正面应对，禁止按字节 memcpy 上线。
-- **CCS 实时模式写多字段参数非原子** → 必须走参数双缓冲提交（见 v2k_param.h）。
-- **调试器不是急停**：XDS110 + USB 链路可能卡死，急停只信硬件 trip。
-- 待 TRM 核对（TODO）：ESC 过程数据 RAM 实际大小与 SyncManager 配置上限（决定 block/PDO 尺寸天花板）；ePWM/eQEP 资源到 LaunchPad 引脚的映射；flash bank 划分与 CPU2 镜像存放。
+- **Configure EPWM TBCTL.FREE_SOFT on day one**: it decides PWM behavior when the debugger halts. Under the default config, hitting a breakpoint may keep PWM driving → blown transistors while the motor is energized. The debugger is the primary tool, so this has the highest priority.
+- **C28x char is 16-bit**: any byte-packed code (memcpy byte streams, packed structs, byte buffers) has a trap. The wire protocol confronts this head-on with **explicit serializers + golden vectors**; no byte-wise memcpy on the wire.
+- **CCS real-time mode writes multi-field parameters non-atomically** → must go through the parameter double-buffer commit (see v2k_param.h).
+- **The debugger is not an e-stop**: the XDS110 + USB link can hang; an e-stop trusts hardware trip only.
+- TODO, pending TRM verification: the actual size of ESC process-data RAM and the SyncManager configuration ceiling (decides the block/PDO size ceiling); the mapping of ePWM/eQEP resources to LaunchPad pins; flash bank partitioning and where the CPU2 image is stored.
 
-## 路线图
+## Roadmap
 
-- **Phase 0 — 接口 + 协议定稿**：内存映射 + 四个共享内存接口的数据结构（字段、内存布局、索引协议）写成头文件；**wire spec（block 帧格式、枚举/事务协议）+ golden test vectors 初版同步定稿**。这是后面所有代码的接口基准。
-- **Phase 1 — 双核骨架**：两个 CCS 工程、两份 linker .cmd、GSx RAM 归属分配、CPU1 引导 CPU2、IPC ping-pong、共享 RAM 握手、CCS 双核调试会话。完成标志：两核各自闪灯 + 握手成功。（主要是工具链体力活，但它决定内存映射，必须早做。）
-- **Phase 2 — 时基证明 + 保护**：EPWM → ADC SOC → EOC ISR 链路打通，GPIO 翻转 + 示波器实测中断延迟与抖动；配置 FREE_SOFT；CMPSS 硬件 trip + fault 锁存状态机。
-- **Phase 3 — 执行器 + 可观测性**：ISR 多速率调度框架（软件分频 + **相位错开 stagger**——慢环不挤在 `k%N==0` 同一拍，摊平 WCET；慢环内联跑还是丢给低优先级软中断，在此决策）、双模式 RAM 示波器（snapshot 先行，CCS Graph 消费）、参数双缓冲、描述符表。
-- **Phase 3.5 — SCI 哑数据泵**：CPU2 经 XDS110 VCP 跑最小协议子集（枚举描述符表 + Live 小 N block + snapshot 排空）。**意义：描述符表、示波平面、命令平面的第一个真实消费者**——CCS Graph 走 JTAG 直读内存，绕过 CPU2 / SPSC 消费端 / IPC，不算数；双核分离这个最大的架构风险点在此处提前验证，不留到 Phase 6。Scope2000 同步落地 `V2kSource` 初版；兼容桥只预留 transport/capability 边界。
-- **Phase 4 — 控制库**：L2 纯软件实现，PC 上对电机模型仿真验证（与"仿真平台"的终极目标同路）。
-- **Phase 5 — 电机 bring-up（平台验收）**：开环 V/f → 电流采样校准 → 电流环 → 编码器 → 速度环 → 位置环。每一步是一个 L3 小应用，顺便检验平台接口设计。
-- **Phase 6 — EtherCAT 链路成型**：SSC 移植、ESI/EEPROM、状态机至 OP、PDO 映射；ethercrab master @ 2 kHz 循环。**验收 = 100 kHz × 8ch 无损连续流（序号零丢失 × 长时间）+ 录盘回放。**
-- **（远期）移植选项**：L2 + 共享接口 + 上位机与芯片无关；将来换芯片（F29x / AM26x）时，重写的只有 L0/L1。平台的积累在接口定义里，不在芯片上。
+- **Phase 0 — Interface + protocol freeze**: the memory map + the data structures of the four shared-memory interfaces (fields, memory layout, indexing protocol) written as header files; **the wire spec (block frame format, enumeration/transaction protocol) + the first cut of golden test vectors are frozen in lockstep**. This is the interface baseline for all code that follows.
+- **Phase 1 — Dual-core skeleton**: two CCS projects, two linker .cmd files, GSx RAM ownership assignment, CPU1 boots CPU2, IPC ping-pong, shared-RAM handshake, a CCS dual-core debug session. Done = each core blinks its own LED + handshake succeeds. (Mostly toolchain grunt work, but it decides the memory map, so it must be done early.)
+- **Phase 2 — Time-base proof + protection**: the EPWM → ADC SOC → EOC ISR chain is up, GPIO toggle + scope-measured interrupt latency and jitter; configure FREE_SOFT; CMPSS hardware trip + fault-latch state machine.
+- **Phase 3 — Executor + observability**: the ISR multi-rate scheduling framework (software division + **phase staggering** — slow loops don't all bunch onto the same `k%N==0` tick, flattening WCET; whether slow loops run inline or are handed to a low-priority soft interrupt is decided here), the dual-mode RAM scope (snapshot first, consumed by CCS Graph), the parameter double-buffer, the descriptor table.
+- **Phase 3.5 — SCI dumb data pump**: CPU2 runs a minimal protocol subset over the XDS110 VCP (enumerate the descriptor table + Live small-N blocks + snapshot drain). **Significance: the first real consumer of the descriptor table, scope plane, and command plane** — CCS Graph reads memory directly over JTAG, bypassing CPU2 / the SPSC consumer side / IPC, so it doesn't count; the biggest architectural risk point, the dual-core split, is validated early here rather than left to Phase 6. Scope2000 lands the first cut of `V2kSource` in parallel; the compatibility bridge only reserves the transport/capability boundary.
+- **Phase 4 — User-interface boundary (L1↔user)**: turn `user_step` into a genuinely usable **generic named-port contract** — pin down platform-side count↔physical-quantity conversion, the path for user observables/parameters to register into the descriptor table, and the in/out port-table shape; drive it with a single C2000Ware MOTORCONTROL-SDK control block as the first real client to validate the descriptor table / scope plane / parameter plane end to end. **No control math is written here.** (Note: the originally-planned "platform-owned L2 control library + PC simulation" is dropped — rationale in Language strategy / Decisions; control math is user-supplied, and the dual-core plumbing is dogfooded here on a real control client before live hardware in Phase 5.)
+- **Phase 5 — Motor bring-up (platform acceptance)**: open-loop V/f → current-sense calibration → current loop → encoder → speed loop → position loop. Each step is a small L3 application, validating the platform interface design along the way.
+- **Phase 6 — EtherCAT link maturity**: SSC port, ESI/EEPROM, state machine to OP, PDO mapping; ethercrab master @ 2 kHz loop. **Acceptance = 100 kHz × 8ch lossless continuous stream (zero sequence loss × long duration) + record-and-replay.**
+- **(Long-term) portability option**: the shared interfaces + host are chip-agnostic; control math is user-supplied. When swapping chips (F29x / AM26x) later, only L0/L1 are rewritten. The platform's accumulated value lives in the interface definitions, not the chip.
 
-## 工作流约定
+## Workflow conventions
 
-- **commit**：小步提交，每个 commit 对应一个实际验证过的节点；修 bug 把根因写进 message（沿用前身项目的好习惯）。
-- **tag**：硬件验证过的节点打 git tag。
-- **BRINGUP.md**：记录每一步在实物上验证了什么、用什么方法验证（示波器实测值、CCS Graph 截图等）。验证知识不能只活在 commit message 里。
-- 注释中文为主，标识符英文（沿用前身项目风格）。
+- **commit**: small steps, each commit corresponding to one actually-verified node; when fixing a bug, write the root cause into the message (a good habit carried over from the predecessor project).
+- **tag**: git-tag the nodes that have been hardware-verified.
+- **BRINGUP.md**: record what each step verified on real hardware and how (scope-measured values, CCS Graph screenshots, etc.). Verification knowledge must not live only in commit messages.
+- Code comments in English going forward; identifiers English; existing Chinese comments are kept and translated when their file is next edited. Docs (`.md`) and commit messages are English.
 
-## 已决策 / 待决策
+## Decisions / open questions
 
-- [x] 平台命名：**Viewer2000**
-- [x] 芯片与板：**TMS320F28P650DK9 / LAUNCHXL-F28P65X**（板载 XDS110 + VCP；无片上 USB）
-- [x] 上位机链路物理层：**SCI 哑泵（3.5）→ EtherCAT（6）**，由 100 kHz × 8ch 需求排除法定，CAN-FD/W5500 不满足
-- [x] CLA 归属：每核一个；**是否使用**仍开放（L2 纯 C 保留此选项）
-- [ ] ESC 过程数据 RAM 大小与 SM 配置上限（TRM 核对，决定 block 天花板）
-- [ ] 示波通道组与降采样比的具体档位
-- [ ] flash bank 划分与 CPU2 镜像存放
+- [x] Platform name: **Viewer2000**
+- [x] Chip and board: **TMS320F28P650DK9 / LAUNCHXL-F28P65X** (onboard XDS110 + VCP; no on-chip USB)
+- [x] Host-link physical layer: **SCI dumb-pump (3.5) → EtherCAT (6)**, decided by elimination from the 100 kHz × 8ch requirement; CAN-FD/W5500 do not meet it
+- [x] CLA ownership: one per core; **whether to use it** is still open (keeping control code in plain C preserves the option)
+- [x] **L2 ownership: the platform ships no L2 control library; control math is user-supplied in L3** (C2000Ware MOTORCONTROL-SDK / DCL / hand-written / Simulink-generated C). The platform only defines the `user_step` boundary. Rationale: duplicating a documented vendor SDK is a maintenance/pedagogical liability, and PC-SIL is low-value for this single-developer + strong on-target-observability context. (Decided 2026-06-19.)
+- [x] **`user_step` in/out contract = generic named-port table** (a motor demo is one thin view over it), chosen over a motor-hardcoded struct to fit the general-RCP scope and Simulink root-port binding. (Decided 2026-06-19; concrete struct shape is the first cut of Phase 4.)
+- [ ] ESC process-data RAM size and SM configuration ceiling (TRM verification, decides the block ceiling)
+- [ ] The specific tiers for scope channel groups and decimation ratios
+- [ ] Flash bank partitioning and where the CPU2 image is stored

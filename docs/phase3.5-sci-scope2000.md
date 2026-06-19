@@ -1,121 +1,92 @@
-# Phase 3.5 — SCI 数据泵与 Scope2000：操作与验证清单
+# Phase 3.5 — SCI data pump and Scope2000: operating and verification checklist
 
-> 本文是 **Phase 3.5 待执行的 bring-up 流程**，不是实测记录。固件 commit、
-> Scope2000 commit、波特率、连续运行时间、错误计数和波形截图统一写入
-> [BRINGUP.md](../BRINGUP.md) 的 Phase 3.5 区。
+> This document is the **Phase 3.5 bring-up procedure to be executed**, not a measurement record. Firmware commit, Scope2000 commit, baud rate, continuous run time, error counts, and waveform screenshots all go into the Phase 3.5 area of [BRINGUP.md](../BRINGUP.md).
 >
-> Phase 3 已经证明 CPU1 能生产描述符、参数状态和原生示波 block；Phase 3.5
-> 要证明 CPU2 与真实 PC 程序能在**不干扰控制核**的前提下消费这些接口。
+> Phase 3 already proved CPU1 can produce descriptors, parameter status, and native scope blocks; Phase 3.5 must prove CPU2 and a real PC program can consume these interfaces **without disturbing the control core**.
 
-Phase 3 的 CCS Graph 直接读 CPU1 内存，绕过了 CPU2、GS4 消费者索引、IPC
-命令转发和线上协议。Phase 3.5 第一次把完整路径闭合：
+Phase 3's CCS Graph reads CPU1 memory directly, bypassing CPU2, the GS4 consumer index, IPC command forwarding, and the wire protocol. Phase 3.5 closes the full path for the first time:
 
 ```text
 CPU1 ISR
-  -> 描述符表 / 参数平面 / Scope SPSC 环 / 命令状态
-  -> CPU2 共享接口消费者
-  -> Viewer2000 wire v6（显式序列化）
+  -> descriptor table / parameter plane / Scope SPSC ring / command status
+  -> CPU2 shared-interface consumer
+  -> Viewer2000 wire v6 (explicit serialization)
   -> COBS + CRC-32C
   -> SCIA / GPIO42,43 / XDS110 VCP
   -> Scope2000 V2kSource
-  -> 变量面板 / 参数事务 / 波形 / CSV / 控制台
+  -> variable panel / parameter transaction / waveform / CSV / console
 ```
 
-本阶段的验收对象是**接口、隔离边界和协议语义**，不是 SCI 的最终吞吐量。
-115200 baud 不可能承载平台的 100 kHz × 8ch 性能锚点；最终连续高速链路仍是
-Phase 6 EtherCAT。SCI 只负责在低成本物理链路上提前暴露双核和 host 端问题。
+This phase's acceptance target is the **interfaces, the isolation boundary, and the protocol semantics**, not SCI's final throughput. 115200 baud cannot carry the platform's 100 kHz × 8ch performance anchor; the final continuous high-speed link is still Phase 6 EtherCAT. SCI's only job is to expose dual-core and host-side problems early over a low-cost physical link.
 
-> **2026-06-17 Scope contract 更新**：Scope 暴露 Stream 和 Capture 两个入口。
-> `DAQ_BIND` 不再带 group，`DAQ_CTRL(STREAM)` 是连续流，
-> `DAQ_CTRL(CAPTURE_ARMED)` 启动设备侧触发冻结；冻结后仍用 `BLOCK_REQ`
-> 排空同一种 block。所有 `scope_prod` /
-> `scope_cfg` / `scope_bind` / `scope_cons` 都是单个对象，不再是 `[group]` 数组。
-> 本文后续若出现旧的单入口或 group 说法，按本段和
-> [wire-spec.md](wire-spec.md) v6 为准。
+> **2026-06-17 Scope contract update**: the scope exposes two entries, Stream and Capture. `DAQ_BIND` no longer carries a group, `DAQ_CTRL(STREAM)` is a continuous flow, and `DAQ_CTRL(CAPTURE_ARMED)` starts the device-side trigger freeze; after freezing it still drains the same kind of block via `BLOCK_REQ`. All of `scope_prod` / `scope_cfg` / `scope_bind` / `scope_cons` are single objects, no longer `[group]` arrays. Wherever this document later shows an old single-entry or group phrasing, go by this paragraph and [wire-spec.md](wire-spec.md) v6.
 
-## 我已完成的部分（仅供对照）
+## The parts I've already done (for reference)
 
-| 产物 | 内容 |
+| Artifact | Content |
 |---|---|
-| `contracts/v2k_common.h`、`v2k_command.h` | contract v8；HELLO 的 `tick_hz/capabilities`；STATUS 的 `cmd_ack_seq/cmd_result`；原生能力位 |
-| `docs/wire-spec.md` | wire v6 消息、Stream/Capture 共用 Scope、重试幂等、build-hash 重枚举、独立兼容桥边界 |
-| `contracts/vectors/`、`tools/gen_vectors.py` | HELLO/STATUS/ENUM/CAL/DAQ/CMD/BLOCK golden vectors 与负例 |
-| `cpu2/v2k_sci_service.c/.h` | SCIA 收发、COBS、CRC-32C、请求分派、响应重放、共享平面服务和诊断计数 |
-| `cpu2/cpu2.c` | CPU2 超级循环接入 SCI 服务；本地心跳不进入控制时间 |
-| `cpu1/cpu1.c` | 发布 `tick_hz`，供 HELLO 与 host 时间轴使用 |
-| 同级 `Scope2000` 仓库 | Rust 2024 + egui；codec/transport/service 分层；SCI transport；变量、参数、Stream/Capture 共用 Scope、CSV、控制台 |
+| `contracts/v2k_common.h`, `v2k_command.h` | contract v8; HELLO's `tick_hz/capabilities`; STATUS's `cmd_ack_seq/cmd_result`; native capability bits |
+| `docs/wire-spec.md` | wire v6 messages, Stream/Capture shared Scope, retry idempotency, build-hash re-enumeration, independent compatibility-bridge boundary |
+| `contracts/vectors/`, `tools/gen_vectors.py` | HELLO/STATUS/ENUM/CAL/DAQ/CMD/BLOCK golden vectors and negative cases |
+| `cpu2/v2k_sci_service.c/.h` | SCIA send/receive, COBS, CRC-32C, request dispatch, response replay, shared-plane service and diagnostic counts |
+| `cpu2/cpu2.c` | CPU2 super-loop wires in the SCI service; the local heartbeat does not enter control time |
+| `cpu1/cpu1.c` | publishes `tick_hz`, for HELLO and the host time axis |
+| sibling `Scope2000` repo | Rust 2024 + egui; codec/transport/service layering; SCI transport; variables, parameters, Stream/Capture shared Scope, CSV, console |
 
-尚未完成且**不能跳过**的硬件配置整改：
+Hardware-config rework not yet done and that **must not be skipped**:
 
-- 当前 Phase 3.5 临时代码在 `cpu1/cpu1.c` 直接调用 GPIO/CPUSEL driverlib。
-  这违反“SysConfig 管静态硬件”的项目原则。
-- 最终验收前必须按 §1 迁移到 CPU1/CPU2 SysConfig，并删除这些手写调用。
-- `.syscfg` 只能通过 CCS SysConfig 工具修改，禁止手改文本或生成的
-  `board.c/board.h`。
+- the current Phase 3.5 temporary code calls GPIO/CPUSEL driverlib directly in `cpu1/cpu1.c`. This violates the project principle "SysConfig owns static hardware".
+- Before final acceptance, this must be migrated into CPU1/CPU2 SysConfig per §1, and these hand-written calls removed.
+- `.syscfg` can only be modified through the CCS SysConfig tool; manually editing the text or the generated `board.c/board.h` is forbidden.
 
-## 关键决策（定稿）
+## Key decisions (finalized)
 
-- **CPU1 仍是 boot master，但不运行 SCI。** CPU1 SysConfig 只负责在放出
-  CPU2 前把 SCIA 外设归属切到 CPU2。
-- **CPU2 拥有 SCIA。** CPU2 SysConfig 负责 SCIA 实例、GPIO42/43 pinmux、
-  pad/qualification、115200 8N1 和 FIFO 静态配置；CPU2 C 负责 RX ISR、软件环、
-  codec、共享平面访问和 TX 调度。
-- **CPU1 源码不得出现 Phase 3.5 的 pinmux/CPUSEL 补丁。** 最终生成结果必须
-  来自 `.syscfg`，否则 SysConfig GUI 与运行代码存在两个真相。
-- **RX ISR 只搬 octet。** ISR 不做 COBS、CRC、消息分派、共享 RAM 遍历、
-  block 复制或阻塞发送。
-- **单请求在途。** Scope2000 同时只等待一个响应；请求超时 150 ms，同一
-  `(msg_type, seq)` 最多重试 2 次。
-- **重试不得重复副作用。** CPU2 保留上一条已编码响应；相同请求重放响应，
-  不再次执行 COMMIT、CMD、BIND，也不再次推进 Scope 消费索引。
-- **线上数据保留原生形态。** `ScopeBlock` 保留样本位宽、tick、block/bind
-  序号和交错布局；绘图或 CSV 只按原生类型解码，不做 `scale/offset` 换算。
-- **能力由原生平台定义。** Scope2000 按 Viewer2000 完整 capability 模型设计；
-  未来兼容桥只能声明缺失能力，不能反向削减原生协议或热路径。
-- **通信失败不能污染控制域。** Scope2000 停止、串口拔出、CPU2 堵塞或环溢出
-  都只表现为失联、超时、overrun 或断口；CPU1 tick、ISR 预算和保护状态必须照常。
+- **CPU1 is still the boot master, but it does not run SCI.** CPU1 SysConfig is only responsible for switching the SCIA peripheral ownership to CPU2 before releasing CPU2.
+- **CPU2 owns SCIA.** CPU2 SysConfig is responsible for the SCIA instance, GPIO42/43 pinmux, pad/qualification, 115200 8N1, and the static FIFO config; CPU2 C is responsible for the RX ISR, software ring, codec, shared-plane access, and TX scheduling.
+- **CPU1 source must not contain Phase 3.5's pinmux/CPUSEL patch.** The final generated result must come from `.syscfg`, otherwise the SysConfig GUI and the running code are two sources of truth.
+- **The RX ISR only moves octets.** The ISR does no COBS, CRC, message dispatch, shared-RAM walk, block copy, or blocking send.
+- **A single request in flight.** Scope2000 waits for only one response at a time; a request times out at 150 ms, and the same `(msg_type, seq)` is retried at most 2 times.
+- **A retry must not repeat side effects.** CPU2 keeps the last encoded response; the same request replays the response, and does not re-execute COMMIT, CMD, or BIND, nor re-advance the Scope consumer index.
+- **On-wire data keeps its native form.** `ScopeBlock` keeps sample bit width, tick, block/bind sequence numbers, and the interleaved layout; plotting or CSV decodes only by native type, with no `scale/offset` conversion.
+- **Capabilities are defined by the native platform.** Scope2000 is designed against Viewer2000's full capability model; a future compatibility bridge can only declare missing capabilities, it cannot reverse-trim the native protocol or hot path.
+- **A comms failure must not pollute the control domain.** Scope2000 stopping, the serial port unplugged, CPU2 stalling, or a ring overflow all manifest only as lost contact, timeout, overrun, or a gap; CPU1's tick, ISR budget, and protection state must proceed as usual.
 
-## 1. SysConfig 与代码职责整改
+## 1. SysConfig and code-responsibility rework
 
-TI 双核 SCI SysConfig 示例采用以下分工：
+The TI dual-core SCI SysConfig example uses the following division:
 
 ```text
 CPU1 syscfg: sysctl.cpuSel_SCIA = SYSCTL_CPUSEL_CPU2
 CPU2 syscfg: SCI instance = SCIA + RX/TX pinmux + SCI configuration
 ```
 
-Viewer2000 按同一模式落地。
+Viewer2000 lands the same pattern.
 
 ### 1.1 CPU1 SysConfig
 
-在 `cpu1/sysconfig_cpu1.syscfg` 对应的 SysConfig GUI 中设置：
+In the SysConfig GUI corresponding to `cpu1/sysconfig_cpu1.syscfg`, set:
 
-| 项 | 值 |
+| Item | Value |
 |---|---|
 | Peripheral CPU Select | SCIA → CPU2 |
-| 配置时机 | CPU1 `Board_init()`，且必须早于 `Device_bootCPU2()` |
+| Timing | CPU1 `Board_init()`, and necessarily before `Device_bootCPU2()` |
 
-生成的 CPU1 `board.c` 必须包含等价于下列语义的代码：
+The generated CPU1 `board.c` must contain code equivalent to the following semantics:
 
 ```c
 SysCtl_selectCPUForPeripheralInstance(SYSCTL_CPUSEL_SCIA,
                                       SYSCTL_CPUSEL_CPU2);
 ```
 
-CPU1 **不创建 SCI 运行实例**，也不设置 baud/FIFO/SCI 中断。
+CPU1 **creates no SCI runtime instance**, and sets no baud/FIFO/SCI interrupt.
 
 ### 1.2 CPU2 SysConfig
 
-在 `cpu2/sysconfig_cpu2.syscfg` 增加 SCI 实例，优先在 Board View 选择
-`XDS110 UART` 硬件；若用手动 pinmux，则固定下表：
+Add a SCI instance to `cpu2/sysconfig_cpu2.syscfg`, preferably selecting `XDS110 UART` hardware in Board View; if using manual pinmux, pin down the table below:
 
-> **F28P65x 双 syscfg 分工**：CPU2 syscfg 的 SCI 实例**不会**在 CPU2 board.c
-> 生成 `GPIO_setPinConfig`（`pinmux.csv` 提示 "PinMux is done on CPU1"），
-> sysconfig 通过双 context 协同把 SCIA pinmux + pad/qual 反向落到 **CPU1**
-> board.c 的 `PINMUX_init`。CPU1 不需要也不允许重复挂 SCI 模块（否则跨
-> context 报 Resource conflict）；仅在 §1.1 设 `cpuSel_SCIA → CPU2` 即可。
+> **F28P65x dual-syscfg division**: the SCI instance in CPU2's syscfg **does not** generate `GPIO_setPinConfig` in CPU2's board.c (`pinmux.csv` hints "PinMux is done on CPU1"); sysconfig, through dual-context cooperation, places the SCIA pinmux + pad/qual back into **CPU1's** board.c `PINMUX_init`. CPU1 doesn't need to and isn't allowed to hang the SCI module again (otherwise the cross-context reports a Resource conflict); just set `cpuSel_SCIA → CPU2` in §1.1.
 
-| 字段 | 值 |
+| Field | Value |
 |---|---|
 | Instance | SCIA |
 | TX | GPIO42 |
@@ -128,45 +99,31 @@ CPU1 **不创建 SCI 运行实例**，也不设置 baud/FIFO/SCI 中断。
 | FIFO | Enabled |
 | RX qualification | Async |
 
-pad 配置也必须由 SysConfig 生成。若 GUI 对 SCI pin 使用默认 pull-up，应以
-生成结果为准并在实物上验证；任何有意调整都回到 SysConfig 修改，不能在
-`cpu1.c` 或 `cpu2.c` 追加 GPIO 覆盖。
+The pad config must also be generated by SysConfig. If the GUI uses a default pull-up on the SCI pins, go by the generated result and verify it on hardware; any intentional adjustment goes back to SysConfig to change, not an appended GPIO override in `cpu1.c` or `cpu2.c`.
 
-中断职责采用以下边界：
+Interrupt responsibility uses the following boundary:
 
-- SysConfig 生成 pinmux、SCI frame/baud、FIFO 和 module enable；
-- CPU2 C 注册 `INT_SCIA_RX`，设置项目所需 RX FIFO level，开启 RXFF 中断；
-- TX 继续由超级循环轮询 FIFO 空位，不启用 TX ISR。
+- SysConfig generates pinmux, SCI frame/baud, FIFO, and module enable;
+- CPU2 C registers `INT_SCIA_RX`, sets the project-required RX FIFO level, and enables the RXFF interrupt;
+- TX continues to be the super-loop polling the FIFO free space, with the TX ISR not enabled.
 
-CPU2 启动顺序应为：
+CPU2's startup order should be:
 
 ```text
 Device_init
   -> SysCtl_enablePeripheral(SYSCTL_PERIPH_CLK_SCIA)
-  -> SCIA_BASE_init（sysconfig 生成；直接调用，绕开 Board_init 聚合入口）
-  -> NMI 兜底
-  -> 双核共享契约握手
-  -> SCI 软件缓冲与 RX ISR 初始化
-  -> 超级循环
+  -> SCIA_BASE_init (sysconfig-generated; called directly, bypassing the Board_init aggregate entry)
+  -> NMI fallback
+  -> dual-core shared-contract handshake
+  -> SCI software buffer and RX ISR init
+  -> super-loop
 ```
 
-> **为何不直接调用 `Board_init()`**：CPU2 仅拥有 RAMGS4（0x2000 words，
-> 扣掉 v2k 平面后约 0x1E00 给 .text+.bss+.const+.data）。`Board_init()`
-> 顺带触发的 `SYSCTL_init()` 内含数百条 boot-master 专属
-> `SysCtl_setPeripheralAccessControl`/`CPUSEL` 写入——对 CPU2 是死代码，
-> 但 cl2000 `-Ooff` 默认按 translation unit 链接，会把整个 SYSCTL_init 拉
-> 进 CPU2 .text 把 RAMGS4 撑爆（链接器报 `error #10099-D: .bss size 0xb42
-> won't fit`）。不过 `SYSCTL_init()` 同时负责打开 CPU2 本地
-> `SYSCTL_PERIPH_CLK_SCIA`；绕开 `Board_init()` 时必须手动保留这一个
-> clock gate，否则 `SCIA_BASE_init()` 对 `SCICCR/SCICTL1/BAUD` 的写入会被
-> 外设时钟门控吞掉，表现为 host HELLO 超时且 `rx_octets` 恒为 0。直调
-> `SCIA_BASE_init()` 配合 §6.3 强制的 `--gen_func_subsections=on`，可让
-> 链接器只带入实际被调用的 board.obj 函数，board.obj 最终只贡献 ~150
-> words 给 CPU2 .text。
+> **Why not call `Board_init()` directly**: CPU2 owns only RAMGS4 (0x2000 words, ~0x1E00 for .text+.bss+.const+.data after deducting the v2k planes). The `SYSCTL_init()` that `Board_init()` incidentally triggers contains hundreds of boot-master-only `SysCtl_setPeripheralAccessControl`/`CPUSEL` writes — dead code for CPU2, but cl2000 `-Ooff` links by translation unit by default, pulling the entire SYSCTL_init into CPU2's .text and blowing out RAMGS4 (the linker reports `error #10099-D: .bss size 0xb42 won't fit`). However `SYSCTL_init()` also enables CPU2's local `SYSCTL_PERIPH_CLK_SCIA`; when bypassing `Board_init()` you must manually keep this one clock gate, otherwise `SCIA_BASE_init()`'s writes to `SCICCR/SCICTL1/BAUD` are swallowed by the peripheral clock gate, manifesting as a host HELLO timeout with `rx_octets` constantly 0. Calling `SCIA_BASE_init()` directly together with the §6.3-mandated `--gen_func_subsections=on` lets the linker bring in only the board.obj functions actually called, so board.obj ultimately contributes only ~150 words to CPU2's .text.
 
-### 1.3 必须删除的手写静态配置
+### 1.3 Hand-written static config that must be deleted
 
-SysConfig 迁移完成后，`cpu1/cpu1.c` 不得再出现：
+After the SysConfig migration, `cpu1/cpu1.c` must no longer contain:
 
 ```text
 GPIO_setPinConfig(GPIO_42_SCIA_TX / GPIO_43_SCIA_RX)
@@ -176,207 +133,194 @@ GPIO_setControllerCore(42 / 43, ...)
 SysCtl_selectCPUForPeripheralInstance(SCIA, CPU2)
 ```
 
-CPU2 SCI 初始化也不得重复执行已经由生成代码完成的 `SCI_setConfig`、
-pinmux、FIFO/module 静态初始化。`SysCtl_enablePeripheral(SCIA)` 是保留
-`SYSCTL_init()` 中的本地 clock gate，不是重复 SCI 配置。重复写虽然可能“能跑”，
-但会掩盖 `.syscfg` 错误，并使后续换 pin、换 LSPCLK 或升级 C2000Ware 时出现配置漂移。
-`v2k_sci_init()` 仅保留 RX FIFO level（覆盖生成的 RX0=empty 为 RX1）、
-`SCI_clearOverflowStatus()`、`INT_SCIA_RX` 注册与 `SCI_INT_RXFF` 使能。
+CPU2 SCI init must also not re-execute the `SCI_setConfig`, pinmux, and FIFO/module static init already done by the generated code. `SysCtl_enablePeripheral(SCIA)` is keeping the local clock gate from `SYSCTL_init()`, not a duplicate SCI config. Although a duplicate write might "run", it masks `.syscfg` errors and causes config drift when later changing pins, changing LSPCLK, or upgrading C2000Ware. `v2k_sci_init()` keeps only the RX FIFO level (overriding the generated RX0=empty to RX1), `SCI_clearOverflowStatus()`, the `INT_SCIA_RX` registration, and the `SCI_INT_RXFF` enable.
 
-### 1.4 生成结果对账
+### 1.4 Generated-result reconciliation
 
-每次 SysConfig 修改后检查 RAM 和 FLASH 两套生成结果：
+After each SysConfig change, check both the RAM and FLASH generated results:
 
-| 检查项 | 通过条件 |
+| Check item | Pass condition |
 |---|---|
-| CPU1 SCIA CPUSEL | 生成值为 CPU2，不再是默认 CPU1 |
+| CPU1 SCIA CPUSEL | the generated value is CPU2, no longer the default CPU1 |
 | CPU2 SCIA base | `SCIA_BASE` |
-| pinmux | TX=GPIO42，RX=GPIO43 |
+| pinmux | TX=GPIO42, RX=GPIO43 |
 | RX qualification | Async |
-| 串口格式 | 115200 8N1 |
+| serial format | 115200 8N1 |
 | FIFO | Enabled |
-| 手写覆盖 | CPU1/CPU2 业务源码中无静态 pinmux/CPUSEL/重复 SCI 配置 |
+| hand-written override | no static pinmux/CPUSEL/duplicate SCI config in CPU1/CPU2 business source |
 
-切勿直接编辑 `cpu*/RAM/syscfg/board.c` 或 `cpu*/FLASH/syscfg/board.c`：
-这些都是可再生文件，不是配置源。
+Never directly edit `cpu*/RAM/syscfg/board.c` or `cpu*/FLASH/syscfg/board.c`: these are regenerable files, not config sources.
 
-## 2. 协议与版本前置
+## 2. Protocol and version prerequisites
 
-Phase 3.5 固定使用：
+Phase 3.5 fixes:
 
-| 项 | 值 |
+| Item | Value |
 |---|---|
 | `V2K_WIRE_VER` | 6 |
 | `V2K_CONTRACT_VER` | 8 |
-| 最大 payload | 1024 octets |
-| framing | COBS，`0x00` 定界 |
+| max payload | 1024 octets |
+| framing | COBS, `0x00` delimiter |
 | integrity | CRC-32C |
 | endian | little-endian |
-| host request | 单请求在途 |
-| timeout/retry | 150 ms；最多重试 2 次 |
+| host request | single request in flight |
+| timeout/retry | 150 ms; at most 2 retries |
 
-版本字段各管一层：
+Each version field owns one layer:
 
-| 字段 | 负责的问题 |
+| Field | The problem it owns |
 |---|---|
-| wire version | 帧或消息出现不兼容布局变化 |
-| contract version | CPU1/CPU2 共享 struct 是否同代 |
-| build hash | 同一协议下变量表、地址和固件构建是否变化 |
+| wire version | an incompatible layout change in the frame or a message |
+| contract version | whether the CPU1/CPU2 shared structs are the same generation |
+| build hash | whether the variable table, addresses, and firmware build changed under the same protocol |
 
-HELLO 必须报告以下原生能力：
+HELLO must report the following native capabilities:
 
 ```text
 ENUM | CAL | SCOPE_STREAM | SCOPE_CAPTURE |
 PRE_TRIGGER | SYSTEM_CMD | NATIVE_BLOCK
 ```
 
-Scope2000 对 wire 或 contract 不匹配必须拒绝连接，不能猜测解析。运行中
-STATUS 的 `build_hash` 变化必须清空描述符、绑定和波形缓存，再重新枚举。
+Scope2000 must refuse to connect on a wire or contract mismatch, never guessing the parse. A change of STATUS's `build_hash` at runtime must clear the descriptors, bindings, and waveform caches, then re-enumerate.
 
-## 3. CPU2 数据泵行为
+## 3. CPU2 data-pump behavior
 
-### 3.1 RX 路径
+### 3.1 RX path
 
 ```text
 SCIA RX FIFO
   -> INT_SCIA_RX
-  -> 512-word 软件环（每个 C28x word 只用低 8 bit）
-  -> 超级循环寻找 0x00
+  -> 512-word software ring (each C28x word uses only the low 8 bits)
+  -> super-loop looks for 0x00
   -> COBS decode
-  -> header/length/version 检查
+  -> header/length/version check
   -> CRC-32C
   -> message dispatch
 ```
 
-约束：
+Constraints:
 
-- RX ISR 不等待 TX、不访问 CPU1 producer 环、不遍历描述符表；
-- 软件环满时 `g_v2k_sci_rx_overflow++`，丢当前 octet，控制核不受影响；
-- 编码帧超过接收暂存容量后进入 discard，直到下一个 `0x00` 才恢复；
-- COBS、长度、版本或 CRC 错误静默丢弃，不回 NAK，由 host 超时重试；
-- C28x `char` 为 16 bit，线上 octet 必须逐字段显式装拆，禁止 struct memcpy。
+- the RX ISR doesn't wait on TX, doesn't access the CPU1 producer ring, doesn't walk the descriptor table;
+- when the software ring is full, `g_v2k_sci_rx_overflow++`, the current octet is dropped, the control core is unaffected;
+- after an encoded frame exceeds the receive scratch capacity it enters discard, recovering only at the next `0x00`;
+- COBS, length, version, or CRC errors are silently dropped, no NAK is returned, the host times out and retries;
+- C28x `char` is 16 bit, so on-wire octets must be explicitly packed/unpacked field by field; struct memcpy is forbidden.
 
-### 3.2 TX 与响应重放
+### 3.2 TX and response replay
 
-CPU2 先把完整响应编码进 TX buffer，再由超级循环按 FIFO 空位送出。TX 未完成
-期间不覆盖该 buffer，因为它同时承担上一响应的重放缓存。
+CPU2 first encodes the complete response into the TX buffer, then the super-loop sends it out as the FIFO has free space. While TX is unfinished, that buffer is not overwritten, because it simultaneously serves as the replay cache of the last response.
 
-收到相同 `(msg_type, seq)`：
+On receiving the same `(msg_type, seq)`:
 
-- TX buffer 从头重发；
-- 不重新执行消息 handler；
-- BLOCK_REQ 不再次 `release`；
-- CAL_COMMIT/CMD 不再次递增共享序号；
-- DAQ_BIND 不再次发布新 `bind_seq`。
+- the TX buffer is resent from the start;
+- the message handler is not re-executed;
+- BLOCK_REQ does not `release` again;
+- CAL_COMMIT/CMD does not increment the shared sequence again;
+- DAQ_BIND does not publish a new `bind_seq` again.
 
-host 放弃旧请求并使用新 seq 后，才算新的服务操作。
+Only after the host abandons the old request and uses a new seq is it a new service operation.
 
-### 3.3 消息到共享平面的映射
+### 3.3 Message-to-shared-plane mapping
 
-| wire 消息 | CPU2 行为 | CPU1 对账 |
+| wire message | CPU2 behavior | CPU1 reconcile |
 |---|---|---|
-| HELLO | 读版本、build hash、描述符数、tick_hz、能力位 | 无副作用 |
-| STATUS | 汇总状态、心跳、参数结果、scope mode、命令结果 | 无副作用 |
-| ENUM | 分页读描述符表，每页最多 8 项 | `desc_count/build_hash` |
-| CAL_WRITE | 暂存 GS4 shadow；同地址覆盖 | 尚未发布 |
-| CAL_COMMIT | 最后写 `commit_seq+1` | `applied_seq/result/fail_idx` |
-| CAL_READ | 发布一次 `(addr,type)` read request | `read_seq/ack_seq` |
-| DAQ_CTRL | 发布一个 scope cfg | `cfg_ack_seq/cfg_result/mode` |
-| DAQ_BIND | 仅 OFF 状态发布绑定 | `bind_ack_seq/bind_result` |
-| BLOCK_REQ | 每次取 0–2 block，复制完成后 release | `rd_idx/remain_hint` |
-| CMD | 最后写 `cmd_seq+1` | `cmd_ack_seq/cmd_result/sys_state` |
+| HELLO | read version, build hash, descriptor count, tick_hz, capability bits | no side effect |
+| STATUS | summarize state, heartbeat, parameter result, scope mode, command result | no side effect |
+| ENUM | paged read of the descriptor table, up to 8 entries per page | `desc_count/build_hash` |
+| CAL_WRITE | stage into GS4 shadow; same address overwrites | not yet published |
+| CAL_COMMIT | write `commit_seq+1` last | `applied_seq/result/fail_idx` |
+| CAL_READ | publish a one-shot `(addr,type)` read request | `read_seq/ack_seq` |
+| DAQ_CTRL | publish one scope cfg | `cfg_ack_seq/cfg_result/mode` |
+| DAQ_BIND | publish a bind only in the OFF state | `bind_ack_seq/bind_result` |
+| BLOCK_REQ | take 0–2 blocks each time, release after the copy is done | `rd_idx/remain_hint` |
+| CMD | write `cmd_seq+1` last | `cmd_ack_seq/cmd_result/sys_state` |
 
-CAPTURE_ARMED/CAPTURE_POST 覆盖采集期间没有消费语义。只有生产者进入 `FROZEN` 后，
-CPU2 才从 `frozen_end_idx - frozen_count` 初始化消费者并按时间顺序排空。
+During the CAPTURE_ARMED/CAPTURE_POST capture window there is no consume semantics. Only after the producer enters `FROZEN` does CPU2 initialize the consumer from `frozen_end_idx - frozen_count` and drain in time order.
 
-### 3.4 CPU2 诊断量
+### 3.4 CPU2 diagnostics
 
-在 CPU2 CCS Expressions 中常驻：
+Keep resident in CPU2 CCS Expressions:
 
-| 表达式 | 含义 |
+| Expression | Meaning |
 |---|---|
-| `g_handshake_state` | 0/1/2/3：未开始、等表、契约失败、运行 |
-| `g_v2k_sci_rx_octets` | RX ISR 已接收的 octet |
-| `g_v2k_sci_tx_octets` | 已写入 TX FIFO 的 octet |
-| `g_v2k_sci_rx_overflow` | 硬件 FIFO 或软件环溢出 |
-| `g_v2k_sci_bad_frames` | COBS/长度/版本/CRC/超长帧错误 |
-| `g_v2k_sci_good_frames` | 通过完整校验的请求 |
-| `g_v2k_msg_2to1.cpu2_status.link_state` | 最近约 2 s 内是否收到合法帧 |
-| `g_v2k_msg_2to1.cpu2_status.heartbeat` | CPU2 本地诊断心跳 |
-| `g_v2k_gs4.scope_cons.rd_idx` | Scope 消费者位置 |
+| `g_handshake_state` | 0/1/2/3: not started, waiting for table, contract failed, running |
+| `g_v2k_sci_rx_octets` | octets the RX ISR has received |
+| `g_v2k_sci_tx_octets` | octets written to the TX FIFO |
+| `g_v2k_sci_rx_overflow` | hardware FIFO or software ring overflow |
+| `g_v2k_sci_bad_frames` | COBS/length/version/CRC/over-length-frame errors |
+| `g_v2k_sci_good_frames` | requests that passed the full check |
+| `g_v2k_msg_2to1.cpu2_status.link_state` | whether a legal frame was received in roughly the last 2 s |
+| `g_v2k_msg_2to1.cpu2_status.heartbeat` | CPU2's local diagnostic heartbeat |
+| `g_v2k_gs4.scope_cons.rd_idx` | the Scope consumer position |
 
-这些计数只诊断通信核，不得成为控制时间或 block 时间戳来源。
+These counters diagnose only the comms core; they must not become a source of control time or block timestamps.
 
-## 4. Scope2000 行为与操作入口
+## 4. Scope2000 behavior and operating entry
 
-Scope2000 的 `V2kSource` 分三层：
+Scope2000's `V2kSource` has three layers:
 
 ```text
 service semantics
   -> message codec
   -> ByteTransport
-       -> SCI transport（本阶段）
-       -> local byte stream（只预留边界）
-       -> EtherCAT transport（Phase 6）
+       -> SCI transport (this phase)
+       -> local byte stream (boundary reserved only)
+       -> EtherCAT transport (Phase 6)
 ```
 
-GUI 首版提供：
+The GUI first cut provides:
 
-- 串口枚举、115200/更高试验波特率和连接状态；
-- HELLO 版本、build hash、tick_hz、capability；
-- 运行时变量枚举与最多 16 通道绑定；
-- 参数 Stage/Commit 与 value mirror 刷新；
-- Start/Stop/Clear Fault；
-- Scope Stream/Capture、触发边沿、阈值、pre-trigger、prescaler、block N；
-- 波形 tiles、断口、CSV 导出和协议控制台。
+- serial-port enumeration, 115200/higher experimental baud, and connection status;
+- HELLO version, build hash, tick_hz, capability;
+- runtime variable enumeration and binding up to 16 channels;
+- parameter Stage/Commit and value-mirror refresh;
+- Start/Stop/Clear Fault;
+- Scope Stream/Capture, trigger edge, threshold, pre-trigger, prescaler, block N;
+- waveform tiles, gaps, CSV export, and a protocol console.
 
-`V2kSource` 当前调度：
+`V2kSource`'s current schedule:
 
-| 行为 | 周期 |
+| Behavior | Period |
 |---|---:|
 | STATUS | 250 ms |
-| 无 backlog 的 BLOCK_REQ | 8 ms |
-| `remain_hint != 0` | 立即继续取块 |
+| BLOCK_REQ with no backlog | 8 ms |
+| `remain_hint != 0` | immediately continue taking blocks |
 | worker idle sleep | 1 ms |
 
-Scope2000 按 capability 开关 UI。未声明的功能只禁用对应操作，不改变
-Viewer2000 原生数据模型。
+Scope2000 toggles the UI by capability. An undeclared feature only disables the corresponding operation, without changing Viewer2000's native data model.
 
-## 5. SCI 带宽预算
+## 5. SCI bandwidth budget
 
-8N1 每个线上 octet 约占 10 bit，115200 baud 的理论上限只有：
+In 8N1 each on-wire octet takes about 10 bit, so the theoretical ceiling at 115200 baud is only:
 
 ```text
 115200 / 10 = 11520 octets/s
 ```
 
-还要扣除 COBS、wire header、CRC、STATUS/控制请求和 USB/VCP 抖动。bring-up
-阶段建议把持续流预算控制在理论值的约 70%，即约 8 k octets/s。
+Deduct COBS, the wire header, CRC, STATUS/control requests, and USB/VCP jitter as well. During bring-up, keep the sustained-stream budget at about 70% of the theoretical value, i.e. ~8 k octets/s.
 
-单个原生 block：
+A single native block:
 
 ```text
 block_octets = 16 + n_ticks * stride_octets
 ```
 
-BLOCK_DATA 另有 12-octet batch 前缀，wire 帧另有 11-octet header+CRC，并有
-少量 COBS 膨胀。稳定 STREAM 必须满足：
+BLOCK_DATA additionally has a 12-octet batch prefix, the wire frame additionally an 11-octet header+CRC, plus a little COBS inflation. A stable STREAM must satisfy:
 
 ```text
-生产 block 速率 × 每 block 线上开销 < 可用串口吞吐
+produced-block rate × per-block on-wire overhead < available serial throughput
 ```
 
-因此：
+Therefore:
 
-- 115200 下 STREAM 必须提高 `prescaler`、减少通道或使用较合适的 block N；
-- CAPTURE_ARMED 触发冻结可以全速采集，因为冻结后慢速排空，不要求串口跟上采样瞬时速率；
-- 故意使用超过 SCI 带宽的配置时，正确结果是 producer overrun + block gap，
-  不是 CPU1 降速或阻塞；
-- 逐档提高 baud 只用于寻找 XDS110 VCP 的稳定边界，不能把 SCI 变成最终链路。
+- at 115200 STREAM must raise the `prescaler`, reduce channels, or use a more suitable block N;
+- CAPTURE_ARMED trigger freeze can capture at full speed, because it drains slowly after freezing and doesn't require the serial port to keep up with the instantaneous sample rate;
+- when deliberately using a config exceeding the SCI bandwidth, the correct result is producer overrun + block gap, not CPU1 slowing down or blocking;
+- stepping the baud up is only for finding the XDS110 VCP's stable boundary, not for making SCI the final link.
 
-## 6. 软件与构建检查
+## 6. Software and build checks
 
-### 6.1 Viewer2000 协议检查
+### 6.1 Viewer2000 protocol check
 
 ```bash
 python3 tools/gen_vectors.py --check
@@ -384,11 +328,11 @@ cc -std=c99 -Wall -Wextra -Werror \
   -c tools/check_contracts.c -o /tmp/v2k-contracts.o
 ```
 
-确认 golden vectors 没有未提交漂移，PC 编译器侧静态断言通过。
+Confirm the golden vectors have no uncommitted drift, and the PC-compiler-side static assertions pass.
 
-### 6.2 Scope2000 检查
+### 6.2 Scope2000 check
 
-在同级 Scope2000 仓库执行：
+In the sibling Scope2000 repo:
 
 ```bash
 cargo fmt --check
@@ -397,240 +341,225 @@ cargo test --all-targets
 python3 tools/check-brand.py
 ```
 
-测试至少覆盖：
+The tests cover at least:
 
-- 全部 golden vectors；
-- 坏 CRC；
-- 拆包与粘包；
-- 超长垃圾后在 `0x00` 重新同步；
-- 响应 seq 错配；
-- wire/contract 不匹配；
-- 请求超时与重试。
+- all golden vectors;
+- bad CRC;
+- frame split and coalesce;
+- resync at `0x00` after over-length garbage;
+- response seq mismatch;
+- wire/contract mismatch;
+- request timeout and retry.
 
-### 6.3 目标工程构建
+### 6.3 Target project build
 
-必须通过 CCS `buildProject` 分别构建：
+Must build separately via CCS `buildProject`:
 
-| 核 | 配置 |
+| Core | Config |
 |---|---|
-| CPU1 | RAM、FLASH |
-| CPU2 | RAM、FLASH |
+| CPU1 | RAM, FLASH |
+| CPU2 | RAM, FLASH |
 
-不得用 `make`/`gmake` 代替 CCS 工程构建。生成代码中 SCIA CPUSEL/pinmux/配置
-按 §1.4 对账后，才允许进入实物步骤。
+Do not use `make`/`gmake` in place of the CCS project build. Only after the generated SCIA CPUSEL/pinmux/config is reconciled per §1.4 may you proceed to the hardware steps.
 
-#### 6.3.1 编译器选项：`--gen_func_subsections=on`
+#### 6.3.1 Compiler option: `--gen_func_subsections=on`
 
-两核工程的 ticlang/cl2000 编译选项中必须开启 `--gen_func_subsections=on`
-（CCS GUI：Project Properties → Build → C2000 Compiler → Advanced Options
-→ Assembler Options 或 "Add new flag"；持久化在 `.cproject`）。
-作用：让编译器把每个函数放进独立 `.text:funcname` subsection，使链接器能
-按函数粒度 dead-strip。Phase 3.5 起 CPU2 的 `SCIA_BASE_init()` 直调依赖
-此选项才能把同 obj 中数 KB 的 `SYSCTL_init` 死代码剥掉。关闭此选项的副
-作用：CPU2 RAM 链接会立即失败（`error #10099-D: .bss won't fit`）。
+Both core projects' ticlang/cl2000 compiler options must enable `--gen_func_subsections=on` (CCS GUI: Project Properties → Build → C2000 Compiler → Advanced Options → Assembler Options or "Add new flag"; persisted in `.cproject`). Effect: it makes the compiler put each function into its own `.text:funcname` subsection, letting the linker dead-strip at function granularity. From Phase 3.5, CPU2's direct call to `SCIA_BASE_init()` depends on this option to strip the several-KB `SYSCTL_init` dead code in the same obj. Side effect of disabling it: the CPU2 RAM link fails immediately (`error #10099-D: .bss won't fit`).
 
-变更编译器选项后必须 `Clean` 再 `buildProject`（subsection 命名变化会让
-增量构建产生“僵尸 obj”）。
+After changing a compiler option, you must `Clean` then `buildProject` (the subsection-naming change makes an incremental build produce "zombie objs").
 
-## 7. 调试会话与基线
+## 7. Debug session and baseline
 
-主验收先用 RAM 双核会话，FLASH 做启动 smoke test。装载顺序沿用
-[Phase 1 SysConfig](phase1-sysconfig.md) 与
-[Phase 3 执行器](phase3-executor-observability.md)：
+The main acceptance uses a RAM dual-core session first, with FLASH doing a boot smoke test. The load order follows [Phase 1 SysConfig](phase1-sysconfig.md) and [Phase 3 executor](phase3-executor-observability.md):
 
 ```text
 Connect CPU1 -> Load/Resume
 Connect CPU2 -> Load/Resume
 ```
 
-连接 Scope2000 前先确认：
+Before connecting Scope2000, confirm:
 
-| 观测项 | 基线 |
+| Observable | Baseline |
 |---|---|
-| `g_v2k_tick` | 持续递增 |
+| `g_v2k_tick` | keeps incrementing |
 | `g_v2k_isr_ovf_cnt` | 0 |
 | `g_v2k_isr_budget_violation_cnt` | 0 |
 | `g_handshake_state` | 3 |
-| Phase 2 TZ | 仍保持硬件封锁/状态机语义 |
-| CPU2 LED | 约 2 Hz 翻转 |
+| Phase 2 TZ | still holds the hardware-inhibit/state-machine semantics |
+| CPU2 LED | toggles at ~2 Hz |
 
-记录一组**尚未连接 Scope2000**时的
-`g_v2k_isr_cycles_max/control_cycles_max/scope_cycles_max`，后续作为性能隔离
-对照。
+Record a set of `g_v2k_isr_cycles_max/control_cycles_max/scope_cycles_max` **before connecting Scope2000**, as a later performance-isolation reference.
 
-## 8. 验证 A — 串口与 HELLO
+## 8. Verification A — serial port and HELLO
 
-1. 在 macOS 确认 XDS110 VCP 已出现；Scope2000 点击 `Refresh Ports`。
-2. 选择对应端口和 115200，点击 Connect。
-3. CPU2 `rx_octets/good_frames/tx_octets` 应递增，`link_state` 变为 1。
-4. Scope2000 控制台核对：
+1. On macOS confirm the XDS110 VCP has appeared; click `Refresh Ports` in Scope2000.
+2. Select the corresponding port and 115200, click Connect.
+3. CPU2 `rx_octets/good_frames/tx_octets` should increment, `link_state` becomes 1.
+4. Reconcile in the Scope2000 console:
 
-| 字段 | 预期 |
+| Field | Expected |
 |---|---|
-| firmware | Viewer2000 固件名 |
+| firmware | Viewer2000 firmware name |
 | wire | 6 |
 | contract | 8 |
-| build hash | 与 CPU1 描述符表一致 |
-| descriptor count | 与 `entry_count` 一致 |
-| tick_hz | 与 `V2K_ISR_HZ` 一致 |
-| capabilities | 原生能力位完整 |
+| build hash | consistent with the CPU1 descriptor table |
+| descriptor count | consistent with `entry_count` |
+| tick_hz | consistent with `V2K_ISR_HZ` |
+| capabilities | full native capability bits |
 
-5. 拔掉 VCP 或停止请求超过约 2 s，`link_state` 应回 0；CPU1 tick 不受影响。
-6. 恢复连接后重新 HELLO，不需要复位任一 CPU。
+5. Unplug the VCP or stop requests for more than ~2 s, `link_state` should return to 0; CPU1 tick is unaffected.
+6. After restoring the connection, re-HELLO without resetting either CPU.
 
-## 9. 验证 B — ENUM 与 build-hash 重枚举
+## 9. Verification B — ENUM and build-hash re-enumeration
 
-1. 连接后由 Scope2000 每页请求 8 条描述符，直到 `count=0` 或达到 total。
-2. 核对名称、type、kind、地址、prescaler；描述符 entry 不包含
-   `min/max/scale/offset` 字段。
-3. Scope2000 枚举总数必须等于 HELLO 的 `desc_count`。
-4. 选择若干参数与示波量，确认 UI 只允许最多 16 个 scope 通道。
-5. 刷入 build hash 不同但 wire/contract 相同的固件。
-6. STATUS 检出 hash 变化后必须：
-   - 清空旧描述符和参数值；
-   - 清空旧绑定序号；
-   - 清空波形；
-   - 自动重新 ENUM；
-   - 控制台记录旧/新 hash。
+1. After connecting, Scope2000 requests 8 descriptors per page until `count=0` or it reaches total.
+2. Reconcile name, type, kind, address, prescaler; the descriptor entry contains no `min/max/scale/offset` field.
+3. Scope2000's total enumeration count must equal HELLO's `desc_count`.
+4. Select several parameters and scope quantities, confirming the UI allows at most 16 scope channels.
+5. Flash firmware with a different build hash but the same wire/contract.
+6. After STATUS detects the hash change, it must:
+   - clear the old descriptors and parameter values;
+   - clear the old binding sequence numbers;
+   - clear the waveforms;
+   - auto re-ENUM;
+   - log old/new hash in the console.
 
-旧地址或旧 `bind_seq` 的 block 不得继续进入绘图。
+Blocks with old addresses or an old `bind_seq` must not continue into the plot.
 
-## 10. 验证 C — 参数事务
+## 10. Verification C — parameter transaction
 
-### 10.1 合法批次
+### 10.1 Legal batch
 
-1. 在变量面板选择两个以上 PARAM 描述符并填值。
-2. Stage 发送一个或多个 CAL_WRITE；此时目标变量不得生效。
-3. Commit 发送 CAL_COMMIT，记录返回的 `commit_seq=s`。
-4. STATUS 轮询直到 `applied_seq==s`。
-5. 核对 `cal_result=OK`、目标值同一控制拍生效。
+1. In the variable panel select two or more PARAM descriptors and fill values.
+2. Stage sends one or more CAL_WRITE; the target variable must not take effect yet.
+3. Commit sends CAL_COMMIT, record the returned `commit_seq=s`.
+4. Poll STATUS until `applied_seq==s`.
+5. Reconcile `cal_result=OK`, the target value takes effect on the same control tick.
 
-### 10.2 拒绝与原子性
+### 10.2 Rejection and atomicity
 
-| 用例 | 预期 |
+| Case | Expected |
 |---|---|
-| 类型不符 | 整批拒绝 |
-| 数量超过 16 | BAD_PARAM |
-| 上一 commit 未完成又提交 | BUSY |
-| 一批中一项合法、一项机械非法（错类型/错地址等） | 合法项也不得写入 |
-| 未注册但允许的 RAM 地址 | 可写 |
+| type mismatch | whole batch rejected |
+| count over 16 | BAD_PARAM |
+| commit again before the previous commit finished | BUSY |
+| one item legal, one mechanically illegal (wrong type/wrong address etc.) in a batch | the legal item must not be written either |
+| unregistered but allowed RAM address | writable |
 
-同一地址分多帧 Stage 时，最后一次暂存值覆盖前值。超时重发相同 CAL_COMMIT
-不得产生第二个 `commit_seq`。
+When staging the same address across multiple frames, the last staged value overwrites the previous. A timed-out resend of the same CAL_COMMIT must not produce a second `commit_seq`.
 
-## 11. 验证 D — 系统命令
+## 11. Verification D — system commands
 
-依次执行：
+Execute in order:
 
 ```text
-START -> STOP -> START -> 制造 TZ fault -> CLEAR_FAULT
+START -> STOP -> START -> manufacture a TZ fault -> CLEAR_FAULT
 ```
 
-每条命令分两阶段确认：
+Each command is confirmed in two stages:
 
-1. CMD ACK 的 `data` 返回已发布 `cmd_seq`；
-2. STATUS 的 `cmd_ack_seq` 追上，并用 `cmd_result/sys_state/fault_code` 给出最终结果。
+1. the CMD ACK's `data` returns the published `cmd_seq`;
+2. STATUS's `cmd_ack_seq` catches up, and gives the final result with `cmd_result/sys_state/fault_code`.
 
-覆盖以下负例：
+Cover the following negatives:
 
-- 前一条命令尚未执行完成时发送下一条 → BUSY；
-- FAULT 条件仍存在时 CLEAR_FAULT → 状态机拒绝或保持 FAULT；
-- 相同 `(CMD, seq)` 重试 → 不得重复执行。
+- sending the next command before the previous one finished executing → BUSY;
+- CLEAR_FAULT while the FAULT condition still exists → the state machine rejects or stays FAULT;
+- retrying the same `(CMD, seq)` → must not re-execute.
 
-系统命令只改变应用状态，不得重置 `g_v2k_tick`、block 序号或 CPU1 心跳。
+System commands only change the application state; they must not reset `g_v2k_tick`, block sequence numbers, or the CPU1 heartbeat.
 
-## 12. 验证 E — Scope Stream
+## 12. Verification E — Scope Stream
 
-先使用能落入 §5 带宽预算的配置：
+First use a config that fits within the §5 bandwidth budget:
 
-1. `DAQ_CTRL(OFF)`，等 STATUS 确认 scope mode 为 OFF。
-2. 选择 2–4 个通道，发送 DAQ_BIND，记录 `bind_seq`。
-3. 设置合适 `prescaler`，发送 `DAQ_CTRL(STREAM)`。
-4. Scope2000 持续 BLOCK_REQ，每次最多取 2 块。
-5. 核对每个 block：
+1. `DAQ_CTRL(OFF)`, wait for STATUS to confirm scope mode is OFF.
+2. Select 2–4 channels, send DAQ_BIND, record `bind_seq`.
+3. Set a suitable `prescaler`, send `DAQ_CTRL(STREAM)`.
+4. Scope2000 continuously BLOCK_REQ, taking at most 2 blocks each time.
+5. Reconcile each block:
 
-| 字段 | 通过条件 |
+| Field | Pass condition |
 |---|---|
-| flags | 当前为 0 |
-| bind_seq | 与当前绑定一致 |
-| block_seq | 正常连续，16-bit 回绕按无符号处理 |
-| start_tick | 单调前进，来自 CPU1 |
-| n_ticks | 允许小于配置 N 的 partial block |
-| n_ch/stride | 与绑定的原生类型一致 |
-| samples | 不在 codec/source 层统一转成 f64 |
+| flags | currently 0 |
+| bind_seq | consistent with the current binding |
+| block_seq | normally contiguous, 16-bit wrap handled as unsigned |
+| start_tick | monotonically advancing, from CPU1 |
+| n_ticks | a partial block smaller than the configured N is allowed |
+| n_ch/stride | consistent with the bound native types |
+| samples | not uniformly converted to f64 at the codec/source layer |
 
-6. Scope2000 用 `tick_hz` 和 prescaler 建立横轴，纵轴值直接由样本原生类型解码。
-7. 导出 CSV，检查时间、通道列、断口和显示值与 GUI 一致。
+6. Scope2000 builds the x-axis with `tick_hz` and prescaler; the y-axis value is decoded directly from the sample's native type.
+7. Export CSV, check that time, channel columns, gaps, and displayed values match the GUI.
 
-### 12.1 断口与过载
+### 12.1 Gaps and overload
 
-1. 保持 CPU1/CPU2 运行，暂停 Scope2000 消费或故意提高数据率。
-2. 等环满后恢复。
-3. 预期：
-   - `scope_prod.overrun_cnt` 增加；
-   - block_seq 跳变；
-   - Scope2000 插入 NaN 断口并记录 expected/received；
-   - CPU1 `tick`、ISR overflow、预算违规和状态机不受影响。
+1. Keep CPU1/CPU2 running, pause Scope2000 consumption or deliberately raise the data rate.
+2. After the ring fills, recover.
+3. Expected:
+   - `scope_prod.overrun_cnt` increases;
+   - block_seq jumps;
+   - Scope2000 inserts a NaN gap and records expected/received;
+   - CPU1 `tick`, ISR overflow, budget violation, and the state machine are unaffected.
 
-STREAM 中重新 BIND 必须返回 BAD_STATE；先 OFF 才允许换绑定。
+Re-BIND during STREAM must return BAD_STATE; OFF first before rebinding is allowed.
 
-## 13. 验证 F — Scope Capture 与 pre-trigger
+## 13. Verification F — Scope Capture and pre-trigger
 
-1. `DAQ_CTRL(OFF)`，完成通道绑定。
-2. 设置触发通道槽位、阈值、上升/下降沿、pre-trigger 百分比、prescaler 和 block N。
-3. 发送 `DAQ_CTRL(CAPTURE_ARMED)`。
-4. 制造确定的参数或状态跃迁。
-5. STATUS 观察：
+1. `DAQ_CTRL(OFF)`, complete the channel binding.
+2. Set the trigger channel slot, threshold, rising/falling edge, pre-trigger percentage, prescaler, and block N.
+3. Send `DAQ_CTRL(CAPTURE_ARMED)`.
+4. Manufacture a definite parameter or state transition.
+5. Observe in STATUS:
 
 ```text
 CAPTURE_ARMED -> CAPTURE_POST -> CAPTURE_FROZEN
 ```
 
-6. 只有 FROZEN 后才开始 BLOCK_REQ 排空，直到 `remain_hint=0`。
-7. 核对：
+6. Only after FROZEN start the BLOCK_REQ drain, until `remain_hint=0`.
+7. Reconcile:
 
-| 用例 | 通过条件 |
+| Case | Pass condition |
 |---|---|
-| 上升沿/下降沿 | `trig_tick` 落在跃迁附近 |
-| pre-trigger 0/30/50/100% | 触发前后比例符合配置 |
-| partial block | 末块保留真实 `n_ticks` |
-| 排空顺序 | 从冻结窗口最旧块到最新块 |
-| 重复 ARM | 新 `state_seq`，旧窗口不污染新窗口 |
-| 非法 trigger slot/百分比 | BAD_PARAM，原状态不被破坏 |
+| rising/falling edge | `trig_tick` lands near the transition |
+| pre-trigger 0/30/50/100% | the pre/post ratio matches the config |
+| partial block | the last block preserves the true `n_ticks` |
+| drain order | from the oldest block of the frozen window to the newest |
+| repeated ARM | a new `state_seq`, the old window doesn't pollute the new window |
+| illegal trigger slot/percentage | BAD_PARAM, the original state isn't disturbed |
 
-触发冻结可在 CPU1 全速采集后经 115200 慢速排空；串口速度不得反向限制
-采样时基。
+A trigger freeze can capture at full speed on CPU1 and then drain slowly over 115200; the serial speed must not reverse-limit the sampling time base.
 
-## 14. 验证 G — 帧错误、拆包和重试
+## 14. Verification G — frame errors, split, and retry
 
-用 host 测试工具或临时 transport 注入：
+Inject with a host test tool or a temporary transport:
 
-| 注入 | 固件/Scope2000 预期 |
+| Injection | Firmware/Scope2000 expected |
 |---|---|
-| CRC 翻转 | `bad_frames++`，无响应，host 同 seq 重试 |
-| COBS 非法 | 丢弃到下一定界符后恢复 |
-| 超长无定界数据 | 进入 discard；下一 `0x00` 恢复 |
-| 一帧拆成多次串口读取 | 正常拼接 |
-| 多帧粘在一次读取 | 逐定界符解析 |
-| 错 seq 响应 | Scope2000 丢弃并继续等正确响应 |
-| 同 seq 重发 BLOCK_REQ | 返回同一批 block，不二次 release |
-| 未知消息码 | ACK(UNSUPPORTED) |
+| CRC flip | `bad_frames++`, no response, the host retries the same seq |
+| illegal COBS | discard to the next delimiter then recover |
+| over-length undelimited data | enter discard; recover at the next `0x00` |
+| one frame split across multiple serial reads | spliced normally |
+| multiple frames coalesced into one read | parse by delimiter |
+| wrong-seq response | Scope2000 discards it and keeps waiting for the correct response |
+| resend BLOCK_REQ with the same seq | returns the same batch of blocks, no second release |
+| unknown message code | ACK(UNSUPPORTED) |
 
-错误注入期间检查 CPU1 的 ISR 计数和保护状态，不能出现相关变化。
+During error injection, check CPU1's ISR counts and protection state — there must be no related change.
 
-## 15. 验证 H — 性能隔离与稳定波特率
+## 15. Verification H — performance isolation and stable baud rate
 
-### 15.1 CPU1 原生路径回归
+### 15.1 CPU1 native-path regression
 
-分别记录：
+Record separately:
 
-1. Scope OFF、Scope2000 未连接；
-2. Scope OFF、Scope2000 周期 STATUS；
-3. STREAM 正常消费；
-4. STREAM host 停止消费并发生 overrun；
-5. ARMED 全速采集和冻结排空。
+1. Scope OFF, Scope2000 not connected;
+2. Scope OFF, Scope2000 periodic STATUS;
+3. STREAM normal consumption;
+4. STREAM host stops consuming and an overrun occurs;
+5. ARMED full-speed capture and frozen drain.
 
-每档记录：
+For each tier record:
 
 ```text
 g_v2k_isr_cycles_max
@@ -641,70 +570,69 @@ g_v2k_isr_budget_violation_cnt
 g_v2k_tick
 ```
 
-通过条件：
+Pass conditions:
 
-- Scope OFF 时，是否连接 host 不得改变 CPU1 热路径；
-- STREAM/CAPTURE_ARMED 增加的 CPU1 成本只能来自 Phase 3 已定义的 scope producer；
-- CPU2 codec、串口、重试或断连不得增加 CPU1 block 编码、复制或轮询；
-- host 停止消费时 CPU1 不等待，最多增加 producer overrun。
+- with Scope OFF, whether the host is connected must not change the CPU1 hot path;
+- the CPU1 cost added by STREAM/CAPTURE_ARMED can come only from the scope producer defined in Phase 3;
+- the CPU2 codec, serial port, retry, or disconnect must not add CPU1 block encoding, copying, or polling;
+- when the host stops consuming, CPU1 doesn't wait, at most adding producer overrun.
 
-### 15.2 波特率阶梯
+### 15.2 Baud-rate ladder
 
-按以下候选逐档测试，不预设都能稳定：
+Test the following candidates tier by tier, not presuming all are stable:
 
 ```text
 115200 -> 230400 -> 460800 -> 921600 -> 1500000
 ```
 
-每档：
+For each tier:
 
-1. 固件与 Scope2000 使用相同 baud；
-2. 先跑 HELLO/ENUM/CAL/CMD；
-3. 再跑带宽预算内的 RUN；
-4. 连续至少 30 分钟；
-5. 记录 good/bad frame、RX overflow、重试、block gap、producer overrun。
+1. firmware and Scope2000 use the same baud;
+2. run HELLO/ENUM/CAL/CMD first;
+3. then run a RUN within the bandwidth budget;
+4. continuously for at least 30 minutes;
+5. record good/bad frame, RX overflow, retry, block gap, producer overrun.
 
-最终选择“持续运行无异常且有余量”的最高档，而不是短时间能连上的最高数字。
-修改固件固定 baud 时必须回 SysConfig，不在 C 源码另写寄存器覆盖。
+Finally choose the highest tier that "runs continuously without anomaly and with margin", not the highest number that connects briefly. When changing the firmware's fixed baud, go back to SysConfig, not a separate register override in the C source.
 
-## 16. FLASH 与断连 smoke test
+## 16. FLASH and disconnect smoke test
 
-RAM 全量通过后验证 CPU1/CPU2 FLASH：
+After RAM fully passes, verify CPU1/CPU2 FLASH:
 
-1. 断电重上电，不连接 CCS；
-2. 确认双核启动、保护封锁、CPU2 LED 和 VCP 枚举；
-3. Scope2000 完成 HELLO/ENUM；
-4. 跑一次参数 Commit、START/STOP、短 STREAM 和 CAPTURE_ARMED 冻结；
-5. 运行中拔插 USB/VCP；
-6. 确认 CPU1 控制与保护状态不受影响，恢复后可以重新建立会话。
+1. power-cycle, without connecting CCS;
+2. confirm dual-core boot, protection inhibit, the CPU2 LED, and VCP enumeration;
+3. Scope2000 completes HELLO/ENUM;
+4. run one parameter Commit, START/STOP, a short STREAM, and a CAPTURE_ARMED freeze;
+5. unplug/replug USB/VCP while running;
+6. confirm CPU1 control and protection state are unaffected, and a session can be re-established after recovery.
 
-## 17. 验收与退出
+## 17. Acceptance and exit
 
-| 验收项 | 通过条件 |
+| Acceptance item | Pass condition |
 |---|---|
-| SysConfig 职责 | CPU1 只生成 SCIA→CPU2 归属；CPU2 生成 SCIA/pinmux；业务 C 无静态覆盖 |
-| 四配置构建 | CPU1/CPU2 的 RAM/FLASH 均由 CCS `buildProject` 成功 |
-| 协议 conformance | Viewer vectors 与 Scope2000 tests 全通过 |
-| HELLO/ENUM/STATUS | 版本、能力、tick、hash、枚举与重枚举正确 |
-| CAL/CMD | 两阶段异步对账、拒绝语义和重试幂等正确 |
-| Scope Stream | 原生 block、partial block、连续序号和断口正确 |
-| Scope Capture | 触发、pre-trigger、冻结顺序和慢速排空正确 |
-| 错误恢复 | CRC/COBS/拆包/粘包/超时/seq 错配均可恢复 |
-| 隔离性 | host/CPU2 异常不影响 CPU1 tick、ISR 预算和保护 |
-| 波特率 | 找到并记录最高长期稳定档 |
-| 品牌扫描 | Scope2000 public tracked 内容通过 `check-brand.py` |
+| SysConfig responsibility | CPU1 only generates the SCIA→CPU2 ownership; CPU2 generates SCIA/pinmux; the business C has no static override |
+| four-config build | CPU1/CPU2 RAM/FLASH all succeed via CCS `buildProject` |
+| protocol conformance | Viewer vectors and Scope2000 tests all pass |
+| HELLO/ENUM/STATUS | version, capability, tick, hash, enumeration and re-enumeration correct |
+| CAL/CMD | two-stage async reconcile, rejection semantics, and retry idempotency correct |
+| Scope Stream | native block, partial block, contiguous sequence, and gaps correct |
+| Scope Capture | trigger, pre-trigger, freeze order, and slow drain correct |
+| error recovery | CRC/COBS/split/coalesce/timeout/seq-mismatch all recoverable |
+| isolation | host/CPU2 anomalies don't affect CPU1 tick, ISR budget, and protection |
+| baud rate | the highest long-term-stable tier found and recorded |
+| brand scan | Scope2000 public tracked content passes `check-brand.py` |
 
-写入 `BRINGUP.md`：
+Write into `BRINGUP.md`:
 
-- 日期、板卡、CCS/C2000Ware 版本；
-- Viewer2000 与 Scope2000 commit；
-- CPU1/CPU2 RAM/FLASH build 结论；
-- `V2K_ISR_HZ`、wire/contract、build hash；
-- SysConfig 生成的 SCIA CPUSEL、GPIO42/43、baud 与 FIFO 配置；
-- 每档 baud、持续时间和有效载荷配置；
-- good/bad frame、RX overflow、host retry；
-- block gap、producer overrun、frozen count；
-- 五种性能隔离场景的 CPU1 cycle/overflow/budget 数据；
-- 参数、命令、STREAM、CAPTURE_ARMED、断连和 FLASH smoke test 结论。
+- date, board, CCS/C2000Ware version;
+- Viewer2000 and Scope2000 commits;
+- CPU1/CPU2 RAM/FLASH build conclusion;
+- `V2K_ISR_HZ`, wire/contract, build hash;
+- the SysConfig-generated SCIA CPUSEL, GPIO42/43, baud, and FIFO config;
+- per-tier baud, duration, and payload config;
+- good/bad frame, RX overflow, host retry;
+- block gap, producer overrun, frozen count;
+- the five performance-isolation scenarios' CPU1 cycle/overflow/budget data;
+- parameter, command, STREAM, CAPTURE_ARMED, disconnect, and FLASH smoke-test conclusions.
 
-只有本节全部通过并形成实测记录后，Phase 3.5 才算完成。
+Only after this whole section passes and forms a measurement record is Phase 3.5 considered done.

@@ -1,223 +1,136 @@
-# Phase 2 — 时基证明 + 保护：操作与验证清单
+# Phase 2 — Time-base proof + protection: operating and verification checklist
 
-> ✅ **2026-06-13 验收通过**（LAUNCHXL-F28P65X 实物）。验证 A/B/C/D 全部实测，
-> 期间修掉两个根因——SOC 源 codegen bug（tick 卡 0）与保护门控两 bug（开机带电
-> 自由跑 / 伪 trip 卡 RUNNING）。**实测值与调试历史见 [BRINGUP.md](../BRINGUP.md)
-> Phase 2 记录区**；本清单保留作操作参照。
+> ✅ **2026-06-13 acceptance passed** (LAUNCHXL-F28P65X hardware). Verifications A/B/C/D all measured; along the way two root causes were fixed — the SOC-source codegen bug (tick stuck at 0) and the two protection-gating bugs (power-up energized free-run / spurious trip stuck in RUNNING). **Measured values and debug history are in [BRINGUP.md](../BRINGUP.md) Phase 2 record area**; this checklist is kept as an operating reference.
 
-分工沿用既定原则并细化：**SysConfig 管静态硬件**（引脚、波形、死区、SOC、
-TZ 保护链——引擎校验冲突与 errata），**C 管运行时**（ISR 内容与注册、状态机、
-占空比、TBCLKSYNC 放行时序）**外加契约自检**——`v2k_tb_check` 上电把安全
-关键配置从寄存器读回与 `V2K_ISR_HZ` 对账，不一致停 ESTOP0（与
-`v2k_assert_layout` 同模式）。**syscfg 配置和 C 常量两边都改才跑得起来。**
+The division of labor follows the established principle, refined: **SysConfig owns static hardware** (pins, waveform, dead-time, SOC, the TZ protection chain — engine-validated for conflicts and errata), **C owns runtime** (ISR content and registration, state machine, duty cycle, TBCLKSYNC release timing) **plus the contract self-check** — at power-up `v2k_tb_check` reads safety-critical config back from the registers and reconciles it with `V2K_ISR_HZ`, halting at ESTOP0 on mismatch (same pattern as `v2k_assert_layout`). **Both the syscfg config and the C constants must be changed for it to run.**
 
-我已完成的部分（仅供对照）：
+The parts I've already done (for reference):
 
-| 产物 | 内容 |
+| Artifact | Content |
 |---|---|
-| `cpu1/v2k_timebase.c/.h` | 控制 ISR（探针 GPIO2、tick、延迟 min/max）、契约自检、EPWMCLKDIV=/1（errata）、占空比写入、TBCLKSYNC 放行 |
-| `cpu1/v2k_fault.c/.h` | 故障锁存状态机 IDLE/RUNNING/FAULT、命令受理 START/STOP/CLEAR_FAULT、TZ 中断、Board_init 前的抢先 OST 封锁（arm） |
-| `cpu1/cpu1.c` | 保护先行时序：关 TBCLKSYNC + arm → Board_init → 自检/注册 → 放行；慢环跑 v2k_fault_poll |
-| `contracts/v2k_command.h` | 故障码 V2K_FAULT_NONE / V2K_FAULT_TZ1_EXT（仅 #define，布局与 CONTRACT_VER 不动） |
+| `cpu1/v2k_timebase.c/.h` | control ISR (probe GPIO2, tick, latency min/max), contract self-check, EPWMCLKDIV=/1 (errata), duty write, TBCLKSYNC release |
+| `cpu1/v2k_fault.c/.h` | fault-latch state machine IDLE/RUNNING/FAULT, command acceptance START/STOP/CLEAR_FAULT, TZ interrupt, pre-Board_init preemptive OST inhibit (arm) |
+| `cpu1/cpu1.c` | protection-first timing: disable TBCLKSYNC + arm → Board_init → self-check/register → release; the slow loop runs v2k_fault_poll |
+| `contracts/v2k_command.h` | fault codes V2K_FAULT_NONE / V2K_FAULT_TZ1_EXT (only #define, layout and CONTRACT_VER unchanged) |
 
-关键决策（定稿）：
+Key decisions (finalized):
 
-- **EPWMCLKDIV = /1（EPWMCLK = 200 MHz）**：F28P65x errata——/2 时 TZFRC/TZCLR
-  偶发丢失，本平台封锁/放行全靠这两个寄存器（syscfg 校验提示的就是这条）。
-  配置来源 = syscfg 时钟树（**Device Support 模块**生成的 Device_init 取代
-  手写模板 device.c，时钟单一来源、引擎校验生效，见 §1.0）；C 侧只读回
-  断言（v2k_tb_check 第一项），检查 syscfg 的工作而非自己的回声。
-- **周期是双源头——已知缺陷，对账兜底，不是优点**：同一物理量（PWM 周期）
-  存在于 syscfg 的 Period 字段与 C 侧 `V2K_ISR_HZ` 推导值两处。这是两条
-  单一来源路线都走不通后的被迫取舍：(a) 全进 syscfg 不可能——C 侧静态断言、
-  ISR 频率相关逻辑、将来示波器降采样比换算都必须持有这个数；(b) 全在 C
-  已被否决——丢掉引擎校验与 errata 提示，代价已实证更大（EPWMCLKDIV 那条
-  errata 就是引擎抓的）。`v2k_tb_check` 的作用不是让双源头变好，而是把它
-  最危险的故障模式——**两边不一致还静默运行**——转成上电即停的显性错误；
-  维护税是真实的：改频率必须动两处（见 §2 第 3 条）。收敛方向（Phase 3
-  描述符表落地、频率档位成为平台参数后）：由构建脚本从单一定义生成两边——
-  syscfg 文件禁的是 Write/Edit 手改，工具链脚本化生成是另一回事。Phase 2
-  只有一个参数两个档位，对账顶着，成本可控。
-- **FREE_SOFT = FREE_RUN + TZ6 CBC**。FREE_RUN 的三层语义，受益者各不同。
-  先把"相位"说清楚：**不是电机的相位**，指的是 **TBCTR 在自己载波周期里的
-  位置**——0→PRD→0 的三角波数到哪儿了——及其派生的全部定时关系（SOC 触发点
-  CTR=ZERO、死区边沿、将来三相逆变时同步组里各 ePWM 模块间的相对对齐），
-  与电机转子电角度无关：
-  ① **载波定时连续**——STOP 模式的具体毛病：halt 时计数器冻在任意位置
-  （比如冻在高电平段中间），输出就钉在那个电平直到 resume；resume 后计数器
-  从冻结点继续，第一个周期是个"残缺拍"——SOC 时刻、占空比、死区都从任意
-  中间状态恢复，示波器上 halt 前后波形畸形一拍；带功率级且没有 TZ6 时，
-  "钉在高电平"就是往绕组灌直流的危险场景。FREE_RUN 下计数器照走，ePWM→ADC
-  硬件链在 halt 期间一致推进（SOC 仍在 CTR=ZERO 准时发），resume 的第一拍
-  就是完整正常的拍，无恢复瞬态。诚实地说，这层在 Phase 2 当下分量不大；
-  ② **硬件可观测**——SOC 是 ePWM→ADC 硬件触发不经 CPU，halt 期间转换照常、
-  结果寄存器照更新，halt 下用 CCS 看寄存器是活的。注意：普通 halt 时 ISR
-  不执行、tick 不走，**没有**软件意义上的数据流，电流环当然也不算；
-  ③ **真正分量重的理由**——给 CCS 实时模式（平台既定主交互方式，Phase 3 后
-  启用）铺路：ISR 标记 time-critical 后，后台代码 halt 时控制 ISR 照常执行，
-  那个场景下数据流才真的不断，而它成立的前提就是 TBCTR 不能停。FREE_RUN
-  本质是为该模式预设的，"resume 无瞬态"是顺带的当下收益。
-  halt 时的**输出安全**从来不归 FREE_SOFT 管，归 TZ6 CBC（resume 自动恢复）。
-  **电机相位是另一回事，任何 FREE_SOFT 配置都管不了**：转子在 halt 期间
-  照常转，普通 halt 一秒钟，控制环恢复时和转子位置早就脱节了，该有的控制
-  瞬态一点不少——这正是带电调试的既定方式是实时模式（环不停、只 halt 后台），
-  而不是指望某个寄存器配置让普通断点对运行中的电机变得无害。
-- **IDLE/FAULT 都是 OST 锁存封锁**，唯一放行路径 = APP_START 清锁存，
-  全程无"输出短暂放开"窗口；trip 源未消失立即重入 FAULT。
-- **TZ 动作 = A/B 强制拉低**：对齐目标功率级 DRV8323R（INHx=INLx=0 → 全关 →
-  惰转）；nFAULT 将来多挂一路 TZ 源即可。CMPSS 模拟源推迟到电流采样引脚定型。
+- **EPWMCLKDIV = /1 (EPWMCLK = 200 MHz)**: F28P65x errata — at /2, TZFRC/TZCLR are occasionally lost, and this platform's inhibit/release relies entirely on those two registers (this is exactly what the syscfg validation hint flags). Config source = the syscfg clock tree (the Device_init generated by the **Device Support module** replaces the hand-written template device.c — single clock source, engine validation in effect, see §1.0); the C side only reads it back to assert (the first item of v2k_tb_check), checking syscfg's work rather than its own echo.
+- **The period has two sources — a known defect, backstopped by reconciliation, not a virtue**: the same physical quantity (PWM period) exists in two places, syscfg's Period field and the C-side `V2K_ISR_HZ`-derived value. This is a forced trade-off after both single-source routes proved unworkable: (a) all-in-syscfg is impossible — the C-side static assertions, frequency-dependent ISR logic, and the future scope decimation-ratio conversion all must hold this number; (b) all-in-C is rejected — losing engine validation and errata hints, a cost already proven larger (that EPWMCLKDIV errata is exactly what the engine caught). The role of `v2k_tb_check` is not to make the dual source good, but to convert its most dangerous failure mode — **the two sides disagreeing while running silently** — into an explicit power-up halt; the maintenance tax is real: changing the frequency requires changing both places (see §2 item 3). Convergence direction (after the Phase 3 descriptor table lands and frequency tiers become a platform parameter): a build script generates both sides from a single definition — the syscfg file forbids manual Write/Edit, but toolchain-scripted generation is a different matter. Phase 2 has only one parameter with two tiers, the reconciliation holds, cost is manageable.
+- **FREE_SOFT = FREE_RUN + TZ6 CBC.** FREE_RUN's three layers of semantics each benefit a different party. First, "phase" clarified: **not the motor's phase**, it means **TBCTR's position within its own carrier period** — where the 0→PRD→0 triangle has counted to — and all the timing relations derived from it (the SOC trigger point CTR=ZERO, dead-time edges, the relative alignment between ePWM modules in the sync group during future three-phase inversion), unrelated to the motor rotor's electrical angle:
+  ① **carrier-timing continuity** — the specific flaw of STOP mode: on halt the counter freezes at an arbitrary position (e.g. mid-way through a high segment), and the output is pinned to that level until resume; after resume the counter continues from the freeze point, and the first period is a "partial tick" — the SOC instant, duty, and dead-time all recover from an arbitrary intermediate state, the waveform distorted for one tick around the halt; with a power stage and no TZ6, "pinned to high" is the dangerous scenario of pouring DC into the windings. Under FREE_RUN the counter keeps running, the ePWM→ADC hardware chain advances consistently during halt (SOC still fires on time at CTR=ZERO), and resume's first tick is a complete normal tick, no recovery transient. Honestly, this layer carries little weight at Phase 2 right now;
+  ② **hardware observability** — SOC is an ePWM→ADC hardware trigger that doesn't go through the CPU; during halt the conversion proceeds and the result register keeps updating, so reading registers in CCS during halt is live. Note: on an ordinary halt the ISR doesn't execute and the tick doesn't advance, so there is **no** data flow in the software sense, and the current loop of course doesn't count either;
+  ③ **the genuinely weighty reason** — paving the way for CCS real-time mode (the platform's established primary interaction mode, enabled after Phase 3): once the ISR is marked time-critical, the control ISR keeps executing while the background code is halted, and only in that scenario is the data flow truly uninterrupted — and its precondition is that TBCTR must not stop. FREE_RUN is essentially preset for that mode; "no transient on resume" is the incidental present-day benefit.
+  The **output safety** on halt was never FREE_SOFT's job, it belongs to TZ6 CBC (auto-recovers on resume).
+  **Motor phase is a different matter, no FREE_SOFT config can manage it**: the rotor keeps turning during halt; an ordinary one-second halt and the control loop will be long out of sync with the rotor position on recovery, with every control transient intact — which is exactly why the established way to debug energized is real-time mode (the loop never stops, only the background halts), not hoping some register config makes an ordinary breakpoint harmless to a running motor.
+- **IDLE/FAULT are both OST-latch inhibit**, the only release path = APP_START clears the latch, with no "output briefly released" window throughout; if the trip source hasn't cleared, it immediately re-enters FAULT.
+- **TZ action = A/B force low**: aligned with the target power stage DRV8323R (INHx=INLx=0 → all off → coast); nFAULT can later hang one more TZ source. The CMPSS analog source is deferred until the current-sense pins are finalized.
 
 ---
 
-## 1. SysConfig 配置清单（cpu1 工程的 sysconfig_cpu1.syscfg）
+## 1. SysConfig configuration checklist (cpu1 project's sysconfig_cpu1.syscfg)
 
-现有 LED_CPU1 / LED_CPU2 实例**不动**。逐模块添加：
+The existing LED_CPU1 / LED_CPU2 instances are **untouched**. Add module by module:
 
-**1.0 Device Support + 时钟树（两个工程都做）**——让 syscfg 生成的
-device.c/device.h **取代**手写模板（替换而非并存；模板可读性差、无校验，
-时钟从此单一来源、引擎校验生效）：
+**1.0 Device Support + clock tree (do in both projects)** — let the syscfg-generated device.c/device.h **replace** the hand-written template (replace, not coexist; the template is poorly readable and unvalidated; the clock henceforth has a single source with engine validation in effect):
 
-1. cpu1 与 cpu2 的 syscfg 各自添加 **Device Support** 模块（选项保持默认）。
-   cpu2 侧会出黄色警告 *"You will not be able to use clocking functions,
-   unless both CPU1 and CPU2 are open in SysConfig"*——**预期且无害**
-   （logWarning 不阻断生成）：单开 CPU2 上下文时时钟功能不可用，而 CPU2
-   本来就被规则 5 禁止碰时钟，生成的 cpu2 device.c 自动不含时钟代码，
-   这条警告等于工具在替架构守规矩。想让它消失的正路是 CCS 系统工程双
-   上下文同开 syscfg（仓库 `dual_sysconfig_multi/` 是 Phase 1 例程遗留的
-   系统工程，project 名还指向 TI 例程，改成我们的工程名即可用——可选
-   收尾活，不挡 Phase 2）；
-2. cpu1 的 Clock Tree：确认 **SYSCLK = 200 MHz**（25 MHz XTAL → PLL，应为
-   默认），**EPWMCLKDIV 改 /1**——那条 TZFRC/TZCLR errata 警告此时应消失，
-   EPWM 模块显示的频率/死区时间也恢复正确（Period=5000 → 20 kHz）。
-   cpu2 不动时钟（生成代码自带 CPU2 守护，不会重配 PLL）；
-3. **排除模板文件**（CCS 工程操作）：两个工程的 `device/device.c` 与
-   `device/device.h` 从构建中排除或删除；`device/driverlib.h` 与
-   `device/driverlib/` **保留**。若链接报 `code_start` 重复定义，把
-   `device/f28p65x_codestartbranch.asm` 也排除（生成侧已含 code start）；
-4. 此迁移动了两核启动路径——上板时先跑一遍 **Phase 1 回归**（双灯/握手/
-   ping-pong/心跳）再做 Phase 2 验证，结果记 BRINGUP。
+1. Add the **Device Support** module to each of cpu1's and cpu2's syscfg (keep options at default). The cpu2 side shows a yellow warning *"You will not be able to use clocking functions, unless both CPU1 and CPU2 are open in SysConfig"* — **expected and harmless** (logWarning doesn't block generation): with only the CPU2 context open the clock functions are unavailable, and CPU2 is forbidden by rule 5 from touching the clock anyway, so the generated cpu2 device.c automatically contains no clock code — this warning is the tool keeping the architecture's rules. The proper way to make it disappear is a CCS system project with both contexts open in syscfg (the repo's `dual_sysconfig_multi/` is a system project left over from the Phase 1 example, the project name still points at the TI example; change it to our project name to use it — an optional wrap-up task, doesn't block Phase 2);
+2. cpu1's Clock Tree: confirm **SYSCLK = 200 MHz** (25 MHz XTAL → PLL, should be the default), **change EPWMCLKDIV to /1** — that TZFRC/TZCLR errata warning should now disappear, and the frequency/dead-time the EPWM module shows are restored to correct (Period=5000 → 20 kHz). cpu2 doesn't touch the clock (the generated code carries its own CPU2 guard and won't reconfigure the PLL);
+3. **Exclude the template files** (CCS project operation): exclude or delete both projects' `device/device.c` and `device/device.h` from the build; **keep** `device/driverlib.h` and `device/driverlib/`. If the link reports a duplicate definition of `code_start`, also exclude `device/f28p65x_codestartbranch.asm` (the generated side already includes the code start);
+4. This migration changes both cores' boot path — on board, run a **Phase 1 regression** (both LEDs / handshake / ping-pong / heartbeat) before doing the Phase 2 verification, and record the result in BRINGUP.
 
-SYSCTL 外设时钟里 **TBCLKSYNC 保持默认不勾**（放行时序归 C，保护先行；
-C 侧无论生成代码开没开都会先显式关掉再 arm，顺序不依赖生成细节）。
+In SYSCTL peripheral clocks, **leave TBCLKSYNC unchecked at its default** (the release timing belongs to C, protection-first; the C side always explicitly disables it first then arms, regardless of whether the generated code enables it, so the order doesn't depend on generation details).
 
-**1.1 EPWM 实例**（建议命名 `PWM_TB`，名字不影响 C 代码——C 用 EPWM1_BASE）：
+**1.1 EPWM instance** (suggested name `PWM_TB`, the name doesn't affect the C code — C uses EPWM1_BASE):
 
-| 子模块 | 配置 |
+| Submodule | Config |
 |---|---|
-| PinMux | 外设 EPWM1，A→**GPIO0**，B→**GPIO1** |
-| Time Base | Period = **5000**（=20 kHz @200 MHz up-down）；Counter Mode = **Up-Down**；Clock Divider 与 HS Clock Divider 都 **/1**；Phase 关闭；**Emulation Mode = Free Run** |
-| Counter Compare | 不用配（CMPA 是运行时量，C 写 3750 = 25% 占空比） |
-| Action Qualifier | Output A：CTR=CMPA（递增）→ **HIGH**；CTR=CMPA（递减）→ **LOW**；其余事件不动作 |
-| Dead-Band | RED 与 FED 都启用；输入都选 **ePWMA**；FED 极性反相（Active-High Complementary）；RED = FED = **200**（=1 µs @200 MHz） |
-| Event-Trigger | 使能 **SOCA**；触发源 = **CTR=ZERO**；event prescale = 1 |
-| Trip Zone | One-Shot 源勾 **TZ1**；CBC 源勾 **TZ6**（emulator stop）；TZA action = **force low**；TZB action = **force low**；**TZ 中断不要在这里使能**（C 侧统一注册+使能，避免双源） |
+| PinMux | peripheral EPWM1, A→**GPIO0**, B→**GPIO1** |
+| Time Base | Period = **5000** (=20 kHz @200 MHz up-down); Counter Mode = **Up-Down**; Clock Divider and HS Clock Divider both **/1**; Phase off; **Emulation Mode = Free Run** |
+| Counter Compare | no config needed (CMPA is a runtime value, C writes 3750 = 25% duty) |
+| Action Qualifier | Output A: CTR=CMPA (up) → **HIGH**; CTR=CMPA (down) → **LOW**; no action on other events |
+| Dead-Band | enable both RED and FED; inputs both select **ePWMA**; FED polarity inverted (Active-High Complementary); RED = FED = **200** (=1 µs @200 MHz) |
+| Event-Trigger | enable **SOCA**; trigger source = **CTR=ZERO**; event prescale = 1 |
+| Trip Zone | One-Shot source check **TZ1**; CBC source check **TZ6** (emulator stop); TZA action = **force low**; TZB action = **force low**; **do not enable the TZ interrupt here** (C registers + enables it uniformly, to avoid a dual source) |
 
-**1.2 ADC 实例**（ADCA）：
+**1.2 ADC instance** (ADCA):
 
-- 时钟 prescale **/4**（ADCCLK 50 MHz）；Reference = **External**（板载 REF6230
-  3.0 V，需 J15 短接）；
-- SOC0：触发 = **EPWM1 SOCA**；通道 = **A0**；采样窗 ≥ **100 ns**（≈20 SYSCLK）；
-- INT1：使能，源 = **EOC0/SOC0**；**不要勾 register interrupt handler**（C 注册）。
+- clock prescale **/4** (ADCCLK 50 MHz); Reference = **External** (onboard REF6230 3.0 V, needs J15 shorted);
+- SOC0: trigger = **EPWM1 SOCA**; channel = **A0**; sample window ≥ **100 ns** (≈20 SYSCLK);
+- INT1: enable, source = **EOC0/SOC0**; **do not check register interrupt handler** (C registers it).
 
-**1.3 DAC 实例**（DACA）：Reference = **ADC VREFHI**；Enable Output；
-初值（shadow value）= **2048**。（与 ADCINA0 共脚 = BP1 排针 30 会带 ~1.5 V
-直流，该排针留空。）
+**1.3 DAC instance** (DACA): Reference = **ADC VREFHI**; Enable Output; initial (shadow value) = **2048**. (Shares a pin with ADCINA0 = BP1 header pin 30 will carry ~1.5 V DC; leave that header empty.)
 
-**1.4 INPUT X-BAR**：INPUT1 = **GPIO3**。
+**1.4 INPUT X-BAR**: INPUT1 = **GPIO3**.
 
-**1.5 GPIO 两个实例**：
+**1.5 Two GPIO instances**:
 
-| 实例名建议 | 引脚 | 配置 |
+| Suggested instance name | Pin | Config |
 |---|---|---|
-| `ISR_PROBE` | GPIO2 | 输出，推挽，初值 0 |
-| `TZ_EXT` | GPIO3 | 输入，**Pull-Up**，Qualification = **Async** |
+| `ISR_PROBE` | GPIO2 | output, push-pull, initial 0 |
+| `TZ_EXT` | GPIO3 | input, **Pull-Up**, Qualification = **Async** |
 
-保存生成后把 diff 给我 review（或直接 commit，我看生成的 board.c/board.h）。
+After save/generate, give me the diff to review (or just commit, I'll look at the generated board.c/board.h).
 
-## 2. 构建
+## 2. Build
 
-1. 两工程仍用 **RAM** 配置；`v2k_timebase.c` / `v2k_fault.c` 在 cpu1 工程目录内
-   自动入编译。先 build cpu1 再 cpu2，预期 0 error；
-2. IDE 编辑器里的红波浪线（clangd 解析 TI 头文件失败）是宿主端噪声，
-   **以 cl2000 构建结果为准**；
-3. 100 kHz 压测时：syscfg 的 Period 改 **1000** + 编译器 Predefined Symbols 加
-   `V2K_ISR_HZ=100000`，**两边都改**——只改一边会停在 v2k_tb_check 的
-   ESTOP0（这正是自检的作用）。测完都改回去。
+1. Both projects still use the **RAM** config; `v2k_timebase.c` / `v2k_fault.c` inside the cpu1 project directory are auto-included in the build. Build cpu1 first then cpu2, expect 0 errors;
+2. The red squiggles in the IDE editor (clangd failing to parse TI headers) are host-side noise — **go by the cl2000 build result**;
+3. For the 100 kHz stress test: change syscfg's Period to **1000** + add `V2K_ISR_HZ=100000` to the compiler Predefined Symbols, **change both sides** — changing only one halts at v2k_tb_check's ESTOP0 (which is exactly the self-check's job). Change both back after testing.
 
-## 3. 调试会话
+## 3. Debug session
 
-顺序与 phase1-sysconfig.md §4 完全相同（Connect CPU1 → Load → Resume →
-Connect CPU2 → Load → Resume）。窗口期 CPU1 的 `g_nmi_cnt` 照例 +1
-（CPU2WDRS，已实测确证），不是异常。
+The order is exactly the same as phase1-sysconfig.md §4 (Connect CPU1 → Load → Resume → Connect CPU2 → Load → Resume). During the window CPU1's `g_nmi_cnt` +1 as usual (CPU2WDRS, already measured and confirmed), not an anomaly.
 
-⚠️ 若 CPU1 停在 ESTOP0：先查是不是 `v2k_tb_check`（PC 在 v2k_timebase.c）——
-syscfg 配置与 C 常量没对上（EPWMCLKDIV、Period、TZ 源、TZ 动作、Emulation
-Mode 六项），对照 §1.0/§1.1 改齐重来。
+⚠️ If CPU1 stops at ESTOP0: first check whether it's `v2k_tb_check` (PC in v2k_timebase.c) — the syscfg config and a C constant don't match (the six items: EPWMCLKDIV, Period, TZ source, TZ action, Emulation Mode), align per §1.0/§1.1 and retry.
 
-## 4. 验证 A — 时基与 ISR（CPU1 会话 Expressions，开 Continuous Refresh）
+## 4. Verification A — time base and ISR (CPU1 session Expressions, enable Continuous Refresh)
 
-| 表达式 | 预期 |
+| Expression | Expected |
 |---|---|
-| `g_v2k_tick` | 持续递增，速率 ≈ 20000/s（掐表两次读数差验证） |
-| `g_v2k_adc_a0` | ≈ 2048 ± 噪声（DACA 中位）。接近 0 或乱漂 → 查 J15 与 §1.3 |
-| `g_v2k_isr_lat` / `_min` / `_max` | 典型一两百（单位 5 ns，含 ADC 转换常数偏置）；**max−min = 软件视角抖动**，绝对延迟看示波器 |
-| `g_v2k_isr_ovf_cnt` | 恒 0（非 0 = ISR 超时丢拍，立刻报我） |
-| `g_v2k_msg_1to2.cpu1_status.tick` | 与 g_v2k_tick 同步前进（慢环快照） |
-| `g_v2k_sm_state` | 1（IDLE，上电默认封锁） |
-| Phase 1 全部观测项 | 回归通过（ping/pong、心跳、双灯） |
+| `g_v2k_tick` | keeps incrementing, rate ≈ 20000/s (verify by the difference of two timed readings) |
+| `g_v2k_adc_a0` | ≈ 2048 ± noise (DACA mid-scale). Near 0 or drifting → check J15 and §1.3 |
+| `g_v2k_isr_lat` / `_min` / `_max` | typically one-to-two hundred (unit 5 ns, includes the ADC-conversion constant offset); **max−min = jitter from the software view**, absolute latency on the scope |
+| `g_v2k_isr_ovf_cnt` | constant 0 (non-zero = ISR overran and missed a tick, report me immediately) |
+| `g_v2k_msg_1to2.cpu1_status.tick` | advances in sync with g_v2k_tick (slow-loop snapshot) |
+| `g_v2k_sm_state` | 1 (IDLE, power-up default inhibit) |
+| All Phase 1 observables | regression passes (ping/pong, heartbeat, both LEDs) |
 
-注意：IDLE 态 PWM 输出被 OST 封死（GPIO0/1 无波形是**正常**），但时基与
-ISR 照跑——TZ 只封输出不停时基，验证 A 不需要先发 START。
+Note: in IDLE the PWM output is inhibited by OST (no waveform on GPIO0/1 is **normal**), but the time base and ISR keep running — TZ only inhibits the output, it doesn't stop the time base; verification A doesn't need a START first.
 
-## 5. 验证 B — 示波器实测（先按 §6 发 START 让波形出来）
+## 5. Verification B — scope measurement (send START per §6 first to bring up the waveform)
 
-接线：CH1 → J8 排针 **78**（EPWM1A），CH2 → 排针 **77**（EPWM1B），
-CH3 → 排针 **80**（ISR 探针），GND → 排针 60/62。
+Wiring: CH1 → J8 header **78** (EPWM1A), CH2 → header **77** (EPWM1B), CH3 → header **80** (ISR probe), GND → header 60/62.
 
-1. **波形形态**：CH1/CH2 互补 20 kHz，CH1 占空比 ≈25%；放大边沿交接处看
-   两路**同低 1 µs**（死区）；
-2. **抖动**：触发选 CH1 上升沿（PWM 由晶振决定，是刚性参考），无限余辉，
-   看 **CH3 上升沿的时间散布** = 中断抖动实测。20 kHz 与 100 kHz 各记一组；
-3. **ISR 耗时**：CH3 脉冲宽度（Phase 2 ISR 极短，预期 <1 µs）；
-4. **halt 安全（FREE_SOFT 决策实证）**：Suspend CPU1 → CH1/CH2 立即变低
-   （TZ6 CBC），Resume → 波形下个周期自动恢复、`g_v2k_tick` 继续递增、
-   状态机仍是 RUNNING。可顺带在示波器上确认 resume 后**第一拍就是完整拍**
-   （周期/占空比/死区与稳态一致）——"残缺拍"只属于 STOP 模式，这就是
-   FREE_RUN 载波定时连续的直接实证。记入 BRINGUP。
+1. **Waveform shape**: CH1/CH2 complementary 20 kHz, CH1 duty ≈25%; zoom into the edge handover to see both **low for 1 µs** (dead-time);
+2. **Jitter**: trigger on the CH1 rising edge (PWM is determined by the crystal, a rigid reference), infinite persistence, look at the **time spread of the CH3 rising edge** = measured interrupt jitter. Record one set each at 20 kHz and 100 kHz;
+3. **ISR duration**: CH3 pulse width (the Phase 2 ISR is very short, expected <1 µs);
+4. **halt safety (FREE_SOFT decision verification)**: Suspend CPU1 → CH1/CH2 immediately go low (TZ6 CBC), Resume → the waveform auto-recovers on the next cycle, `g_v2k_tick` keeps incrementing, the state machine is still RUNNING. You can incidentally confirm on the scope that after resume **the first tick is a complete tick** (period/duty/dead-time consistent with steady-state) — the "partial tick" belongs only to STOP mode; this is the direct proof of FREE_RUN carrier-timing continuity. Record in BRINGUP.
 
-## 6. 验证 C — 命令与 trip（命令必须从 CPU2 会话戳：MSGRAM 硬件单向写权限）
+## 6. Verification C — commands and trip (commands must be poked from the CPU2 session: MSGRAM hardware unidirectional write permission)
 
-CPU2 会话 Expressions 加 `g_v2k_msg_2to1.cmd_req` 展开。发布协议：先填
-`cmd_code`，**最后写 `cmd_seq` = 旧值+1**。CPU1 侧观察 `cpu1_status`：
+In the CPU2 session Expressions, add `g_v2k_msg_2to1.cmd_req` and expand it. Publish protocol: fill `cmd_code` first, **write `cmd_seq` = old value+1 last**. On the CPU1 side observe `cpu1_status`:
 
-| 步骤 | 操作（CPU2 会话） | 预期（CPU1 侧 + 示波器） |
+| Step | Action (CPU2 session) | Expected (CPU1 side + scope) |
 |---|---|---|
-| 1 | cmd_code=1, cmd_seq=1（START） | ack_seq=1, cmd_result=0, sys_state=2；**波形出现** |
-| 2 | cmd_code=2, cmd_seq=2（STOP） | sys_state=1；波形消失；g_v2k_tz_int_cnt **不变**（STOP 先关中断再 force OST，不进 ISR） |
-| 3 | 再 START（seq=3），然后**插跳线** GPIO3（J8 排针 79）→GND | 波形即刻消失；sys_state=3, fault_code=1 |
-| 4 | 带跳线 CLEAR_FAULT（cmd_code=3, seq=4） | 仍 FAULT（源未消失，契约语义） |
-| 5 | 拔跳线 → CLEAR_FAULT（seq=5） | sys_state=1（IDLE） |
-| 6 | START（seq=6） | sys_state=2，波形恢复 |
-| 7 | 错误注入：IDLE 时发 STOP | cmd_result=2（BAD_STATE），状态不变 |
+| 1 | cmd_code=1, cmd_seq=1 (START) | ack_seq=1, cmd_result=0, sys_state=2; **waveform appears** |
+| 2 | cmd_code=2, cmd_seq=2 (STOP) | sys_state=1; waveform disappears; g_v2k_tz_int_cnt **unchanged** (STOP disables the interrupt first then forces OST, doesn't enter the ISR) |
+| 3 | START again (seq=3), then **insert a jumper** GPIO3 (J8 header 79) → GND | waveform disappears immediately; sys_state=3, fault_code=1 |
+| 4 | CLEAR_FAULT with the jumper in (cmd_code=3, seq=4) | still FAULT (source hasn't cleared, contract semantics) |
+| 5 | remove the jumper → CLEAR_FAULT (seq=5) | sys_state=1 (IDLE) |
+| 6 | START (seq=6) | sys_state=2, waveform restored |
+| 7 | error injection: send STOP while in IDLE | cmd_result=2 (BAD_STATE), state unchanged |
 
-加分实测（规则 2「保护不经过 CPU」的直接证据）：CH3 改探 GPIO3，单次触发
-其下降沿，量 **GPIO3↓ → EPWM1A↓ 的延迟**——纯硬件路径应 <100 ns；而
-fault_code 变化在毫秒级慢环。两个时间尺度差 4 个量级，就是硬件保护链与
-软件状态机的分界实证。
+Bonus measurement (direct evidence of rule 2 "protection doesn't go through the CPU"): move CH3 to probe GPIO3, single-trigger on its falling edge, measure the **GPIO3↓ → EPWM1A↓ latency** — the pure-hardware path should be <100 ns; whereas the fault_code change is in the millisecond slow loop. The two timescales differ by 4 orders of magnitude — that's the proof of the boundary between the hardware protection chain and the software state machine.
 
-可选加分：RUNNING 中 halt CPU1 → 插跳线 → Resume → 立即 FAULT
-（OST 在 halt 期间已被硬件锁存，trip 不需要 CPU 活着）。
+Optional bonus: in RUNNING halt CPU1 → insert jumper → Resume → immediately FAULT (OST was hardware-latched during halt, the trip doesn't need the CPU alive).
 
-## 7. 验证 D — 100 kHz 压测
+## 7. Verification D — 100 kHz stress test
 
-按 §2 第 3 条同时改 syscfg Period=1000 与 `-D V2K_ISR_HZ=100000`，重建重载，
-重复 §4/§5：tick ≈ 1e5/s、lat min/max、ovf==0、波形/死区完好。**20 kHz 与
-100 kHz 两组数据都记 BRINGUP**——平台频率锚点（20–100 kHz 待定档）的第一份
-实测依据。测完两边都还原。
+Per §2 item 3, change syscfg Period=1000 and `-D V2K_ISR_HZ=100000` together, rebuild and reload, repeat §4/§5: tick ≈ 1e5/s, lat min/max, ovf==0, waveform/dead-time intact. **Record both the 20 kHz and 100 kHz data sets in BRINGUP** — the first measured basis for the platform's frequency anchor (the 20–100 kHz TBD tier). Restore both sides after testing.
 
-## 8. 完成后
+## 8. After completion
 
-- BRINGUP.md Phase 2 模板逐项填实测值；
-- commit（英文 message）+ 硬件验证 tag（建议 `phase2-timebase-protection`）；
-- 遗留给后续阶段：ISR 多速率调度与执行器（Phase 3）、CMPSS 模拟 trip 源 +
-  DRV8323 nFAULT 接入（随功率级）、ESC RAM 核对（Phase 6 前）。
+- fill the BRINGUP.md Phase 2 template with measured values item by item;
+- commit (English message) + hardware-verification tag (suggested `phase2-timebase-protection`);
+- left to later phases: ISR multi-rate scheduling and the executor (Phase 3), the CMPSS analog trip source + DRV8323 nFAULT integration (with the power stage), the ESC RAM verification (before Phase 6).
