@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
-"""Generate cpu1/v2k_build_hash.h from the current git HEAD."""
+"""Generate cpu1/tools/v2k_build_hash.h from the current git HEAD."""
 
 import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / "cpu1" / "v2k_build_hash.h"
+OUT = ROOT / "cpu1" / "tools" / "v2k_build_hash.h"
 
 
 def main() -> None:
-    # build hash 仅在上位机经链路枚举描述符表时才有意义（Phase 3.5 起）：
-    # host 重连发现表头 hash 变了即强制重新枚举，杜绝拿旧表读新固件。
-    # Phase 3 阶段唯一消费者是 CCS 走 JTAG 直读内存，它清楚自己加载的 .out，
-    # 用不到这个值。此文件已不入版本库（见 .gitignore），每次构建本地重生成。
-    # git 不可用时退回哨兵 0，不让缺失 git 卡住构建。
+    # The build hash only matters once the host enumerates the descriptor table
+    # over the link (from Phase 3.5 on): on reconnect the host sees the header
+    # hash has changed and forces a re-enumeration, preventing an old table from
+    # being used to read new firmware. In Phase 3 the only consumer is CCS
+    # reading memory directly over JTAG, which knows exactly which .out it
+    # loaded and has no use for this value. This file is no longer version-
+    # controlled (see .gitignore) and is regenerated locally on every build.
+    # When git is unavailable, fall back to the sentinel 0 so a missing git
+    # does not block the build.
     try:
         short_hash = subprocess.check_output(
             ["git", "rev-parse", "--short=8", "HEAD"],

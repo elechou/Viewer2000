@@ -1,20 +1,16 @@
 //=============================================================================
-// v2k_executor.c - 固定顺序控制 ISR
+// v2k_executor.c - fixed-order control ISR
 //=============================================================================
 
-#include "driverlib.h"
-#include "device.h"
 #include "v2k_executor.h"
-#include "v2k_platform.h"
+#include "../v2k.h"
+#include "../wire/wire.h"
 #include "v2k_timebase.h"
 #include "v2k_fault.h"
 #include "v2k_registry.h"
 #include "v2k_scope_runtime.h"
+#include "v2k_user_runtime.h"
 
-#define V2K_ADC_REF_V       3.0f
-#define V2K_ADC_MAX_CODE    4095.0f
-#define V2K_PWM_DUTY_MIN    0.02f
-#define V2K_PWM_DUTY_MAX    0.98f
 #define V2K_ISR_BUDGET_CYCLES (V2K_EPWMCLK_HZ / V2K_ISR_HZ)
 #define V2K_DUE_1KHZ_DIV    (V2K_ISR_HZ / 1000u)
 #define V2K_DUE_100HZ_DIV   (V2K_ISR_HZ / 100u)
@@ -29,10 +25,6 @@ V2K_STATIC_ASSERT(V2K_PARAM_PHASE < V2K_DUE_1KHZ_DIV);
 V2K_STATIC_ASSERT(V2K_PARAM_PHASE != V2K_DUE_100HZ_PHASE);
 
 volatile v2k_tick_t g_v2k_tick;
-volatile uint16_t g_v2k_adc_a0;
-volatile float g_v2k_adc_a0_v;
-volatile float g_v2k_pwm_duty_cmd = 0.25f;
-volatile float g_v2k_pwm_duty_applied = 0.25f;
 volatile uint16_t g_v2k_due_mask;
 volatile uint16_t g_v2k_isr_lat;
 volatile uint16_t g_v2k_isr_lat_min = 0xFFFFu;
@@ -66,49 +58,18 @@ static uint16_t v2k_schedule(uint16_t *param_due)
     uint16_t mask = 0u;
     if (v2k_countdown_due(&s_due_1khz_count, V2K_DUE_1KHZ_DIV))
     {
-        mask |= PLAT_DUE_1KHZ;
+        mask |= V2K_DUE_1KHZ;
     }
     if (v2k_countdown_due(&s_due_100hz_count, V2K_DUE_100HZ_DIV))
     {
-        mask |= PLAT_DUE_100HZ;
+        mask |= V2K_DUE_100HZ;
     }
     *param_due = v2k_countdown_due(&s_param_count, V2K_DUE_1KHZ_DIV);
     return mask;
 }
 
-static void v2k_acquire(plat_in_t *in)
-{
-    uint16_t raw = ADC_readResult(ADCARESULT_BASE, ADC_SOC_NUMBER0);
-    g_v2k_adc_a0 = raw;
-    g_v2k_adc_a0_v = ((float)raw * V2K_ADC_REF_V) / V2K_ADC_MAX_CODE;
-
-    in->tick = g_v2k_tick;
-    in->adc_a0_raw = raw;
-    in->adc_a0_v = g_v2k_adc_a0_v;
-    in->sys_state = g_v2k_sm_state;
-    in->fault_code = g_v2k_fault_code;
-}
-
-static void v2k_apply(float duty)
-{
-    uint16_t cmpa;
-    if (!(duty >= V2K_PWM_DUTY_MIN))
-    {
-        duty = V2K_PWM_DUTY_MIN;
-    }
-    else if (duty > V2K_PWM_DUTY_MAX)
-    {
-        duty = V2K_PWM_DUTY_MAX;
-    }
-    g_v2k_pwm_duty_applied = duty;
-    cmpa = (uint16_t)((float)V2K_TB_PRD * (1.0f - duty));
-    EPWM_setCounterCompareValue(EPWM1_BASE, EPWM_COUNTER_COMPARE_A, cmpa);
-}
-
 __interrupt void v2k_executor_isr(void)
 {
-    plat_in_t in;
-    plat_out_t out;
     uint16_t latency;
     uint16_t param_due;
     uint32_t cycle_start;
@@ -116,23 +77,27 @@ __interrupt void v2k_executor_isr(void)
     uint32_t scope_end;
     uint32_t elapsed;
 
-    GPIO_writePin(V2K_TB_PROBE_GPIO, 1u);
-    cycle_start = CPUTimer_getTimerCount(CPUTIMER1_BASE);
-    latency = (uint16_t)EPWM_getTimeBaseCounterValue(EPWM1_BASE);
+    wire_gpio_probe_set(1u);
+    cycle_start = wire_cycle_count();
+    latency = wire_pwm_counter();
 
-    v2k_acquire(&in);
-    in.due_mask = v2k_schedule(&param_due);
-    if (param_due != 0u)
+    wire_acquire(&v2k_io.in);
+    v2k_io.in.sys_state = g_v2k_sm_state;
+    v2k_io.in.fault_code = g_v2k_fault_code;
+    v2k_io.in.due_mask = v2k_schedule(&param_due);
+    if ((param_due != 0u) && (v2k_user_reset_is_active() == 0u))
     {
         v2k_param_apply_ready();
     }
-    g_v2k_due_mask = in.due_mask;
+    g_v2k_due_mask = v2k_io.in.due_mask;
 
-    out.pwm1_duty = g_v2k_pwm_duty_applied;
-    user_step(&in, &out);
-    v2k_apply(out.pwm1_duty);
+    if (g_v2k_sm_state == V2K_STATE_RUNNING)
+    {
+        v2k_user_control_tick();
+    }
+    wire_apply(&v2k_io.out);
 
-    control_end = CPUTimer_getTimerCount(CPUTIMER1_BASE);
+    control_end = wire_cycle_count();
     elapsed = cycle_start - control_end;
     g_v2k_control_cycles = elapsed;
     if (elapsed > g_v2k_control_cycles_max)
@@ -140,8 +105,8 @@ __interrupt void v2k_executor_isr(void)
         g_v2k_control_cycles_max = elapsed;
     }
 
-    v2k_scope_sample_all(in.tick);
-    scope_end = CPUTimer_getTimerCount(CPUTIMER1_BASE);
+    v2k_scope_sample_all(v2k_io.in.tick);
+    scope_end = wire_cycle_count();
     elapsed = control_end - scope_end;
     g_v2k_scope_cycles = elapsed;
     if (elapsed > g_v2k_scope_cycles_max)
@@ -160,15 +125,12 @@ __interrupt void v2k_executor_isr(void)
         g_v2k_isr_lat_max = latency;
     }
 
-    if (ADC_getInterruptOverflowStatus(ADCA_BASE, ADC_INT_NUMBER1))
+    if (wire_isr_ack() != 0u)
     {
         g_v2k_isr_ovf_cnt++;
-        ADC_clearInterruptOverflowStatus(ADCA_BASE, ADC_INT_NUMBER1);
     }
-    ADC_clearInterruptStatus(ADCA_BASE, ADC_INT_NUMBER1);
-    Interrupt_clearACKGroup(INTERRUPT_ACK_GROUP1);
 
-    elapsed = cycle_start - CPUTimer_getTimerCount(CPUTIMER1_BASE);
+    elapsed = cycle_start - wire_cycle_count();
     g_v2k_isr_cycles = elapsed;
     if (elapsed > g_v2k_isr_cycles_max)
     {
@@ -178,5 +140,5 @@ __interrupt void v2k_executor_isr(void)
     {
         g_v2k_isr_budget_violation_cnt++;
     }
-    GPIO_writePin(V2K_TB_PROBE_GPIO, 0u);
+    wire_gpio_probe_set(0u);
 }

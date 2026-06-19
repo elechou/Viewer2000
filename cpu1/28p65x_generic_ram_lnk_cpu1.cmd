@@ -40,8 +40,9 @@ MEMORY
 
 
 
-   /* MSGRAM 区头 0x40 words 切给 v2k（基址=契约值,见 contracts/v2k_memmap.h）,
-      余量给 TI driverlib 的 IPC 消息队列缓冲（ipc.obj 钉死在 MSGRAM_* section 名上） */
+   /* The first 0x40 words of the MSGRAM region go to v2k (base = contract value,
+      see contracts/v2k_memmap.h); the remainder goes to TI driverlib's IPC
+      message-queue buffers (ipc.obj is pinned to the MSGRAM_* section names) */
    CPU1TOCPU2RAM_V2K : origin = 0x03A000, length = 0x000040
    CPU1TOCPU2RAM     : origin = 0x03A040, length = 0x0003C0
    CPU2TOCPU1RAM_V2K : origin = 0x03B000, length = 0x000040
@@ -71,23 +72,29 @@ SECTIONS
    .bss             : > RAMLS5, START(V2K_BssStart), END(V2K_BssEnd)
    .bss:output      : > RAMLS3, START(V2K_BssOutputStart), END(V2K_BssOutputEnd)
    .init_array      : > RAMM0
-   .const           : > RAMLS5 | RAMLS6
-   .data            : > RAMLS5, START(V2K_DataStart), END(V2K_DataEnd)
-   .sysmem          : > RAMLS4
+	   .const           : > RAMLS5 | RAMLS6
+	   .data            : > RAMLS5, START(V2K_DataStart), END(V2K_DataEnd)
+	   .sysmem          : > RAMLS4
+	   v2k_user_data    : > RAMLS6, ALIGN(2),
+	                       START(V2K_UserDataStart), END(V2K_UserDataEnd)
+	   v2k_user_bss     : > RAMLS6, ALIGN(2),
+	                       START(V2K_UserBssStart), END(V2K_UserBssEnd)
+	   dclfuncs         : > RAMM0
 #else
-   .pinit           : > RAMM0
-   .ebss            : >> RAMLS5 | RAMLS6
+	   .pinit           : > RAMM0
+	   .ebss            : >> RAMLS5 | RAMLS6
    .econst          : > RAMLS5
    .esysmem         : > RAMLS5
 #endif
 
-   /* Viewer2000 共享内存平面。布局基准 = contracts/v2k_memmap.h，
-      修改必须双核 .cmd（RAM+FLASH 共四份）与 memmap 头文件同步。
-      每个 section 内只有一个聚合对象（common/v2k_planes.h），
-      因此对象基址 == 区块基址；运行期 v2k_assert_layout 自检兜底。 */
-   v2k_gs0_cpu1   : > RAMGS0_PLANE, type=NOINIT /* 描述符表+参数状态+示波生产块 */
-   v2k_scope_ring : > RAMGS_SCOPE, type=NOINIT  /* Stream/Capture 共用示波环 */
-   v2k_ccs_view    : > RAMD2, type=NOINIT        /* 冻结后 float[2048] 解交错视图 */
+   /* Viewer2000 shared-memory planes. Layout reference = contracts/v2k_memmap.h;
+      any change must stay in sync across both cores' .cmd files (4 total,
+      RAM+FLASH) and the memmap header. Each section holds exactly one aggregate
+      object (common/v2k_planes.h), so object base == region base; the runtime
+      v2k_assert_layout self-check backstops it. */
+   v2k_gs0_cpu1   : > RAMGS0_PLANE, type=NOINIT /* descriptor table + param status + scope producer block */
+   v2k_scope_ring : > RAMGS_SCOPE, type=NOINIT  /* Stream/Capture shared scope ring */
+   v2k_ccs_view    : > RAMD2, type=NOINIT        /* post-freeze float[2048] de-interleaved view */
 
    v2k_msg_1to2 : > CPU1TOCPU2RAM_V2K, type=NOINIT
    v2k_msg_2to1 : > CPU2TOCPU1RAM_V2K, type=NOINIT

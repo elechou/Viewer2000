@@ -1,10 +1,10 @@
 //=============================================================================
-// v2k_scope_runtime.h - CPU1 示波生产者与 CCS view
+// v2k_scope_runtime.h - CPU1 scope producer and CCS view
 //=============================================================================
 #ifndef V2K_SCOPE_RUNTIME_H
 #define V2K_SCOPE_RUNTIME_H
 
-#include "../contracts/v2k_common.h"
+#include "../../contracts/v2k_common.h"
 
 #define V2K_CCS_VIEW_SAMPLES 2048u
 

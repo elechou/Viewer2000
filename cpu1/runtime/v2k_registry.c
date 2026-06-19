@@ -1,17 +1,15 @@
 //=============================================================================
-// v2k_registry.c - 描述符表与后台验证/ISR 应用参数批次
+// v2k_registry.c - descriptor table + background validation / ISR-applied parameter batches
 //=============================================================================
 
 #include <string.h>
 #include "v2k_registry.h"
 #include "v2k_shared.h"
-#include "v2k_platform.h"
+#include "../v2k.h"
+#include "../wire/wire.h"
 #include "v2k_timebase.h"
 #include "v2k_fault.h"
-
-#define V2K_SCI_DBG_SCOPE_HZ 200u
-
-V2K_STATIC_ASSERT((V2K_ISR_HZ % V2K_SCI_DBG_SCOPE_HZ) == 0u);
+#include "v2k_user_runtime.h"
 
 extern uint16_t V2K_BssStart;
 extern uint16_t V2K_BssEnd;
@@ -19,11 +17,11 @@ extern uint16_t V2K_BssOutputStart;
 extern uint16_t V2K_BssOutputEnd;
 extern uint16_t V2K_DataStart;
 extern uint16_t V2K_DataEnd;
+extern uint16_t V2K_UserDataStart;
+extern uint16_t V2K_UserDataEnd;
+extern uint16_t V2K_UserBssStart;
+extern uint16_t V2K_UserBssEnd;
 
-extern volatile float g_v2k_adc_a0_v;
-extern volatile float g_v2k_dbg_sine_10hz;
-extern volatile float g_v2k_pwm_duty_cmd;
-extern volatile float g_v2k_pwm_duty_applied;
 extern volatile uint32_t g_v2k_isr_cycles;
 extern volatile uint32_t g_v2k_isr_cycles_max;
 extern volatile uint32_t g_v2k_control_cycles_max;
@@ -74,7 +72,9 @@ static uint16_t v2k_addr_is_data_accessible(uint32_t addr, uint16_t type)
     return (uint16_t)(
         v2k_addr_in_range(addr, words, &V2K_BssStart, &V2K_BssEnd) ||
         v2k_addr_in_range(addr, words, &V2K_BssOutputStart, &V2K_BssOutputEnd) ||
-        v2k_addr_in_range(addr, words, &V2K_DataStart, &V2K_DataEnd));
+        v2k_addr_in_range(addr, words, &V2K_DataStart, &V2K_DataEnd) ||
+        v2k_addr_in_range(addr, words, &V2K_UserDataStart, &V2K_UserDataEnd) ||
+        v2k_addr_in_range(addr, words, &V2K_UserBssStart, &V2K_UserBssEnd));
 }
 
 static void v2k_desc_name(char dst[V2K_NAME_LEN], const char *src)
@@ -96,8 +96,8 @@ static void v2k_desc_name(char dst[V2K_NAME_LEN], const char *src)
     }
 }
 
-static void v2k_desc_add(const char *name, uint16_t type, uint16_t kind,
-                         volatile void *addr, uint16_t prescaler)
+void v2k_registry_add(const char *name, uint16_t type, uint16_t kind,
+                      volatile void *addr, uint16_t prescaler)
 {
     v2k_desc_table_t *table = &g_v2k_gs0.desc_table;
     uint16_t idx = table->hdr.entry_count;
@@ -122,54 +122,53 @@ void v2k_registry_init(v2k_build_hash_t build_hash)
 {
     v2k_desc_table_t *table = &g_v2k_gs0.desc_table;
     uint16_t slow_div = (uint16_t)(V2K_ISR_HZ / 1000u);
-    uint16_t sci_dbg_div = (uint16_t)(V2K_ISR_HZ / V2K_SCI_DBG_SCOPE_HZ);
 
     memset(table, 0, sizeof(*table));
     table->hdr.contract_ver = V2K_CONTRACT_VER;
     table->hdr.build_hash = build_hash;
     table->hdr.entry_stride_words = (uint16_t)sizeof(v2k_desc_entry_t);
 
-    v2k_desc_add("adc_a0_raw", V2K_TYPE_U16, V2K_KIND_SCOPE,
-                 &g_v2k_adc_a0, 1u);
-    v2k_desc_add("adc_a0_v", V2K_TYPE_F32, V2K_KIND_SCOPE,
-                 &g_v2k_adc_a0_v, 1u);
-    v2k_desc_add("dbg_sine_10hz", V2K_TYPE_F32, V2K_KIND_SCOPE,
-                 &g_v2k_dbg_sine_10hz, sci_dbg_div);
-    v2k_desc_add("pwm1_duty_cmd", V2K_TYPE_F32,
-                 V2K_KIND_PARAM | V2K_KIND_SCOPE,
-                 &g_v2k_pwm_duty_cmd, 1u);
-    v2k_desc_add("pwm1_duty", V2K_TYPE_F32, V2K_KIND_SCOPE,
-                 &g_v2k_pwm_duty_applied, 1u);
-    v2k_desc_add("isr_cycles", V2K_TYPE_U32, V2K_KIND_SCOPE,
-                 &g_v2k_isr_cycles, 1u);
-    v2k_desc_add("isr_latency", V2K_TYPE_U16, V2K_KIND_SCOPE,
-                 &g_v2k_isr_lat, 1u);
-    v2k_desc_add("due_mask", V2K_TYPE_U16, V2K_KIND_SCOPE,
-                 &g_v2k_due_mask, 1u);
-    v2k_desc_add("sys_state", V2K_TYPE_U16, V2K_KIND_SCOPE,
-                 &g_v2k_sm_state, 1u);
+    wire_register_ports(1u);
+    v2k_registry_add("isr_cycles", V2K_TYPE_U32, V2K_KIND_SCOPE,
+                     &g_v2k_isr_cycles, 1u);
+    v2k_registry_add("isr_latency", V2K_TYPE_U16, V2K_KIND_SCOPE,
+                     &g_v2k_isr_lat, 1u);
+    v2k_registry_add("due_mask", V2K_TYPE_U16, V2K_KIND_SCOPE,
+                     &g_v2k_due_mask, 1u);
+    v2k_registry_add("sys_state", V2K_TYPE_U16, V2K_KIND_SCOPE,
+                     &g_v2k_sm_state, 1u);
 
-    // 后半部分是低速健康/保护量；prescaler 只是 Scope2000 的默认采样建议。
-    // Stream/Capture 复用同一热路径，实际采样分频由 host 在 DAQ_CTRL 中统一下发。
-    v2k_desc_add("fault_code", V2K_TYPE_U16, V2K_KIND_SCOPE,
-                 &g_v2k_fault_code, slow_div);
-    v2k_desc_add("cpu2_alive", V2K_TYPE_U16, V2K_KIND_SCOPE,
-                 &g_cpu2_alive, slow_div);
-    v2k_desc_add("isr_overflow", V2K_TYPE_U32, V2K_KIND_SCOPE,
-                 &g_v2k_isr_ovf_cnt, slow_div);
-    v2k_desc_add("isr_budget", V2K_TYPE_U32, V2K_KIND_SCOPE,
-                 &g_v2k_isr_budget_violation_cnt, slow_div);
-    v2k_desc_add("isr_cycles_max", V2K_TYPE_U32, V2K_KIND_SCOPE,
-                 &g_v2k_isr_cycles_max, slow_div);
-    v2k_desc_add("ctrl_cycles_max", V2K_TYPE_U32, V2K_KIND_SCOPE,
-                 &g_v2k_control_cycles_max, slow_div);
-    // scope_cyc_max 未注册：示波段周期 = isr_cycles_max − ctrl_cycles_max 即可
-    // 推得，为保住保护信号 tz_trip_cnt 让出这个槽（仍可在 CCS 直接看
-    // g_v2k_scope_cycles_max，或 host 经 DWARF 绑定）。
-    v2k_desc_add("scope_overrun", V2K_TYPE_U32, V2K_KIND_SCOPE,
-                 &g_v2k_scope_overrun_total, slow_div);
-    v2k_desc_add("tz_trip_cnt", V2K_TYPE_U32, V2K_KIND_SCOPE,
-                 &g_v2k_tz_int_cnt, slow_div);
+    // The rest are low-rate health/protection quantities; prescaler is only
+    // Scope2000's default sampling hint. Stream/Capture share one hot path, and
+    // the actual sampling decimation is issued uniformly by the host via DAQ_CTRL.
+    v2k_registry_add("fault_code", V2K_TYPE_U16, V2K_KIND_SCOPE,
+                     &g_v2k_fault_code, slow_div);
+    v2k_registry_add("app_enabled", V2K_TYPE_U16, V2K_KIND_SCOPE,
+                     &g_v2k_app_enabled, slow_div);
+    v2k_registry_add("user_rst_busy", V2K_TYPE_U16, V2K_KIND_SCOPE,
+                     &g_v2k_user_reset_active, slow_div);
+    v2k_registry_add("user_resets", V2K_TYPE_U32, V2K_KIND_SCOPE,
+                     &g_v2k_user_reset_count, slow_div);
+    v2k_registry_add("user_reset_err", V2K_TYPE_U16, V2K_KIND_SCOPE,
+                     &g_v2k_user_reset_error, slow_div);
+    v2k_registry_add("cpu2_alive", V2K_TYPE_U16, V2K_KIND_SCOPE,
+                     &g_cpu2_alive, slow_div);
+    v2k_registry_add("isr_overflow", V2K_TYPE_U32, V2K_KIND_SCOPE,
+                     &g_v2k_isr_ovf_cnt, slow_div);
+    v2k_registry_add("isr_budget", V2K_TYPE_U32, V2K_KIND_SCOPE,
+                     &g_v2k_isr_budget_violation_cnt, slow_div);
+    v2k_registry_add("isr_cycles_max", V2K_TYPE_U32, V2K_KIND_SCOPE,
+                     &g_v2k_isr_cycles_max, slow_div);
+    v2k_registry_add("ctrl_cycles_max", V2K_TYPE_U32, V2K_KIND_SCOPE,
+                     &g_v2k_control_cycles_max, slow_div);
+    // scope_cyc_max is intentionally not registered: the scope-segment cycle
+    // count can be derived as isr_cycles_max − ctrl_cycles_max, freeing this
+    // slot for the protection signal tz_trip_cnt (g_v2k_scope_cycles_max is
+    // still directly viewable in CCS, or host-bindable via DWARF).
+    v2k_registry_add("scope_overrun", V2K_TYPE_U32, V2K_KIND_SCOPE,
+                     &g_v2k_scope_overrun_total, slow_div);
+    v2k_registry_add("tz_trip_cnt", V2K_TYPE_U32, V2K_KIND_SCOPE,
+                     &g_v2k_tz_int_cnt, slow_div);
 
     table->hdr.magic = V2K_DESC_MAGIC;
 }

@@ -10,7 +10,7 @@ The parts I've already done (for reference):
 |---|---|
 | `cpu1/v2k_timebase.c/.h` | control ISR (probe GPIO2, tick, latency min/max), contract self-check, EPWMCLKDIV=/1 (errata), duty write, TBCLKSYNC release |
 | `cpu1/v2k_fault.c/.h` | fault-latch state machine IDLE/RUNNING/FAULT, command acceptance START/STOP/CLEAR_FAULT, TZ interrupt, pre-Board_init preemptive OST inhibit (arm) |
-| `cpu1/cpu1.c` | protection-first timing: disable TBCLKSYNC + arm → Board_init → self-check/register → release; the slow loop runs v2k_fault_poll |
+| `cpu1/runtime/v2k_main.c` | protection-first timing: disable TBCLKSYNC + arm → Board_init → self-check/register → release; the slow loop runs v2k_fault_poll |
 | `contracts/v2k_command.h` | fault codes V2K_FAULT_NONE / V2K_FAULT_TZ1_EXT (only #define, layout and CONTRACT_VER unchanged) |
 
 Key decisions (finalized):

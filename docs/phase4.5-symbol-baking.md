@@ -2,7 +2,7 @@
 
 > **Document status**: a forward-looking development plan. As pieces land, the verification section becomes the acceptance checklist; results go into [BRINGUP.md](../BRINGUP.md). Tag `phase4.5-symbol-baking` after acceptance.
 >
-> **Why it's "4.5"**: it serves the same user-facing layer as [Phase 4](phase4-user-interface.md) — the L2/L3 experience — but it is a **build-tooling** effort (host/build side), orthogonal to the firmware boundary work, so it runs in parallel and must not gate the Phase 4 mainline.
+> **Why it's "4.5"**: it serves the same user-facing layer as [Phase 4](phase4-user-interface.md) — the L2/L3 experience — but it is a **build-tooling** effort (host/build side). It consumes the user-object ownership contract established by [Phase 4.1](phase4.1-user-code-boundary.md), while remaining independent of the runtime reset mechanism.
 
 ## Goal
 
@@ -59,7 +59,7 @@ Firmware runtime is **unchanged** in shape: `v2k_registry_init` already walks a 
 
 - **Capacity**: `V2K_DESC_MAX` is 64 (≈17 platform entries used). Bump it (96/128) to fit platform + user, and re-check the GS0 RAM budget (each entry = 22 C28x words; 128 entries ≈ 2.8 K words) against `v2k_memmap.h`. ENUM already pages 8/req, so more entries just means more pages.
 - **Name length**: `V2K_NAME_LEN` is 16; longer DWARF names truncate (or the tool errors). Expanded names like `motor.ia` must fit.
-- **Scoping rule**: which object files count as "user code" (so the tool doesn't bake every platform/library global and blow the table). Default: `v2k_user.o` + `examples/*.o`; configurable.
+- **Scoping rule**: consume Phase 4.1's machine-readable user-object set. The baker must not maintain an independent `user.obj` / `examples/*.obj` glob that can drift from the reset boundary.
 - **C28x address convention**: DWARF expresses addresses; the descriptor `addr` is a CPU1 data-space **word** address. Confirm the mapping (cl2000 EABI ELF, 16-bit char) — the one real parsing wrinkle.
 - **ELF format**: cl2000 EABI emits standard ELF+DWARF; `pyelftools` handles it. Verify against the actual `.out`.
 - **CCS integration**: a post-build step (patch flavor) or a generate-then-relink step. The repo already runs a pre-build (`gen_build_hash.py`), so the hook infrastructure exists; a post-build-then-flash path is the new bring-up.
@@ -89,5 +89,6 @@ Record into BRINGUP.md: tool version, the `.out` parsed, the scoping rule, capac
 
 ## Relationship to the other layers
 
-- Phase 4.5 changes only **how the descriptor table gets filled** (build-tool-baked user vars, alongside L0-registered platform/port names). The wire, the host, and the firmware runtime shape are untouched.
+- Phase 4.5 changes only **how the descriptor table gets filled** (build-tool-baked user vars, alongside wire/runtime-registered platform and port names). The wire, the host, and the firmware runtime shape are untouched.
+- Phase 4.1 remains authoritative for which mutable storage resets. A variable still resets if it is not bakeable, not visible, unsupported by the descriptor type system, or omitted because descriptor capacity is exhausted.
 - It supersedes the earlier "application variables are discovered host-side via `.out` (DWARF)" wording in `wire-spec.md` / `contracts/v2k_descriptor.h`: discovery is now **build-time baking into the descriptor table**, so the host needs no `.out`.

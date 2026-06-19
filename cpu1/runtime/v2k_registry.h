@@ -1,12 +1,15 @@
 //=============================================================================
-// v2k_registry.h - 平台描述符与参数事务服务
+// v2k_registry.h - platform descriptor and parameter-transaction services
 //=============================================================================
 #ifndef V2K_REGISTRY_H
 #define V2K_REGISTRY_H
 
-#include "../contracts/v2k_common.h"
+#include "../../contracts/v2k_common.h"
+#include "../../contracts/v2k_descriptor.h"
 
 void v2k_registry_init(v2k_build_hash_t build_hash);
+void v2k_registry_add(const char *name, uint16_t type, uint16_t kind,
+                      volatile void *addr, uint16_t prescaler);
 void v2k_param_service(void);
 void v2k_param_apply_ready(void);
 void v2k_param_read_service(void);

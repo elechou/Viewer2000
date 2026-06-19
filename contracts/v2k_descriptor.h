@@ -1,32 +1,45 @@
 //=============================================================================
-// v2k_descriptor.h — 共享内存接口：描述符表（平台量枚举 + 默认采样提示）
+// v2k_descriptor.h — shared-memory interface: descriptor table
+//                    (platform-quantity enumeration + default sampling hints)
 //
-// 角色定位（变量发现架构；2026-06-19 修订，见 Phase 4.5）：
-// 本表登记**平台量**（L0/L1 注册：plat_in/plat_out 物理量、占空比、状态字、
-// 平台参数）**加上用户应用变量**——后者由构建工具在编译期从固件 .out 的
-// DWARF 烤入（Phase 4.5）。学生写纯 C：不调注册 API、不手打名字字符串、无
-// 规定写法（C 符号是唯一命名来源，构建期采集、非手打）。名字烤进设备后，
-// host 经 ENUM 枚举全部（平台 + 用户），无需 .out（且无陈旧 ELF 风险——地址
-// 来自被烧的同一次构建，build_hash 仍兜 host 缓存）。
-// 本表职责：
-//   1. 开箱即用：host 枚举平台 + 用户名字并立即出波形；
-//   2. （Phase 3 曾开机按注册序默认绑定前几个可观测量；Phase 4 改按需绑定。）
+// Role (variable-discovery architecture; revised 2026-06-19, see Phase 4.5):
+// This table registers **platform quantities** (registered by wire/runtime:
+// v2k_io physical quantities, duty cycles, status words, platform parameters)
+// **plus user application variables** — the latter baked in at compile time by
+// the build tool from the firmware .out DWARF (Phase 4.5). The student writes
+// plain C: no registration API call, no hand-typed name strings, no mandated
+// declaration style (the C symbol is the sole naming source, collected at build
+// time, never hand-typed). Once the names are baked into the device the host
+// enumerates them all (platform + user) via ENUM, with no .out needed (and no
+// stale-ELF risk — the addresses come from the same build that was flashed, and
+// build_hash still backstops the host cache).
+// Responsibilities of this table:
+//   1. Works out of the box: the host enumerates platform + user names and
+//      immediately draws waveforms;
+//   2. (Phase 3 once default-bound the first few observables in registration
+//      order at boot; Phase 4 switched to on-demand binding.)
 //
-// 2026-06-17 语义修正：
-// * 线上值就是真实值；描述符不再承载 min/max/scale/offset 语义。
+// 2026-06-17 semantic fix:
+// * The on-wire value is the real value; the descriptor no longer carries
+//   min/max/scale/offset semantics.
 //
-// CPU1 启动时写表（CPU1 属主区，见 v2k_memmap.h），此后只读。
+// CPU1 writes the table at startup (CPU1-owned region, see v2k_memmap.h);
+// read-only thereafter.
 //
-// 关键语义：
-// * entry.addr 是 CPU1 数据空间的 word 地址，可能指向 CPU1 私有 RAM。
-//   只有 CPU1 允许解引用它（采样、参数应用都在 CPU1 侧完成）；
-//   CPU2 / host 仅把 addr 当不透明 id 透传或忽略。
-// * 注册顺序即 desc_idx（0..count-1），是值镜像的索引键。
-// * 表写入完成后由 CPU1 填 hdr.entry_count 并最后写 hdr.magic（发布屏障），
-//   CPU2 见 magic 有效才允许读表。
+// Key semantics:
+// * entry.addr is a word address in CPU1 data space and may point into CPU1
+//   private RAM. Only CPU1 may dereference it (sampling and parameter apply
+//   both happen on the CPU1 side); CPU2 / host treat addr as an opaque id,
+//   passing it through or ignoring it.
+// * Registration order is desc_idx (0..count-1), the index key of the value
+//   mirror.
+// * After the table is written CPU1 fills hdr.entry_count and writes hdr.magic
+//   last (publish barrier); CPU2 may read the table only once it sees magic
+//   valid.
 //
-// 描述符 add 原语为 L1 内部函数；用户变量经 Phase 4.5 构建期烤录入表、
-// 端口名经 L0 注册——无面向 L3 用户代码的注册 API。
+// The descriptor "add" primitive is an L1-internal function; user variables are
+// baked into the table at Phase 4.5 build time and port names are registered by
+// wire — there is no registration API exposed to L3 user code.
 //=============================================================================
 #ifndef V2K_DESCRIPTOR_H
 #define V2K_DESCRIPTOR_H
@@ -34,64 +47,65 @@
 #include "v2k_common.h"
 
 //-----------------------------------------------------------------------------
-// 容量与尺寸常量
+// Capacity and size constants
 //-----------------------------------------------------------------------------
-#define V2K_NAME_LEN   16u   // 名字定长（含 NUL 填充）；ASCII，每字符 1 octet 上线
-#define V2K_DESC_MAX   64u   // 表容量上限（64 × 22 words ≈ 1.4K words，预算见 memmap）
+#define V2K_NAME_LEN   16u   // Fixed name length (incl. NUL padding); ASCII, 1 octet/char on the wire
+#define V2K_DESC_MAX   64u   // Table capacity cap (64 × 22 words ≈ 1.4K words, budget in memmap)
 
-// 线上一条描述符的 octet 数（wire-spec §4.3 ENUM_RESP；与 struct 字段一一镜像）
+// Octets per descriptor on the wire (wire-spec §4.3 ENUM_RESP; mirrors the struct fields one-to-one)
 #define V2K_DESC_WIRE_OCTETS 28u
 
 //-----------------------------------------------------------------------------
-// kind 标志位（可调与可观测不互斥，同一变量可两者皆是）
+// kind flag bits (tunable and observable are not mutually exclusive; one variable can be both)
 //-----------------------------------------------------------------------------
-#define V2K_KIND_PARAM  0x0001u  // 可调参数：参与参数平面写入路径（v2k_param.h）
-#define V2K_KIND_SCOPE  0x0002u  // 可观测信号：参与示波采样路径（v2k_scope.h），prescaler 为默认采样建议
-// bit2..15 保留，置 0
+#define V2K_KIND_PARAM  0x0001u  // Tunable parameter: participates in the parameter-plane write path (v2k_param.h)
+#define V2K_KIND_SCOPE  0x0002u  // Observable signal: participates in the scope sampling path (v2k_scope.h); prescaler is the default sampling hint
+// bit2..15 reserved, set to 0
 
 //-----------------------------------------------------------------------------
-// 描述符条目
+// Descriptor entry
 //
-// C28x 布局（word 偏移）:
+// C28x layout (word offsets):
 //   name@0..15, type@16, kind@17, addr@18, prescaler@20, reserved@21
-//   → 共 22 words，无填充
-// PC 布局（octet 偏移）:
+//   → 22 words total, no padding
+// PC layout (octet offsets):
 //   name@0..15, type@16, kind@18, addr@20, prescaler@24, reserved@26
-//   → 共 28 octets，无填充
+//   → 28 octets total, no padding
 //-----------------------------------------------------------------------------
 typedef struct {
-    char     name[V2K_NAME_LEN]; // ASCII，NUL 填充；不保证 NUL 结尾（恰好 16 字符时）
+    char     name[V2K_NAME_LEN]; // ASCII, NUL-padded; not guaranteed NUL-terminated (when exactly 16 chars)
     uint16_t type;               // V2K_TYPE_*
-    uint16_t kind;               // V2K_KIND_* 位或
-    uint32_t addr;               // CPU1 数据空间 word 地址（CPU2/host 视为不透明）
-    uint16_t prescaler;          // 默认采样分频建议；运行时实际速率以 DAQ_CTRL 为准
-    uint16_t reserved;           // 置 0；保留 28-octet 描述符条目对齐
+    uint16_t kind;               // V2K_KIND_* bit-or
+    uint32_t addr;               // CPU1 data-space word address (opaque to CPU2/host)
+    uint16_t prescaler;          // Default sampling-decimation hint; the actual runtime rate is governed by DAQ_CTRL
+    uint16_t reserved;           // Set to 0; keeps the 28-octet descriptor entry aligned
 } v2k_desc_entry_t;
 
 V2K_ASSERT_SIZE_BITS(v2k_desc_entry_t, V2K_NAME_BITS(V2K_NAME_LEN) + 96u);
 
 //-----------------------------------------------------------------------------
-// 表头（位于表数组之前，同一共享 RAM 区）
+// Table header (precedes the entry array, in the same shared-RAM region)
 //
-// 发布协议：CPU1 先填 entries[] 与其余头字段，最后写 magic；
-// CPU2 轮询 magic == V2K_DESC_MAGIC 即视为表就绪（单写者单方向，无需锁）。
+// Publish protocol: CPU1 fills entries[] and the remaining header fields first,
+// then writes magic last; CPU2 polls magic == V2K_DESC_MAGIC and treats the
+// table as ready (single writer, one direction, no lock needed).
 //-----------------------------------------------------------------------------
 #define V2K_DESC_MAGIC 0x564B4454u   /* "VKDT" */
 
 typedef struct {
-    uint32_t magic;              // V2K_DESC_MAGIC；最后写入=发布
-    uint16_t contract_ver;       // = V2K_CONTRACT_VER，CPU2 握手时校验
-    uint16_t entry_count;        // 已注册条目数 ≤ V2K_DESC_MAX
-    v2k_build_hash_t build_hash; // 固件 build hash（host 重枚举依据）
-    uint16_t entry_stride_words; // = sizeof(v2k_desc_entry_t)（C28x words），
-                                 //   供 CCS 脚本/调试工具自描述遍历
-    uint16_t reserved;           // 置 0
+    uint32_t magic;              // V2K_DESC_MAGIC; written last = publish
+    uint16_t contract_ver;       // = V2K_CONTRACT_VER, checked by CPU2 at handshake
+    uint16_t entry_count;        // Number of registered entries ≤ V2K_DESC_MAX
+    v2k_build_hash_t build_hash; // Firmware build hash (host re-enumeration trigger)
+    uint16_t entry_stride_words; // = sizeof(v2k_desc_entry_t) (C28x words),
+                                 //   lets CCS scripts/debug tools walk the table self-describingly
+    uint16_t reserved;           // Set to 0
 } v2k_desc_table_hdr_t;
 
 V2K_ASSERT_SIZE_BITS(v2k_desc_table_hdr_t, 128u);
 
 //-----------------------------------------------------------------------------
-// 整表（共享 RAM 实体，CPU1 属主）
+// Whole table (shared-RAM entity, CPU1-owned)
 //-----------------------------------------------------------------------------
 typedef struct {
     v2k_desc_table_hdr_t hdr;

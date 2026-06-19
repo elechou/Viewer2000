@@ -1,5 +1,5 @@
 //=============================================================================
-// v2k_scope_runtime.c - Stream/Capture 共用示波生产者
+// v2k_scope_runtime.c - Stream/Capture shared scope producer
 //=============================================================================
 
 #include <string.h>
@@ -13,6 +13,10 @@ extern uint16_t V2K_BssOutputStart;
 extern uint16_t V2K_BssOutputEnd;
 extern uint16_t V2K_DataStart;
 extern uint16_t V2K_DataEnd;
+extern uint16_t V2K_UserDataStart;
+extern uint16_t V2K_UserDataEnd;
+extern uint16_t V2K_UserBssStart;
+extern uint16_t V2K_UserBssEnd;
 
 #pragma DATA_SECTION(g_v2k_scope_ring, "v2k_scope_ring")
 volatile uint16_t g_v2k_scope_ring[V2K_SCOPE_RING_WORDS];
@@ -82,7 +86,9 @@ static uint16_t v2k_scope_addr_valid(uint32_t addr, uint16_t type)
     return (uint16_t)(
         v2k_addr_in_range(addr, words, &V2K_BssStart, &V2K_BssEnd) ||
         v2k_addr_in_range(addr, words, &V2K_BssOutputStart, &V2K_BssOutputEnd) ||
-        v2k_addr_in_range(addr, words, &V2K_DataStart, &V2K_DataEnd));
+        v2k_addr_in_range(addr, words, &V2K_DataStart, &V2K_DataEnd) ||
+        v2k_addr_in_range(addr, words, &V2K_UserDataStart, &V2K_UserDataEnd) ||
+        v2k_addr_in_range(addr, words, &V2K_UserBssStart, &V2K_UserBssEnd));
 }
 
 static uint16_t v2k_floor_pow2(uint32_t value)
@@ -160,38 +166,6 @@ static void v2k_scope_transition(v2k_scope_prod_t *prod, uint16_t mode)
     }
 }
 
-static void v2k_default_bind(void)
-{
-    const v2k_desc_table_t *table = &g_v2k_gs0.desc_table;
-    v2k_scope_prod_t *prod = &g_v2k_gs0.scope_prod;
-    uint16_t i;
-    uint16_t n = 0u;
-    uint16_t slot_words = 0u;
-    uint16_t capacity = 0u;
-
-    for (i = 0u;
-         (i < table->hdr.entry_count) && (n < V2K_SCOPE_DEFAULT_CH);
-         i++)
-    {
-        const v2k_desc_entry_t *entry = &table->entries[i];
-        if ((entry->kind & V2K_KIND_SCOPE) != 0u)
-        {
-            s_scope.bind[n].addr = entry->addr;
-            s_scope.bind[n].type = entry->type;
-            s_scope.bind[n].reserved = 0u;
-            n++;
-        }
-    }
-    s_scope.stride_words = v2k_stride_words(s_scope.bind, n);
-    prod->n_ch = n;
-    if (v2k_scope_layout(prod->block_n_ticks, s_scope.stride_words,
-                         &slot_words, &capacity) == V2K_SCOPE_RESULT_OK)
-    {
-        prod->block_slot_words = slot_words;
-        prod->ring_capacity = capacity;
-    }
-}
-
 void v2k_scope_init(void)
 {
     v2k_scope_prod_t *prod = &g_v2k_gs0.scope_prod;
@@ -213,7 +187,6 @@ void v2k_scope_init(void)
     prod->cfg_result = V2K_SCOPE_RESULT_OK;
     prod->bind_result = V2K_SCOPE_RESULT_OK;
     s_active_cfg.trig_edge = V2K_TRIG_RISE;
-    v2k_default_bind();
 }
 
 static uint16_t v2k_validate_bind(const v2k_scope_bind_t *bind)
@@ -333,7 +306,7 @@ void v2k_scope_service(void)
     uint16_t seq_before;
     uint16_t seq_after;
 
-    // ISR 不直接读取 CPU2 属主 GS4；缓存稍旧只会保守地多丢新块。
+    // The ISR never reads CPU2-owned GS4 directly; a slightly stale cache only errs conservatively by dropping a few extra new blocks.
     s_cons_rd_cache = V2K_GS4_RO->scope_cons.rd_idx;
 
     if (!s_cfg_pending.pending)
@@ -427,7 +400,7 @@ static void v2k_apply_cfg(void)
     if ((result == V2K_SCOPE_RESULT_OK) &&
         (s_cfg_pending.cfg.mode_req == V2K_SCOPE_OFF))
     {
-        // 先从 ISR 热路径摘除，再修改运行态。
+        // Detach from the ISR hot path first, then mutate the runtime state.
         s_scope_active = 0u;
         s_scope.sample_in_block = 0u;
         s_scope.drop_block = 0u;
@@ -480,7 +453,7 @@ static void v2k_apply_cfg(void)
             v2k_prepare_capture_window(prod, &s_active_cfg);
         }
         v2k_scope_transition(prod, s_cfg_pending.cfg.mode_req);
-        // 所有运行态字段就绪后，最后发布给 ISR。
+        // Publish to the ISR last, once every runtime-state field is ready.
         s_scope_active = 1u;
     }
     prod->cfg_result = result;

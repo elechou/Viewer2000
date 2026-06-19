@@ -1,10 +1,8 @@
 //=============================================================================
-// v2k_executor.h - ADC EOC 所属的确定性 L1 执行器
+// v2k_executor.h - deterministic L1 executor hung off the ADC EOC
 //=============================================================================
 #ifndef V2K_EXECUTOR_H
 #define V2K_EXECUTOR_H
-
-#include "driverlib.h"
 
 __interrupt void v2k_executor_isr(void);
 
