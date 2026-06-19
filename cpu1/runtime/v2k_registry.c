@@ -21,6 +21,8 @@ extern uint16_t V2K_UserDataStart;
 extern uint16_t V2K_UserDataEnd;
 extern uint16_t V2K_UserBssStart;
 extern uint16_t V2K_UserBssEnd;
+extern uint16_t V2K_UserConstStart;
+extern uint16_t V2K_UserConstEnd;
 
 extern volatile uint32_t g_v2k_isr_cycles;
 extern volatile uint32_t g_v2k_isr_cycles_max;
@@ -42,10 +44,32 @@ static v2k_param_ready_t s_ready;
 static volatile uint16_t s_ready_valid;
 static uint32_t s_shadow_seen;
 static v2k_param_read_ref_t s_read_refs[V2K_CAL_READ_MAX];
+volatile uint16_t g_v2k_desc_error;
+
+// Fixed-size post-link patch target; its initialized header is validated before baking.
+#pragma DATA_SECTION(g_v2k_user_desc_blob, "v2k_user_desc")
+const v2k_user_desc_blob_t g_v2k_user_desc_blob = {
+    V2K_USER_DESC_MAGIC,
+    V2K_USER_DESC_VERSION,
+    0u,
+    V2K_USER_DESC_MAX,
+    0u,
+    0uL,
+    {{0}}
+};
 
 static uint32_t v2k_addr(const volatile void *ptr)
 {
     return (uint32_t)ptr;
+}
+
+static uint16_t v2k_type_words(uint16_t type)
+{
+    if (type >= V2K_TYPE_COUNT)
+    {
+        return 0u;
+    }
+    return ((type == V2K_TYPE_I16) || (type == V2K_TYPE_U16)) ? 1u : 2u;
 }
 
 static uint16_t v2k_addr_in_range(uint32_t addr, uint16_t words,
@@ -56,15 +80,14 @@ static uint16_t v2k_addr_in_range(uint32_t addr, uint16_t words,
     return ((addr >= first) && ((addr + words) <= limit)) ? 1u : 0u;
 }
 
-static uint16_t v2k_addr_is_data_accessible(uint32_t addr, uint16_t type)
+static uint16_t v2k_addr_is_writable(uint32_t addr, uint16_t type)
 {
-    uint16_t words;
+    uint16_t words = v2k_type_words(type);
 
-    if (type >= V2K_TYPE_COUNT)
+    if (words == 0u)
     {
         return 0u;
     }
-    words = ((type == V2K_TYPE_I16) || (type == V2K_TYPE_U16)) ? 1u : 2u;
     if ((words == 2u) && ((addr & 1u) != 0u))
     {
         return 0u;
@@ -75,6 +98,23 @@ static uint16_t v2k_addr_is_data_accessible(uint32_t addr, uint16_t type)
         v2k_addr_in_range(addr, words, &V2K_DataStart, &V2K_DataEnd) ||
         v2k_addr_in_range(addr, words, &V2K_UserDataStart, &V2K_UserDataEnd) ||
         v2k_addr_in_range(addr, words, &V2K_UserBssStart, &V2K_UserBssEnd));
+}
+
+static uint16_t v2k_addr_is_readable(uint32_t addr, uint16_t type)
+{
+    uint16_t words = v2k_type_words(type);
+
+    if (words == 0u)
+    {
+        return 0u;
+    }
+    if ((words == 2u) && ((addr & 1u) != 0u))
+    {
+        return 0u;
+    }
+    return (uint16_t)(
+        v2k_addr_is_writable(addr, type) ||
+        v2k_addr_in_range(addr, words, &V2K_UserConstStart, &V2K_UserConstEnd));
 }
 
 static void v2k_desc_name(char dst[V2K_NAME_LEN], const char *src)
@@ -103,8 +143,9 @@ void v2k_registry_add(const char *name, uint16_t type, uint16_t kind,
     uint16_t idx = table->hdr.entry_count;
     v2k_desc_entry_t *entry;
 
-    if (idx >= V2K_DESC_MAX)
+    if (idx >= V2K_PLATFORM_DESC_MAX)
     {
+        g_v2k_desc_error = V2K_DESC_ERROR_PLATFORM_CAPACITY;
         return;
     }
     entry = &table->entries[idx];
@@ -118,16 +159,115 @@ void v2k_registry_add(const char *name, uint16_t type, uint16_t kind,
     table->hdr.entry_count = (uint16_t)(idx + 1u);
 }
 
-void v2k_registry_init(v2k_build_hash_t build_hash)
+static uint16_t v2k_user_desc_blob_valid(void)
+{
+    const v2k_user_desc_blob_t *blob = &g_v2k_user_desc_blob;
+
+    return (uint16_t)(
+        (blob->magic == V2K_USER_DESC_MAGIC) &&
+        (blob->version == V2K_USER_DESC_VERSION) &&
+        (blob->capacity == V2K_USER_DESC_MAX) &&
+        (blob->count <= blob->capacity) &&
+        (blob->build_hash != 0uL));
+}
+
+static uint16_t v2k_user_desc_entry_valid(const v2k_desc_entry_t *entry)
+{
+    uint16_t i;
+    uint16_t words;
+    uint16_t terminated = 0u;
+
+    words = v2k_type_words(entry->type);
+    if ((words == 0u) ||
+        ((words == 2u) && ((entry->addr & 1u) != 0u)) ||
+        (entry->prescaler == 0u) ||
+        (entry->reserved != 0u))
+    {
+        return 0u;
+    }
+    for (i = 0u; i < V2K_NAME_LEN; i++)
+    {
+        if (entry->name[i] == '\0')
+        {
+            terminated = (i > 0u) ? 1u : 0u;
+            break;
+        }
+        if ((uint16_t)entry->name[i] > 0x7Fu)
+        {
+            return 0u;
+        }
+    }
+    if (!terminated)
+    {
+        return 0u;
+    }
+    if (entry->kind == (V2K_KIND_PARAM | V2K_KIND_SCOPE))
+    {
+        return (uint16_t)(
+            v2k_addr_in_range(entry->addr, words,
+                              &V2K_UserDataStart, &V2K_UserDataEnd) ||
+            v2k_addr_in_range(entry->addr, words,
+                              &V2K_UserBssStart, &V2K_UserBssEnd));
+    }
+    if (entry->kind == V2K_KIND_SCOPE)
+    {
+        return v2k_addr_in_range(entry->addr, words,
+                                 &V2K_UserConstStart, &V2K_UserConstEnd);
+    }
+    return 0u;
+}
+
+static void v2k_registry_add_baked_user(void)
+{
+    const v2k_user_desc_blob_t *blob = &g_v2k_user_desc_blob;
+    v2k_desc_table_t *table = &g_v2k_gs0.desc_table;
+    uint16_t i;
+
+    if (!v2k_user_desc_blob_valid())
+    {
+        g_v2k_desc_error = V2K_DESC_ERROR_BLOB_HEADER;
+        return;
+    }
+    for (i = 0u; i < blob->count; i++)
+    {
+        if (!v2k_user_desc_entry_valid(&blob->entries[i]))
+        {
+            g_v2k_desc_error = V2K_DESC_ERROR_USER_ENTRY;
+            return;
+        }
+    }
+    if (blob->count > (V2K_DESC_MAX - table->hdr.entry_count))
+    {
+        g_v2k_desc_error = V2K_DESC_ERROR_TABLE_CAPACITY;
+        return;
+    }
+    for (i = 0u; i < blob->count; i++)
+    {
+        table->entries[table->hdr.entry_count] = blob->entries[i];
+        table->hdr.entry_count++;
+    }
+}
+
+void v2k_registry_init(void)
 {
     v2k_desc_table_t *table = &g_v2k_gs0.desc_table;
     uint16_t slow_div = (uint16_t)(V2K_ISR_HZ / 1000u);
 
+    g_v2k_desc_error = V2K_DESC_ERROR_NONE;
     memset(table, 0, sizeof(*table));
     table->hdr.contract_ver = V2K_CONTRACT_VER;
-    table->hdr.build_hash = build_hash;
+    if (v2k_user_desc_blob_valid())
+    {
+        table->hdr.build_hash = g_v2k_user_desc_blob.build_hash;
+    }
+    else
+    {
+        g_v2k_desc_error = V2K_DESC_ERROR_BLOB_HEADER;
+    }
     table->hdr.entry_stride_words = (uint16_t)sizeof(v2k_desc_entry_t);
 
+    v2k_registry_add("desc_error", V2K_TYPE_U16, V2K_KIND_SCOPE,
+                     &g_v2k_desc_error, 1u);
     wire_register_ports(1u);
     v2k_registry_add("isr_cycles", V2K_TYPE_U32, V2K_KIND_SCOPE,
                      &g_v2k_isr_cycles, 1u);
@@ -168,11 +308,12 @@ void v2k_registry_init(v2k_build_hash_t build_hash)
     // scope_cyc_max is intentionally not registered: the scope-segment cycle
     // count can be derived as isr_cycles_max − ctrl_cycles_max, freeing this
     // slot for the protection signal tz_trip_cnt (g_v2k_scope_cycles_max is
-    // still directly viewable in CCS, or host-bindable via DWARF).
+    // still directly viewable in CCS).
     v2k_registry_add("scope_overrun", V2K_TYPE_U32, V2K_KIND_SCOPE,
                      &g_v2k_scope_overrun_total, slow_div);
     v2k_registry_add("tz_trip_cnt", V2K_TYPE_U32, V2K_KIND_SCOPE,
                      &g_v2k_tz_int_cnt, slow_div);
+    v2k_registry_add_baked_user();
 
     table->hdr.magic = V2K_DESC_MAGIC;
 }
@@ -200,7 +341,7 @@ static uint16_t v2k_validate_write(const v2k_param_write_t *write)
     {
         return V2K_CAL_BAD_TYPE;
     }
-    if (!v2k_addr_is_data_accessible(write->addr, write->type))
+    if (!v2k_addr_is_writable(write->addr, write->type))
     {
         return V2K_CAL_BAD_ADDR;
     }
@@ -325,7 +466,7 @@ static uint16_t v2k_validate_read(const v2k_param_read_ref_t *ref)
     {
         return V2K_CAL_BAD_TYPE;
     }
-    if (!v2k_addr_is_data_accessible(ref->addr, ref->type))
+    if (!v2k_addr_is_readable(ref->addr, ref->type))
     {
         return V2K_CAL_BAD_ADDR;
     }

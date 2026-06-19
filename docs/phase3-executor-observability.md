@@ -24,7 +24,7 @@ The division of labor follows Phase 2 and extrapolates: **SysConfig owns static 
 | `cpu1/v2k_scope_runtime.c/.h` | Stream/Capture shared scope producer; background config/bind sequence handshake and capacity calculation; post-freeze CCS view de-interleave |
 | `common/v2k_scope_consumer.h` | the SPSC consumer API for CPU2 / unit tests (peek/release/begin_frozen), inline read-only |
 | `cpu1/runtime/v2k_main.c` | background super-loop: services the four shared planes by `g_v2k_tick` deadline, without blocking on the comms core |
-| `tools/gen_build_hash.py` | pre-build generates `cpu1/tools/v2k_build_hash.h` from git HEAD, written into the descriptor-table header |
+| Phase 4.5 baker | post-link computes the final-image hash and patches it into the user-descriptor blob; CPU1 publishes it in the descriptor-table header |
 
 ## Key decisions (finalized)
 
@@ -52,7 +52,7 @@ Done only with the CCS Project/SysConfig tools; manually editing project metadat
    | Interrupt | disabled |
    | Register Interrupt Handler | disabled |
 
-3. Add a pre-build step to the CPU1 project running `python3 ../tools/gen_build_hash.py` — it generates `cpu1/tools/v2k_build_hash.h` from git HEAD, and `v2k_registry_init` writes this hash into the descriptor-table header. When the host reconnects and finds the hash changed, it forces re-enumeration, preventing an old table from reading new firmware.
+3. Phase 4.5 supersedes the original Git-HEAD pre-build hash. The post-link baker hashes the normalized final ELF plus the generated descriptor records, patches that value into the reserved blob, and `v2k_registry_init` publishes it in the descriptor-table header. When the host reconnects and finds the hash changed, it forces re-enumeration, preventing an old table from reading new firmware.
 
 `cpu1/f28p65x_dbgier.asm` is taken from C2000Ware 26.01; CPU1 startup calls `SetDBGIER(INTERRUPT_CPU_INT1)`, marking PIE Group 1 (where ADCA1 lives) as **time-critical** — when the background is halted by CCS, the control ISR and tick keep executing (the precondition of real-time mode, see Phase 2 FREE_RUN decision layer ③).
 

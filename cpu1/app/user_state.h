@@ -6,9 +6,9 @@
 
 #include <stdint.h>
 
-extern float g_user_secondary_gain;
-extern uint32_t g_user_secondary_ticks;
-extern uint32_t g_user_secondary_last_local_count;
+extern float secondary_gain;
+extern uint32_t secondary_ticks;
+extern uint32_t secondary_last;
 
 void user_secondary_step(void);
 

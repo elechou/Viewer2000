@@ -25,7 +25,7 @@ This phase's acceptance target is the **interfaces, the isolation boundary, and 
 
 | Artifact | Content |
 |---|---|
-| `contracts/v2k_common.h`, `v2k_command.h` | contract v8; HELLO's `tick_hz/capabilities`; STATUS's `cmd_ack_seq/cmd_result`; native capability bits |
+| `contracts/v2k_common.h`, `v2k_command.h` | contract v9; HELLO's `tick_hz/capabilities`; STATUS's `cmd_ack_seq/cmd_result`; native capability bits |
 | `docs/wire-spec.md` | wire v6 messages, Stream/Capture shared Scope, retry idempotency, build-hash re-enumeration, independent compatibility-bridge boundary |
 | `contracts/vectors/`, `tools/gen_vectors.py` | HELLO/STATUS/ENUM/CAL/DAQ/CMD/BLOCK golden vectors and negative cases |
 | `cpu2/v2k_sci_service.c/.h` | SCIA send/receive, COBS, CRC-32C, request dispatch, response replay, shared-plane service and diagnostic counts |
@@ -158,7 +158,7 @@ Phase 3.5 fixes:
 | Item | Value |
 |---|---|
 | `V2K_WIRE_VER` | 6 |
-| `V2K_CONTRACT_VER` | 8 |
+| `V2K_CONTRACT_VER` | 9 |
 | max payload | 1024 octets |
 | framing | COBS, `0x00` delimiter |
 | integrity | CRC-32C |
@@ -401,7 +401,7 @@ Record a set of `g_v2k_isr_cycles_max/control_cycles_max/scope_cycles_max` **bef
 |---|---|
 | firmware | Viewer2000 firmware name |
 | wire | 6 |
-| contract | 8 |
+| contract | 9 |
 | build hash | consistent with the CPU1 descriptor table |
 | descriptor count | consistent with `entry_count` |
 | tick_hz | consistent with `V2K_ISR_HZ` |

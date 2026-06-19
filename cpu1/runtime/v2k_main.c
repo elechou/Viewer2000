@@ -30,7 +30,6 @@
 #include "v2k_registry.h"
 #include "v2k_scope_runtime.h"
 #include "v2k_user_runtime.h"
-#include "tools/v2k_build_hash.h"
 
 extern void SetDBGIER(uint16_t dbgier);
 
@@ -138,7 +137,7 @@ void main(void)
     g_v2k_msg_1to2.cpu1_status.contract_ver = V2K_CONTRACT_VER;
     g_v2k_msg_1to2.cpu1_status.sys_state    = V2K_STATE_INIT;
     g_v2k_msg_1to2.cpu1_status.tick_hz      = V2K_ISR_HZ;
-    v2k_registry_init(V2K_BUILD_HASH);
+    v2k_registry_init();
     v2k_scope_init();
     v2k_user_runtime_init();
 

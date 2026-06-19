@@ -148,7 +148,7 @@ Operating steps in `docs/phase3.5-sci-scope2000.md`.
 > the range-check result codes, and the unregistered-write count; subsequent verification only covers the mechanical-consistency check.
 
 - [x] wire v6: HELLO tick_hz/capabilities, STATUS cmd ack/result, single Scope entry for Stream/Capture
-- [x] contract version 8, static assertions, generator and golden vectors in sync
+- [x] contract version 9, static assertions, generator and golden vectors in sync
 - [x] CPU1 configures GPIO42/43 and SCIA CPU2 ownership; CPU2 RX ISR + COBS + CRC-32C
 - [x] CPU2 completes HELLO/ENUM/STATUS/CAL/DAQ_BIND/DAQ_CTRL/BLOCK/CMD services
 - [x] On the same frame seq, timeout-retry replays the cached response, without re-executing COMMIT/CMD/block consumption
@@ -157,7 +157,7 @@ Operating steps in `docs/phase3.5-sci-scope2000.md`.
 - [x] Scope2000 golden-vector, bad CRC, COBS resync, frame split/coalesce, timeout, seq mismatch and version mismatch tests
 - [x] Scope2000 standalone root commit: `0fe4067` (Viewer2000 to be committed after CCS/hardware acceptance)
 - [x] Verification A — serial port and HELLO: 115200 / `/dev/tty.usbmodemCL6500011`
-- [x] Verification B — ENUM paging and descriptor fields (wire-level hardware link, re-tested on the current wire v6/contract v8)
+- [x] Verification B — ENUM paging and descriptor fields (latest hardware test: wire v6/contract v8; contract v9 retest remains open)
 - [ ] Verification B — Scope2000 GUI enumeration + build-hash hot re-enumeration (flash firmware with a different hash)
 - [x] CCS CPU1/CPU2 RAM `buildProject` 0 errors
 - [ ] CCS CPU1/CPU2 FLASH `buildProject` 0 errors
@@ -248,3 +248,47 @@ Record area (LAUNCHXL-F28P65X, CCS 21.0.0, RAM/20 kHz, 2026-06-20):
 | 2026-06-20 | Recovery after golden restore | restore `0x0000` at `0x20000@Data`; APP_START seq=6; final APP_STOP seq=7 | seq=6 START succeeds with result OK, RUNNING, app enabled=1, reset_error=0, expected/actual CRC both `0xD501B381`, reset_count=3. seq=7 STOP returns to IDLE and app enabled=0 | Fail-closed path is recoverable after the golden image is restored; the board was left running in IDLE with the app disabled |
 
 This session does not claim FLASH, 100 kHz, full 100-cycle endurance, or Scope2000 GUI regression for Phase 4.1. FLASH follow-up must verify CPU1/CPU2 FLASH builds, CPU1 ownership of the selected FLASH golden allocation, no collision with the CPU2 image, boot/START restore from FLASH LOAD, and fail-closed behavior under a controlled CRC mismatch.
+
+---
+
+## Phase 4.5 - Build-time symbol baking (software implementation complete, hardware acceptance open)
+
+Operating policy and acceptance items are in `docs/phase4.5-symbol-baking.md`.
+
+- [x] `V2K_DESC_MAX=128`, `V2K_USER_DESC_MAX=96`, contract version 9, and GS0 C28x size assertions pass
+- [x] CPU1 reserves an exact-size patch blob in RAMD5_FREE for RAM and FLASH_BANK1 for FLASH
+- [x] TI `ofd2000 --xml --dwarf` baker scopes variables through Phase 4.1 linker ranges and expands supported scalar leaves
+- [x] Baker-generated final-image hash replaces the stale Git-HEAD hash and is stable across repeated patching
+- [x] Mutable user leaves are `PARAM|SCOPE`; user const leaves are `SCOPE` only
+- [x] Unsupported pointers and other omitted leaves are emitted in the JSON report
+- [x] Tracked managed-build hooks run boundary generate, link, boundary verify, bake/patch, and report generation in order
+- [x] CPU1 and CPU2 RAM `buildProject` complete with zero errors; CPU1 report contains 30/96 entries and 2 skipped DCL pointer members
+- [x] Baker fixture tests and actual RAM `.out` dry-run pass; report roots match `cpu1.map` word addresses
+- [ ] CPU1 and CPU2 FLASH `buildProject` (the current CCS MCP exposes no active-configuration switch)
+- [x] On-target runtime acceptance (RAM/20 kHz, CCS MCP): `desc_error=0`, table/blob headers, baked names+addresses match the report (B), CAL_WRITE tunes a baked PARAM and a const leaf is rejected (D)
+- [ ] DAQ bind of a baked var over the link, and ENUM paging returns all entries on hardware (F host side)
+- [ ] Scope2000 clean-PC ENUM with no `.out` present (C) and build-hash re-enumeration after changing the user variable set (E)
+
+Software verification record (CCS 21.0.0, active RAM configuration, 2026-06-20):
+
+| Item | Method | Result |
+|---|---|---|
+| Managed build | CCS `buildProject(cpu1)` and `buildProject(cpu2)` | Both RAM builds complete with zero errors; CPU1 prints `user boundary verified` followed by `user descriptors patched: 30/96, skipped=2` |
+| CPU1 codestart clean rebuild | delete both generated `RAM/f28p65x_codestartbranch.obj` and `RAM/runtime/f28p65x_codestartbranch.obj`, then run CCS `buildProject(cpu1)` | CCS 21 emits the external startup object under `runtime/` while listing it as a root linker input; the tracked make hook copies it only when missing/different, boundary generation waits for that normalization, one link completes, and the final image remains baked |
+| Actual-image bake | `v2k_bake_user_desc.py ... --dry-run` on `cpu1/RAM/cpu1.out` plus map comparison | 30 leaves validate; examples include `setpoint@0xB000`, `pi.Kp@0xB002`, `trace.err[0]@0xB02A`, and const `gain[0]@0xB800`; all are C28x word addresses |
+| Kind and skip policy | inspect `v2k_user_desc_report.json` | data/BSS entries have kind 3, const entries have kind 2; `pi.sps` and `pi.css` are omitted with `pointer is unsupported` |
+| Final-image hash | rebuild once, then run the phony bake target again without relinking | both reports produce `build_hash=0x19406E08`; the blob section is normalized before hashing, so old patched bytes do not perturb the result |
+| Tests | Python baker/boundary/CRC suites, host C contract compile, golden-vector check | All automated checks pass; HELLO vector now carries contract 9 |
+
+Hardware verification record (LAUNCHXL-F28P65X, CCS 21.0.0, RAM/20 kHz, dual-core live debug, CCS MCP, 2026-06-20):
+
+| Date | Item | Method | Measured | Conclusion |
+|---|---|---|---|---|
+| 2026-06-20 | Runtime blob acceptance | CPU1 read `g_v2k_desc_error` + `desc_table.hdr`; CPU2 read `g_v2k_user_desc_blob` header (blob lives in @Program) | `desc_error=0`; table magic=`0x564B4454` "VKDT", contract_ver=9, entry_stride_words=22, entry_count=52 (22 platform + 30 user); blob magic=`0x564B5544` "VKUD", version=2, count=30, capacity=96; `build_hash=0x19406E08` identical across report/blob/table | Runtime validated the blob header and all 30 user entries and appended them within capacity; the published table carries the baked set |
+| 2026-06-20 | Address correctness (check B) | CPU1 CCS Expressions `&var` vs `v2k_user_desc_report.json` word-addresses, plus value sanity | `&setpoint`=0xB000, `&pi`=0xB002, `&pi.Imax`=0xB010, `&gain`=0xB800, `&offset`=0xB018, `&trace`=0xB02A, `&secondary_gain`=0xB01E, `&secondary_ticks`=0xB032 — all exact; `setpoint`=1.5, `gain[0]`=1.0 match the source declarations | Baked word-addresses match CCS exactly, no off-by-word from the 16-bit-char convention; the addresses point at the right variables |
+| 2026-06-20 | Baked names in the live table | CPU1 decode `desc_table.entries[i].name/addr/type/kind` over the appended user range (i=22,44,48,51) | entry22=`setpoint`(0xB000,F32,kind3), entry44=`trace.idx`(U16), entry48=`gain[0]`(0xB800,const,kind2), entry51=`gain[3]`; struct/array leaves carry dotted/bracketed names | Names + struct/array expansion are physically present in the GS0 table at the exact path ENUM reads; const leaves are SCOPE-only (kind 2) |
+| 2026-06-20 | Check D — tune a baked PARAM | drive GS4 `param_shadow` via CPU2 {addr=0xB000, type=F32, value_bits=0x40200000=2.5f}, count=1, `commit_seq`=1; read back on CPU1 | `setpoint` 1.5→2.5; `param_status.applied_seq=1`, `result=OK(0)` | A baked user PARAM tunes through the param double-buffer with the same handshake as a platform PARAM — no descriptor-membership special-casing |
+| 2026-06-20 | Check D — const write rejected | GS4 shadow {addr=0xB800 (`gain[0]`, const), type=F32}, `commit_seq`=2; then restore setpoint via `commit_seq`=3 | `param_status.result=3 (BAD_ADDR)`, `fail_idx=0`, `applied_seq=2`, `gain[0]` unchanged=1.0; restore commit applies setpoint=1.5/result OK | Const baked as SCOPE-only enumerates/observes but is excluded from the write path, matching the implemented kind policy |
+| 2026-06-20 | Offline baker suite | `python3 -m unittest test_v2k_bake_user_desc` | 9/9 pass: struct/array/const expansion, C28x wide-char round-trip, capacity+alignment overflow, duplicate/overlong-name reject, pointer report, typedef/const/TI-far resolve | The offline halves of checks A (extract/expand) and F (capacity overflow) hold in the current tree |
+
+On-target RAM/20 kHz functional acceptance (runtime accept, address correctness B, baked names, tune/reject D) passed this session. This record does not claim FLASH, the Scope2000 clean-PC ENUM (C), build-hash re-enumeration on a changed variable set (E), or ENUM paging over the link (F). Phase 4.5 final exit remains gated by those and by the open Phase 4.1 FLASH/reset checks; not tagged yet.

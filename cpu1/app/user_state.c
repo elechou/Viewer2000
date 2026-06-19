@@ -4,15 +4,15 @@
 
 #include "user_state.h"
 
-float g_user_secondary_gain = 0.25f;
-uint32_t g_user_secondary_ticks;
-uint32_t g_user_secondary_last_local_count;
+float secondary_gain = 0.25f;
+uint32_t secondary_ticks;
+uint32_t secondary_last;
 
 void user_secondary_step(void)
 {
     static uint32_t local_count;
 
     local_count++;
-    g_user_secondary_last_local_count = local_count;
-    g_user_secondary_ticks += (uint32_t)(g_user_secondary_gain * 4.0f);
+    secondary_last = local_count;
+    secondary_ticks += (uint32_t)(secondary_gain * 4.0f);
 }

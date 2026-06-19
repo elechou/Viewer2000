@@ -1,6 +1,7 @@
 # Viewer2000 additions consumed by CCS generated makefiles.
 V2K_USER_BOUNDARY_CMD := ./v2k_user_boundary.cmd
 V2K_USER_BOUNDARY_MANIFEST := ./v2k_user_boundary_manifest.json
+V2K_USER_DESC_REPORT := ./v2k_user_desc_report.json
 
 # User selectors must precede the generic platform sections in the main linker
 # command file, otherwise .text/.const/.data/.bss consume the input first.
@@ -8,4 +9,5 @@ ORDERED_OBJS := "$(V2K_USER_BOUNDARY_CMD)" $(ORDERED_OBJS)
 
 GEN_MISC_FILES__QUOTED += \
 "v2k_user_boundary.cmd" \
-"v2k_user_boundary_manifest.json"
+"v2k_user_boundary_manifest.json" \
+"v2k_user_desc_report.json"

@@ -10,8 +10,9 @@
 **/.clangd/.cache/
 **/compile_commands.json
 
-# Pre-build generated firmware build hash (regenerated locally every build)
-cpu1/tools/v2k_build_hash.h
+# Python generated data
+**/__pycache__/
+*.py[cod]
 
 # Code Composer Studio / Eclipse build output directories
 **/FLASH/

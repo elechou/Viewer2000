@@ -55,7 +55,7 @@ typedef struct {
 
 #if V2K_PLATFORM_C28X
 // 区块占用自检（单位 word = 16 bit；与 v2k_memmap.h 头部核算表一致）
-V2K_STATIC_ASSERT(sizeof(v2k_gs0_plane_t) == 1508u);
+V2K_STATIC_ASSERT(sizeof(v2k_gs0_plane_t) == 2916u);
 V2K_STATIC_ASSERT(sizeof(v2k_gs4_plane_t) == 312u);
 V2K_STATIC_ASSERT(sizeof(v2k_gs0_plane_t) <= V2K_GS0_PLANE_WORDS);
 V2K_STATIC_ASSERT(sizeof(v2k_gs4_plane_t) <= 0x200u);  // ≤ RAMGS4_V2K 子区（cpu2 .cmd）

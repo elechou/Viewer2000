@@ -17,6 +17,8 @@ extern uint16_t V2K_UserDataStart;
 extern uint16_t V2K_UserDataEnd;
 extern uint16_t V2K_UserBssStart;
 extern uint16_t V2K_UserBssEnd;
+extern uint16_t V2K_UserConstStart;
+extern uint16_t V2K_UserConstEnd;
 
 #pragma DATA_SECTION(g_v2k_scope_ring, "v2k_scope_ring")
 volatile uint16_t g_v2k_scope_ring[V2K_SCOPE_RING_WORDS];
@@ -88,7 +90,8 @@ static uint16_t v2k_scope_addr_valid(uint32_t addr, uint16_t type)
         v2k_addr_in_range(addr, words, &V2K_BssOutputStart, &V2K_BssOutputEnd) ||
         v2k_addr_in_range(addr, words, &V2K_DataStart, &V2K_DataEnd) ||
         v2k_addr_in_range(addr, words, &V2K_UserDataStart, &V2K_UserDataEnd) ||
-        v2k_addr_in_range(addr, words, &V2K_UserBssStart, &V2K_UserBssEnd));
+        v2k_addr_in_range(addr, words, &V2K_UserBssStart, &V2K_UserBssEnd) ||
+        v2k_addr_in_range(addr, words, &V2K_UserConstStart, &V2K_UserConstEnd));
 }
 
 static uint16_t v2k_floor_pow2(uint32_t value)

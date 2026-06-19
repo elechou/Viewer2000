@@ -184,7 +184,7 @@ V2K_ASSERT_SIZE_BITS(v2k_scope_cfg_t, 192u);
 // Constraint: CPU1 applies it only while mode==OFF, otherwise bind_result=BAD_STATE.
 //-----------------------------------------------------------------------------
 typedef struct {
-    uint32_t addr;            // CPU1 data-space word address (source: descriptor table or DWARF)
+    uint32_t addr;            // CPU1 data-space word address from the enumerated descriptor table
     uint16_t type;            // V2K_TYPE_* (determines sample width, see V2K_TYPE_SAMPLE_OCTETS)
     uint16_t reserved;        // Set to 0
 } v2k_scope_ch_bind_t;

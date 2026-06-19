@@ -8,13 +8,13 @@
 
 typedef struct
 {
-    float error_history[3];
-    uint16_t write_index;
+    float err[3];
+    uint16_t idx;
 } user_trace_t;
 
-float g_user_setpoint = 1.5f;
+float setpoint = 1.5f;
 
-DCL_PI g_user_pi = {
+DCL_PI pi = {
     0.35f,              // Kp
     0.015f,             // Ki
     0.0f,               // i10
@@ -28,13 +28,13 @@ DCL_PI g_user_pi = {
     NULL_ADDR           // css
 };
 
-const float g_user_gain_table[4] = {1.0f, 0.75f, 0.50f, 0.25f};
-float g_user_initial_offsets[3] = {0.10f, -0.05f, 0.025f};
-uint32_t g_user_setup_count;
-float g_user_last_error;
-float g_user_last_output;
-uint32_t g_user_control_ticks;
-user_trace_t g_user_trace;
+const float gain[4] = {1.0f, 0.75f, 0.50f, 0.25f};
+float offset[3] = {0.10f, -0.05f, 0.025f};
+uint32_t setup_count;
+float last_error;
+float last_output;
+uint32_t control_ticks;
+user_trace_t trace;
 
 static float user_filter(float input)
 {
@@ -45,27 +45,27 @@ static float user_filter(float input)
 
 void setup(void)
 {
-    g_user_setup_count++;
+    setup_count++;
 }
 
 void control(void)
 {
     float duty;
-    float feedback = user_filter(v2k_io.in.vsense + g_user_initial_offsets[0]);
+    float feedback = user_filter(v2k_io.in.vsense + offset[0]);
 
-    g_user_last_error = g_user_setpoint - feedback;
-    duty = DCL_runPI_C2(&g_user_pi,
-                        g_user_setpoint,
-                        feedback * g_user_gain_table[0]);
+    last_error = setpoint - feedback;
+    duty = DCL_runPI_C2(&pi,
+                        setpoint,
+                        feedback * gain[0]);
 
     v2k_io.out.duty_a = duty;
-    g_user_last_output = duty;
-    g_user_control_ticks++;
-    g_user_trace.error_history[g_user_trace.write_index] = g_user_last_error;
-    g_user_trace.write_index++;
-    if (g_user_trace.write_index >= 3u)
+    last_output = duty;
+    control_ticks++;
+    trace.err[trace.idx] = last_error;
+    trace.idx++;
+    if (trace.idx >= 3u)
     {
-        g_user_trace.write_index = 0u;
+        trace.idx = 0u;
     }
     user_secondary_step();
 }

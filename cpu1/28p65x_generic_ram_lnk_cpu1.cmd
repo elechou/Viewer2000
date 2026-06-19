@@ -93,6 +93,7 @@ SECTIONS
    v2k_gs0_cpu1   : > RAMGS0_PLANE, type=NOINIT /* descriptor table + param status + scope producer block */
    v2k_scope_ring : > RAMGS_SCOPE, type=NOINIT  /* Stream/Capture shared scope ring */
    v2k_ccs_view    : > RAMD2, type=NOINIT        /* post-freeze float[2048] de-interleaved view */
+   v2k_user_desc   : > RAMD5_FREE, ALIGN(2)      /* Phase 4.5 post-link baked user descriptor blob */
 
    v2k_msg_1to2 : > CPU1TOCPU2RAM_V2K, type=NOINIT
    v2k_msg_2to1 : > CPU2TOCPU1RAM_V2K, type=NOINIT

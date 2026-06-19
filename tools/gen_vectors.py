@@ -140,7 +140,7 @@ def build_cases():
     add("hello_req", "HELLO_REQ：空 payload", 0x01, 0x0001, b"")
     add("hello_resp", "HELLO_RESP：版本、build_hash、固件名、tick_hz 与能力位",
         0x81, 0x0001,
-        struct.pack("<HHIHH16sII", 6, 8, BUILD_HASH, 10, 0,
+        struct.pack("<HHIHH16sII", 6, 9, BUILD_HASH, 10, 0,
                     b"viewer2000", 20000, 0x7F))
 
     # ---- 4.2 STATUS ----
@@ -213,11 +213,11 @@ def build_cases():
         struct.pack("<HHffHHHH", 1, 0, 0.0, 0.0, 0, 0, 1, 0))
     add("daq_bind_2ch",
         "DAQ_BIND：绑定 2 通道（0xA044=I16 原生 2 octets；"
-        "0xC120=F32 原生 4 octets 无损——地址可来自描述符表或 DWARF）",
+        "0xC120=F32 原生 4 octets 无损——地址来自枚举后的描述符表）",
         0x22, 0x000C,
         struct.pack("<BB", 2, 0)
         + struct.pack("<IHH", 0x0000A044, 0, 0)    # I16 源
-        + struct.pack("<IHH", 0x0000C120, 4, 0))   # F32 源（如 DWARF 来）
+        + struct.pack("<IHH", 0x0000C120, 4, 0))   # F32 source from ENUM
     add("ack_daq_bind", "ACK(DAQ_BIND)：OK，data=bind_seq=3",
         0xA2, 0x000C, struct.pack("<BBHI", 0, 0x22, 0, 3))
     add("ack_daq_bind_badstate",

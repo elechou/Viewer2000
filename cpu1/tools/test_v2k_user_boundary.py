@@ -193,6 +193,19 @@ class OwnershipTests(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn("platform object", errors[0])
 
+    def test_allows_platform_reserved_descriptor_section(self) -> None:
+        root = ET.fromstring(
+            """
+            <link_info>
+              <input_file_list><input_file id="f1"><path>/build/runtime</path><file>registry.obj</file></input_file></input_file_list>
+              <object_component_list><object_component id="c1"><name>v2k_user_desc</name><input_file_ref idref="f1"/></object_component></object_component_list>
+              <logical_group_list><logical_group><name>v2k_user_desc</name><contents><object_component_ref idref="c1"/></contents></logical_group></logical_group_list>
+            </link_info>
+            """
+        )
+        manifest = {"objects": [{"selector": "app/user.obj", "sections": {}}]}
+        self.assertEqual(boundary.verify_ownership(root, manifest), [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,16 +1,29 @@
 # Viewer2000 additions consumed by CCS generated makefiles.
 V2K_USER_BOUNDARY_TOOL := ../tools/v2k_user_boundary.py
 V2K_USER_BOUNDARY_SPEC := ../tools/user_boundary.json
+V2K_USER_DESC_TOOL := ../tools/v2k_bake_user_desc.py
 V2K_BUILD_CONFIG := $(notdir $(CURDIR))
 
-$(V2K_USER_BOUNDARY_CMD): $(OBJS) $(V2K_USER_BOUNDARY_TOOL) $(V2K_USER_BOUNDARY_SPEC)
+# CCS 21 may emit the external C2000Ware startup object into runtime/ while
+# still listing it as a root-level linker input. Normalize the generated output
+# before any target that consumes the managed-build object list.
+.PHONY: v2k_codestart_object
+v2k_codestart_object: f28p65x_codestartbranch.obj
+	@if [ -f runtime/f28p65x_codestartbranch.obj ] && \
+		{ [ ! -f ./f28p65x_codestartbranch.obj ] || \
+		  ! cmp -s runtime/f28p65x_codestartbranch.obj ./f28p65x_codestartbranch.obj; }; then \
+		cp runtime/f28p65x_codestartbranch.obj ./f28p65x_codestartbranch.obj; \
+	fi
+	@test -f ./f28p65x_codestartbranch.obj
+
+$(V2K_USER_BOUNDARY_CMD): $(OBJS) $(V2K_USER_BOUNDARY_TOOL) $(V2K_USER_BOUNDARY_SPEC) | v2k_codestart_object
 	@python3 "$(V2K_USER_BOUNDARY_TOOL)" generate \
 		--project-root .. --build-dir . --config "$(V2K_BUILD_CONFIG)" \
 		--spec "$(V2K_USER_BOUNDARY_SPEC)" \
 		--output "$(V2K_USER_BOUNDARY_CMD)" \
 		--manifest "$(V2K_USER_BOUNDARY_MANIFEST)"
 
-cpu1.out: $(V2K_USER_BOUNDARY_CMD)
+cpu1.out: $(V2K_USER_BOUNDARY_CMD) | v2k_codestart_object
 
 .PHONY: v2k_user_boundary_verify
 v2k_user_boundary_verify: cpu1.out
@@ -18,4 +31,11 @@ v2k_user_boundary_verify: cpu1.out
 		--manifest "$(V2K_USER_BOUNDARY_MANIFEST)" \
 		--link-info cpu1_linkInfo.xml --map cpu1.map --elf cpu1.out
 
-all: v2k_user_boundary_verify
+.PHONY: v2k_user_desc_bake
+v2k_user_desc_bake: v2k_user_boundary_verify
+	@python3 "$(V2K_USER_DESC_TOOL)" bake \
+		--manifest "$(V2K_USER_BOUNDARY_MANIFEST)" \
+		--link-info cpu1_linkInfo.xml --elf cpu1.out \
+		--report "$(V2K_USER_DESC_REPORT)"
+
+all: v2k_user_desc_bake

@@ -475,7 +475,7 @@ def verify_ownership(root: ET.Element, manifest: dict) -> list[str]:
                 errors.append(
                     f"{selector}:{component['name']} linked into {output or '<discarded>'}; expected {wanted}"
                 )
-        elif output.startswith("v2k_user_") and selector is None:
+        elif any(output.startswith(section) for section in OUTPUT_SECTIONS.values()) and selector is None:
             errors.append(
                 f"platform object {actual_file}:{component['name']} contaminates {output}"
             )

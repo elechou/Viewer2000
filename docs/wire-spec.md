@@ -113,7 +113,7 @@ Request payload empty. Response base prefix 28 octets, the current wire v6 respo
 ```
 0   2  proto_ver     = V2K_WIRE_VER (host disconnects on mismatch, hinting a firmware/host version mismatch)
 2   2  contract_ver  = V2K_CONTRACT_VER
-4   4  build_hash    firmware git short hash (§5.1 re-enumeration basis)
+4   4  build_hash    baker-generated final-image hash (§5.1 re-enumeration basis)
 8   2  desc_count    total descriptor count
 10  2  reserved
 12  16 fw_name       ASCII, e.g. "viewer2000"
@@ -287,7 +287,7 @@ host                                                     firmware(CPU2)
  │ (then periodic STATUS polling, suggested 2–10 Hz)         │
 ```
 
-The host caches the descriptor table, keyed by `build_hash`. At any time (in HELLO or STATUS), detecting a `build_hash` change → **invalidate the entire cache and re-enumerate**. Prevents reading new firmware with an old table.
+The host caches the descriptor table, keyed by `build_hash`. The Phase 4.5 baker computes this value from the final ELF with the patch section normalized, plus the generated descriptor records. It therefore changes when linked code, addresses, or the baked variable set changes, including dirty-tree builds. At any time (in HELLO or STATUS), detecting a `build_hash` change → **invalidate the entire cache and re-enumerate**. Prevents reading new firmware with an old table.
 
 User application-variable discovery (build-time baking, Phase 4.5): a build tool reads the firmware `.out` DWARF and bakes each user variable's `name→addr→type` into the descriptor table (struct members / array elements expanded into named scalar entries). The host enumerates them over ENUM like any platform quantity — no `.out` on the host, no stale-ELF risk (the addresses come from the same build that is flashed; build_hash still guards the host cache). The student writes plain C.
 
@@ -360,7 +360,7 @@ The "watch window" of an application variable = after selecting variables, run S
 
 **Rejected forms**: ① L2-component init self-registration (`pi_init(&pi, "vel")`) and ② user-side stringified registration macros — both force a second name string or a mandated declaration style; the C symbol is the only acceptable name source. ③ **Host-side runtime `.out`/DWARF parsing** (the original 2026-06-11 plan) — rejected 2026-06-19 because it ties Scope2000 to the project directory and risks a stale/wrong ELF writing to the wrong address. The C symbol is still the only name source, but it is harvested **at build time** and baked into the device.
 
-**Cost and countermeasure**: a build tool must parse the firmware `.out` DWARF (Python `pyelftools`, Phase 4.5) and bake a compact `name→addr→type` table into the descriptor table; the `.out`-to-device pairing is automatic (same build) and build_hash guards the host cache. The protocol carries no `min/max/scale/offset`: the value itself must already be the real quantity to display, log, and write back. In exchange: zero registration code and zero naming burden for students, any struct member / array element observable, fully runtime channel selection (no reflash), and **names that travel with the device — no `.out` on the host**.
+**Cost and countermeasure**: the Phase 4.5 build tool runs TI `ofd2000 --xml --dwarf` on the firmware `.out` and bakes a compact `name→addr→type` table into the reserved image blob; the `.out`-to-device pairing is automatic (same build) and build_hash guards the host cache. The protocol carries no `min/max/scale/offset`: the value itself must already be the real quantity to display, log, and write back. In exchange: zero registration code and zero naming burden for students, any supported struct member / array element observable, fully runtime channel selection (no reflash), and **names that travel with the device — no `.out` on the host**.
 
 ## Appendix B: Scope2000 `DataSource` boundary (Phase 3.5)
 
