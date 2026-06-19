@@ -213,3 +213,38 @@ Record area (LAUNCHXL-F28P65X, CCS 21.0.0, RAM/20 kHz, 2026-06-19):
 | 2026-06-19 | Phase 4 ISR budget with DCL active | START seq=5, clear all max/violation/overflow diagnostics while running, collect a fresh 0.5 s window, then STOP seq=6 | `isr_cycles_max=1057`, `control_cycles_max=807`, `scope_cycles_max=69`, `budget_violation_cnt=0`, `isr_ovf_cnt=0`; 20 kHz budget is 10,000 cycles. STOP returns to IDLE and freezes `control_ticks=554180` | RAM/20 kHz DCL path uses 10.57% of the period at the observed peak, with no deadline or overflow event in the fresh window |
 
 This session does not claim FLASH or 100 kHz Phase 4 acceptance. Those remain explicit checklist items above.
+
+---
+
+## Phase 4.1 - User-code ownership and reset boundary (RAM/20 kHz implementation acceptance in progress)
+
+Operating steps and remaining acceptance items are in `docs/phase4.1-user-code-boundary.md`.
+
+- [x] Phase 4.1 plan updated in English with the full mutable-user-state reset contract
+- [x] CPU1 managed-build hooks generate `v2k_user_boundary.cmd` / normalized manifest before link and run the post-link verifier before `all` completes
+- [x] RAM linker ownership: USER_RUN=RAMLS6, USER_CONST_RAM=RAMLS7, USER_GOLDEN_RAM=RAMD5[0:0x800), GS4 excluded
+- [x] User data golden uses TI linker `crc_table(..., algorithm = CRC32_PRIME)` and runtime expected/actual CRC diagnostics
+- [x] User app no longer uses reset-section pragmas; plain-C state spans two translation units, initialized data, BSS, arrays, structs, function statics, DCL state, and `const`
+- [x] Python unit tests for classifier/manifest/verifier failure modes pass
+- [x] Host-compiled C CRC vector test locks `v2k_crc32_prime()` to the linker-verified `0xD501B381` user-data image
+- [x] CPU1 and CPU2 RAM `buildProject` complete with zero errors
+- [x] RAM/20 kHz hardware smoke covers boot CRC, START reset, user-state pollution recovery, RAM golden CRC fail-closed, and recovery after restoring golden
+- [ ] CPU1 and CPU2 FLASH `buildProject` and boot smoke, including CPU1 FLASH ownership / CPU2-image collision check
+- [ ] FLASH golden CRC fail-closed test with a controlled expected/actual mismatch
+- [ ] RAM/100 kHz ISR-budget regression
+- [ ] 100-cycle START/STOP and FAULT/CLEAR/START endurance run
+- [ ] Scope/parameter/DCL demo regression through Scope2000 GUI
+
+Record area (LAUNCHXL-F28P65X, CCS 21.0.0, RAM/20 kHz, 2026-06-20):
+
+| Date | Item | Method | Measured | Conclusion |
+|---|---|---|---|---|
+| 2026-06-20 | Unit tests and RAM post-link verifier | `python3 -m unittest discover -s cpu1/tools -p 'test_*.py' -v`; CCS `buildProject(cpu1)` and `buildProject(cpu2)` active RAM configs | 12 unit tests pass. CPU1 RAM build compiles `v2k_crc32_prime.c` and completes with `user boundary verified`; manifest covers 2 user objects, and generated sections are `v2k_user_text`, `v2k_user_const`, `v2k_user_data`, `v2k_user_bss`. CPU2 RAM build also completes with zero errors | Object classification, manifest normalization, linker-fragment generation, verifier core checks, and the extracted CRC helper are active in the managed CCS build |
+| 2026-06-20 | C CRC vector test added | host compiler builds `cpu1/runtime/v2k_crc32_prime.c` through `cpu1/tools/test_v2k_crc32_prime.py` | The fixed 32-word linker-verified user-data image returns `0xD501B381` | The runtime CRC byte order and polynomial are now pinned by an automated test independent of the final `.out` |
+| 2026-06-20 | Linker layout and CRC record | inspect CPU1 RAM map/linkInfo after `buildProject` | `v2k_user_data` LOAD=`0x20000` in USER_GOLDEN_RAM, RUN=`0xB000` in USER_RUN, size=`0x20`; `v2k_user_const` is in USER_CONST_RAM; `.cinit` has no user data/BSS entries; `V2K_UserDataCrcTable` has one `CRC32_PRIME` record with CRC `0xD501B381` | RAM ownership, non-adjacent golden, `.cinit` exclusion, and build-time CRC table placement match the Phase 4.1 contract |
+| 2026-06-20 | Boot reset diagnostics | dual-core RAM debug already running; read CPU1 Expressions before START | `g_v2k_user_reset_error=0`; `g_v2k_user_crc_expected=g_v2k_user_crc_actual=0xD501B381`; `g_v2k_user_reset_count=0`; `g_user_setup_count=0`; `g_v2k_app_enabled=0` | Boot validates layout/CRC and leaves the app disabled; boot init does not call `setup()` |
+| 2026-06-20 | START reset and plain-C state recovery | APP_START seq=1; APP_STOP seq=2; while IDLE, overwrite user initialized/BSS state (`g_user_setpoint`, `g_user_initial_offsets[0]`, `g_user_secondary_gain`, `g_user_pi.Kp`, `g_user_setup_count`, `g_user_secondary_ticks`, `g_user_trace.write_index`); APP_START seq=3 | First START: ack=1/result=OK, RUNNING, app enabled, reset_count=1, setup_count=1. After pollution + second START: ack=3/result=OK, RUNNING, reset_count=2, reset_error=0, setup_count=1, setpoint=`1.5`, offset0=`0.100000001`, secondary_gain=`0.25`, PI Kp=`0.349999994`, CRC expected/actual still `0xD501B381` | START restores all writable user static state covered by the generated user sections before calling `setup()`; setup is not responsible for full reset |
+| 2026-06-20 | RAM golden CRC fail-closed | APP_STOP seq=4; save USER_GOLDEN_RAM first word (`0x0000 0x3FC0`), write `0x0001` to `0x20000@Data`, then APP_START seq=5 | ack=5, `cmd_result=BAD_STATE(2)`, state stays IDLE, app enabled=0, `g_v2k_user_reset_error=3` (`GOLDEN_CRC`), expected CRC `0xD501B381`, actual CRC `0xA3ACB215`, reset_count remains 2 | Corrupted golden prevents START and keeps the app/output path locked out |
+| 2026-06-20 | Recovery after golden restore | restore `0x0000` at `0x20000@Data`; APP_START seq=6; final APP_STOP seq=7 | seq=6 START succeeds with result OK, RUNNING, app enabled=1, reset_error=0, expected/actual CRC both `0xD501B381`, reset_count=3. seq=7 STOP returns to IDLE and app enabled=0 | Fail-closed path is recoverable after the golden image is restored; the board was left running in IDLE with the app disabled |
+
+This session does not claim FLASH, 100 kHz, full 100-cycle endurance, or Scope2000 GUI regression for Phase 4.1. FLASH follow-up must verify CPU1/CPU2 FLASH builds, CPU1 ownership of the selected FLASH golden allocation, no collision with the CPU2 image, boot/START restore from FLASH LOAD, and fail-closed behavior under a controlled CRC mismatch.

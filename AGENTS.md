@@ -21,6 +21,13 @@ Do NOT call any ccs-project, ccs-debug, ccs-sysconfig, or ccs-serial MCP tools u
 
 Going forward, write **code comments in English**. Existing Chinese comments are kept as-is and translated opportunistically when a file is next edited. **Commit messages and documentation (`.md`) are English.** (History: the repo was bilingual — Chinese comments/docs, English identifiers — until the 2026-06-19 switch that makes the whole repo referenceable by non-native-Chinese readers.)
 
+# Debug Hint
+
+When using CCS MCP to start dubug, if you want to debug for example "targetConfigs/TMS320F28P650DK9.ccxml",
+please request "targetConfigs/TMS320F28P650DK9", MCP will Auto-Complete ".ccxml".
+If request "targetConfigs/TMS320F28P650DK9.ccxml", CCS MCP will incorrectly request "targetConfigs/TMS320F28P650DK9.ccxml.ccxml",
+and debug will not start.
+
 # AGENTS.md — Viewer2000 (C2000 RCP platform)
 
 ## Project positioning
@@ -221,10 +228,3 @@ void user_step(const plat_in_t *in, plat_out_t *out);
 - [ ] ESC process-data RAM size and SM configuration ceiling (TRM verification, decides the block ceiling)
 - [ ] The specific tiers for scope channel groups and decimation ratios
 - [ ] Flash bank partitioning and where the CPU2 image is stored
-
-# Debug Hint
-
-When using CCS MCP to start dubug, if you want to debug for example "targetConfigs/TMS320F28P650DK9.ccxml",
-please request "targetConfigs/TMS320F28P650DK9", MCP will Auto-Complete ".ccxml".
-If request "targetConfigs/TMS320F28P650DK9.ccxml", CCS MCP will incorrectly request "targetConfigs/TMS320F28P650DK9.ccxml.ccxml",
-and debug will not start.

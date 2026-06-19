@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "source_roots": [
+    "app"
+  ],
+  "extra_objects": [],
+  "archive_members": []
+}

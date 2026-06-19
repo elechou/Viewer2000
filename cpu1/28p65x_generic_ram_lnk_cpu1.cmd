@@ -11,7 +11,8 @@ MEMORY
    RAMD2            : origin = 0x01A000, length = 0x002000  // Can be mapped to either CPU1 or CPU2. When configured to CPU2, use the address 0x8000. User should comment/uncomment based on core selection
    RAMD3            : origin = 0x01C000, length = 0x002000  // Can be mapped to either CPU1 or CPU2. When configured to CPU2, use the address 0xA000. User should comment/uncomment based on core selection
    RAMD4            : origin = 0x01E000, length = 0x002000  // Can be mapped to either CPU1 or CPU2. When configured to CPU2, use the address 0xC000. User should comment/uncomment based on core selection
-   RAMD5            : origin = 0x020000, length = 0x002000  // Can be mapped to either CPU1 or CPU2. When configured to CPU2, use the address 0xE000. User should comment/uncomment based on core selection
+   USER_GOLDEN_RAM  : origin = 0x020000, length = 0x000800  // Phase 4.1 initialized-user-state golden image; CPU1-owned and non-adjacent to USER_RUN
+   RAMD5_FREE       : origin = 0x020800, length = 0x001800  // Remaining CPU1-owned D5 capacity
 
    RAMLS0           : origin = 0x008000, length = 0x000800
    RAMLS1           : origin = 0x008800, length = 0x000800
@@ -19,8 +20,8 @@ MEMORY
    RAMLS3           : origin = 0x009800, length = 0x000800
    RAMLS4           : origin = 0x00A000, length = 0x000800
    RAMLS5           : origin = 0x00A800, length = 0x000800
-   RAMLS6           : origin = 0x00B000, length = 0x000800
-   RAMLS7           : origin = 0x00B800, length = 0x000800
+   USER_RUN         : origin = 0x00B000, length = 0x000800  // Combined initialized data + BSS for user-owned objects
+   USER_CONST_RAM   : origin = 0x00B800, length = 0x000800  // Constrained RAM-build storage for immutable user objects
    RAMLS8           : origin = 0x022000, length = 0x002000  // When configured as CLA program use the address 0x4000
    RAMLS9           : origin = 0x024000, length = 0x002000  // When configured as CLA program use the address 0x6000
 
@@ -72,17 +73,14 @@ SECTIONS
    .bss             : > RAMLS5, START(V2K_BssStart), END(V2K_BssEnd)
    .bss:output      : > RAMLS3, START(V2K_BssOutputStart), END(V2K_BssOutputEnd)
    .init_array      : > RAMM0
-	   .const           : > RAMLS5 | RAMLS6
+	   .const           : > RAMLS5
 	   .data            : > RAMLS5, START(V2K_DataStart), END(V2K_DataEnd)
 	   .sysmem          : > RAMLS4
-	   v2k_user_data    : > RAMLS6, ALIGN(2),
-	                       START(V2K_UserDataStart), END(V2K_UserDataEnd)
-	   v2k_user_bss     : > RAMLS6, ALIGN(2),
-	                       START(V2K_UserBssStart), END(V2K_UserBssEnd)
+	   .TI.crctab       : > RAMM0, ALIGN(2)
 	   dclfuncs         : > RAMM0
 #else
 	   .pinit           : > RAMM0
-	   .ebss            : >> RAMLS5 | RAMLS6
+	   .ebss            : > RAMLS5
    .econst          : > RAMLS5
    .esysmem         : > RAMLS5
 #endif

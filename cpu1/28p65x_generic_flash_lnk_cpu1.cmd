@@ -19,8 +19,8 @@ MEMORY
    RAMLS3           : origin = 0x009800, length = 0x000800
    RAMLS4           : origin = 0x00A000, length = 0x000800
    RAMLS5           : origin = 0x00A800, length = 0x000800
-   RAMLS6           : origin = 0x00B000, length = 0x000800
-   RAMLS7           : origin = 0x00B800, length = 0x000800
+   USER_RUN         : origin = 0x00B000, length = 0x000800  // Combined initialized data + BSS for user-owned objects
+   USER_CONST_RAM   : origin = 0x00B800, length = 0x000800  // Reserved for an identical RAM/FLASH boundary; FLASH user const stays in flash
    RAMLS8           : origin = 0x022000, length = 0x002000  // When configured as CLA program use the address 0x4000
    RAMLS9           : origin = 0x024000, length = 0x002000  // When configured as CLA program use the address 0x6000
 
@@ -75,14 +75,11 @@ SECTIONS
 	   .const           : > FLASH_BANK0, ALIGN(8)
 	   .data            : > RAMLS5, START(V2K_DataStart), END(V2K_DataEnd)
 	   .sysmem          : > RAMLS4
-	   v2k_user_data    : > RAMLS6, ALIGN(2),
-	                       START(V2K_UserDataStart), END(V2K_UserDataEnd)
-	   v2k_user_bss     : > RAMLS6, ALIGN(2),
-	                       START(V2K_UserBssStart), END(V2K_UserBssEnd)
+	   .TI.crctab       : > FLASH_BANK0, ALIGN(8)
 	   dclfuncs         : > FLASH_BANK0, ALIGN(8)
 #else
 	   .pinit           : > FLASH_BANK0, ALIGN(8)
-	   .ebss            : >> RAMLS5 | RAMLS6
+	   .ebss            : > RAMLS5
    .econst          : > FLASH_BANK0, ALIGN(8)
    .esysmem         : > RAMLS5
 #endif

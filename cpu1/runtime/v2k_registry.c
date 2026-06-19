@@ -151,6 +151,10 @@ void v2k_registry_init(v2k_build_hash_t build_hash)
                      &g_v2k_user_reset_count, slow_div);
     v2k_registry_add("user_reset_err", V2K_TYPE_U16, V2K_KIND_SCOPE,
                      &g_v2k_user_reset_error, slow_div);
+    v2k_registry_add("user_crc_expect", V2K_TYPE_U32, V2K_KIND_SCOPE,
+                     &g_v2k_user_crc_expected, slow_div);
+    v2k_registry_add("user_crc_actual", V2K_TYPE_U32, V2K_KIND_SCOPE,
+                     &g_v2k_user_crc_actual, slow_div);
     v2k_registry_add("cpu2_alive", V2K_TYPE_U16, V2K_KIND_SCOPE,
                      &g_cpu2_alive, slow_div);
     v2k_registry_add("isr_overflow", V2K_TYPE_U32, V2K_KIND_SCOPE,

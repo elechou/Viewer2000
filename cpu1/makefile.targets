@@ -1,0 +1,21 @@
+# Viewer2000 additions consumed by CCS generated makefiles.
+V2K_USER_BOUNDARY_TOOL := ../tools/v2k_user_boundary.py
+V2K_USER_BOUNDARY_SPEC := ../tools/user_boundary.json
+V2K_BUILD_CONFIG := $(notdir $(CURDIR))
+
+$(V2K_USER_BOUNDARY_CMD): $(OBJS) $(V2K_USER_BOUNDARY_TOOL) $(V2K_USER_BOUNDARY_SPEC)
+	@python3 "$(V2K_USER_BOUNDARY_TOOL)" generate \
+		--project-root .. --build-dir . --config "$(V2K_BUILD_CONFIG)" \
+		--spec "$(V2K_USER_BOUNDARY_SPEC)" \
+		--output "$(V2K_USER_BOUNDARY_CMD)" \
+		--manifest "$(V2K_USER_BOUNDARY_MANIFEST)"
+
+cpu1.out: $(V2K_USER_BOUNDARY_CMD)
+
+.PHONY: v2k_user_boundary_verify
+v2k_user_boundary_verify: cpu1.out
+	@python3 "$(V2K_USER_BOUNDARY_TOOL)" verify \
+		--manifest "$(V2K_USER_BOUNDARY_MANIFEST)" \
+		--link-info cpu1_linkInfo.xml --map cpu1.map --elf cpu1.out
+
+all: v2k_user_boundary_verify
