@@ -29,7 +29,7 @@ This is the same pattern professional RCP toolchains use (A2L generated from ELF
 | host (Scope2000) changes | a whole DWARF parser | none | **none — it already enumerates the descriptor table** |
 | cost | host parser + `.out` shipping | trivial | **a build tool + a link/patch step (the price)** |
 
-The decisive win: **Scope2000 needs zero changes** — it already reads user-visible names from the descriptor table over ENUM. Baking user variables into that table makes them appear with no new host feature.
+The decisive win: Scope2000 needs no DWARF parser or project file. It reads user-visible names from the existing ENUM service; descriptor `kind` bit 2 marks baked user entries so the UI can keep platform/system diagnostics outside its main "All Variables" tree.
 
 ## Build flow
 
@@ -81,7 +81,7 @@ The tracked `makefile.init` and `makefile.targets` hooks implement this order wi
 |---|---|
 | build tool | `v2k_bake_user_desc.py` parses TI OFD DWARF XML, scopes by Phase 4.1 linker ranges, expands structs/arrays |
 | baking | reserved blob patched with correct word-addresses; no symbol shift or second link |
-| host unchanged | Scope2000 shows user names via the existing ENUM, no new host code |
+| host remains project-free | Scope2000 shows user names via ENUM and classifies them by the USER kind bit; no `.out` or DWARF parser |
 | travels with device | clean-PC test (C) passes — names visible without the project or any `.out` |
 | guards | `build_hash` re-enumeration (E); capacity within budget (F) |
 
@@ -89,6 +89,6 @@ Record into BRINGUP.md: tool version, the `.out` parsed, the scoping rule, capac
 
 ## Relationship to the other layers
 
-- Phase 4.5 changes **how the descriptor table gets filled** and increases its shared-memory capacity. The wire format and host behavior are unchanged; the shared-memory contract version is 9.
+- Phase 4.5 changes **how the descriptor table gets filled** and increases its shared-memory capacity. The 28-octet wire layout is unchanged; contract version 10 assigns descriptor `kind` bit 2 as the USER origin flag so the host can separate baked user variables from platform/system descriptors.
 - Phase 4.1 remains authoritative for which mutable storage resets. A variable still resets if it is not bakeable, not visible, or unsupported by the descriptor type system; descriptor capacity overflow fails the build instead of weakening reset coverage.
 - It supersedes the earlier "application variables are discovered host-side via `.out` (DWARF)" wording in `wire-spec.md` / `contracts/v2k_descriptor.h`: discovery is now **build-time baking into the descriptor table**, so the host needs no `.out`.

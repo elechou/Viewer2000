@@ -172,10 +172,16 @@ Response (6 + 28×count octets):
 5  1  reserved
 6  …  count × descriptor entry (28 octets, field-mirroring the current v2k_desc_entry_t):
       0:16 name | 16:2 type | 18:2 kind | 20:4 addr | 24:2 prescaler | 26:2 reserved
+      kind bit0=PARAM, bit1=SCOPE, bit2=USER (build-time-baked user origin;
+      clear for platform/system descriptors); bits3..15 reserved
       prescaler is the default-sampling-division suggestion; the runtime actual rate is per DAQ_CTRL
 ```
 
 `start_idx ≥ total_count` → `count=0` (a legal "done reading" signal).
+
+Scope2000 presents USER entries in its main `All Variables` tree and keeps
+platform/system entries in a separate diagnostics tree; both still use the
+same `(addr,type)` CAL/DAQ services.
 
 ### 4.4 CAL_WRITE / CAL_COMMIT / CAL_READ (0x10/0x11/0x12)
 

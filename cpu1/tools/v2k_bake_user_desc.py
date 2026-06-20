@@ -20,12 +20,13 @@ from pathlib import Path
 NAME_LEN = 16
 USER_CAPACITY = 96
 USER_MAGIC = 0x564B5544
-USER_VERSION = 2
+USER_VERSION = 3
 BLOB_HEADER_FORMAT = "<IHHHHI"
 BLOB_HEADER_SIZE = struct.calcsize(BLOB_HEADER_FORMAT)
 ENTRY_SIZE = 44
 KIND_PARAM = 1
 KIND_SCOPE = 2
+KIND_USER = 4
 
 TYPE_I16 = 0
 TYPE_U16 = 1
@@ -284,7 +285,9 @@ def expand_type(
             Descriptor(
                 name=name,
                 type=type_code,
-                kind=(KIND_PARAM | KIND_SCOPE) if storage.mutable else KIND_SCOPE,
+                kind=(KIND_USER | KIND_PARAM | KIND_SCOPE)
+                if storage.mutable
+                else (KIND_USER | KIND_SCOPE),
                 addr=address,
                 storage=storage.name,
             )

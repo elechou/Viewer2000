@@ -12,7 +12,7 @@ typedef struct
     uint16_t idx;
 } user_trace_t;
 
-float setpoint = 1.5f;
+float setpoint = 2.0f;
 
 DCL_PI pi = {
     0.35f,              // Kp

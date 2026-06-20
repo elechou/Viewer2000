@@ -72,7 +72,7 @@ class CollectionTests(unittest.TestCase):
             RANGES,
         )
         self.assertEqual(entries[0].type, bake.TYPE_F32)
-        self.assertEqual(entries[0].kind, bake.KIND_SCOPE)
+        self.assertEqual(entries[0].kind, bake.KIND_USER | bake.KIND_SCOPE)
 
     def test_array_struct_nested_and_const(self) -> None:
         array = die(
@@ -108,8 +108,10 @@ class CollectionTests(unittest.TestCase):
             [entry.name for entry in entries],
             ["s.trace.err[0]", "s.trace.err[1]", "s.idx", "offset[0]", "offset[1]"],
         )
-        self.assertEqual(entries[0].kind, bake.KIND_PARAM | bake.KIND_SCOPE)
-        self.assertEqual(entries[-1].kind, bake.KIND_SCOPE)
+        self.assertEqual(
+            entries[0].kind, bake.KIND_USER | bake.KIND_PARAM | bake.KIND_SCOPE
+        )
+        self.assertEqual(entries[-1].kind, bake.KIND_USER | bake.KIND_SCOPE)
 
     def test_pointer_member_is_reported(self) -> None:
         pointer = die("ptr", "DW_TAG_pointer_type", attribute("DW_AT_type", "ref", "f32"))
@@ -148,7 +150,7 @@ class CollectionTests(unittest.TestCase):
 
 class BlobTests(unittest.TestCase):
     def test_round_trip_uses_c28x_wide_chars(self) -> None:
-        entries = [bake.Descriptor("pi.Kp", bake.TYPE_F32, 3, 0x1000)]
+        entries = [bake.Descriptor("pi.Kp", bake.TYPE_F32, 7, 0x1000)]
         blob = bake.encode_blob(entries, build_hash=0x12345678)
         self.assertEqual(len(blob), bake.BLOB_HEADER_SIZE + bake.USER_CAPACITY * 44)
         self.assertEqual(
@@ -159,12 +161,12 @@ class BlobTests(unittest.TestCase):
 
     def test_rejects_bad_blob_version(self) -> None:
         blob = bytearray(bake.encode_blob([]))
-        blob[4:6] = b"\x03\x00"
+        blob[4:6] = b"\x04\x00"
         with self.assertRaisesRegex(bake.BakeError, "header"):
             bake.decode_blob(bytes(blob))
 
     def test_final_image_hash_ignores_previous_blob_contents(self) -> None:
-        entries = [bake.Descriptor("setpoint", bake.TYPE_F32, 3, 0x1000)]
+        entries = [bake.Descriptor("setpoint", bake.TYPE_F32, 7, 0x1000)]
         blank = bake.encode_blob([])
         patched = bake.encode_blob(entries, build_hash=0xAABBCCDD)
         prefix = b"ELF-prefix"
@@ -180,7 +182,7 @@ class BlobTests(unittest.TestCase):
             prefix + patched + suffix,
             offset,
             len(patched),
-            [bake.Descriptor("setpoint2", bake.TYPE_F32, 3, 0x1002)],
+            [bake.Descriptor("setpoint2", bake.TYPE_F32, 7, 0x1002)],
         )
         self.assertEqual(first, second)
         self.assertNotEqual(first, changed)

@@ -201,7 +201,8 @@ static uint16_t v2k_user_desc_entry_valid(const v2k_desc_entry_t *entry)
     {
         return 0u;
     }
-    if (entry->kind == (V2K_KIND_PARAM | V2K_KIND_SCOPE))
+    if (entry->kind ==
+        (V2K_KIND_USER | V2K_KIND_PARAM | V2K_KIND_SCOPE))
     {
         return (uint16_t)(
             v2k_addr_in_range(entry->addr, words,
@@ -209,7 +210,7 @@ static uint16_t v2k_user_desc_entry_valid(const v2k_desc_entry_t *entry)
             v2k_addr_in_range(entry->addr, words,
                               &V2K_UserBssStart, &V2K_UserBssEnd));
     }
-    if (entry->kind == V2K_KIND_SCOPE)
+    if (entry->kind == (V2K_KIND_USER | V2K_KIND_SCOPE))
     {
         return v2k_addr_in_range(entry->addr, words,
                                  &V2K_UserConstStart, &V2K_UserConstEnd);

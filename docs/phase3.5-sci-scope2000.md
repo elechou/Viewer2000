@@ -158,7 +158,7 @@ Phase 3.5 fixes:
 | Item | Value |
 |---|---|
 | `V2K_WIRE_VER` | 6 |
-| `V2K_CONTRACT_VER` | 9 |
+| `V2K_CONTRACT_VER` | 10 |
 | max payload | 1024 octets |
 | framing | COBS, `0x00` delimiter |
 | integrity | CRC-32C |

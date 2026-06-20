@@ -140,7 +140,7 @@ def build_cases():
     add("hello_req", "HELLO_REQ：空 payload", 0x01, 0x0001, b"")
     add("hello_resp", "HELLO_RESP：版本、build_hash、固件名、tick_hz 与能力位",
         0x81, 0x0001,
-        struct.pack("<HHIHH16sII", 6, 9, BUILD_HASH, 10, 0,
+        struct.pack("<HHIHH16sII", 6, 10, BUILD_HASH, 10, 0,
                     b"viewer2000", 20000, 0x7F))
 
     # ---- 4.2 STATUS ----
@@ -168,11 +168,11 @@ def build_cases():
     add("enum_req", "ENUM_REQ：从 0 开始要 8 条", 0x03, 0x0003,
         struct.pack("<HBB", 0, 8, 0))
     add("enum_resp_2entries",
-        "ENUM_RESP：总数 10，本页 2 条（vel_kp 参数 + iq_meas 示波通道）",
+        "ENUM_RESP：总数 10，本页 2 条（用户 vel_kp 参数/示波 + 系统 iq_meas 示波）",
         0x83, 0x0003,
         struct.pack("<HHBB", 10, 0, 2, 0)
-        + desc_entry("vel_kp", 4, 0x0001, 0x0000A012, 0, 0)  # F32, PARAM
-        + desc_entry("iq_meas", 0, 0x0002, 0x0000A044, 1))  # I16, SCOPE
+        + desc_entry("vel_kp", 4, 0x0007, 0x0000A012, 1, 0)  # F32, USER|PARAM|SCOPE
+        + desc_entry("iq_meas", 0, 0x0002, 0x0000A044, 1))  # I16, system SCOPE
     add("enum_resp_empty",
         "ENUM_RESP 边界：start_idx 越过总数 → count=0（合法的读完信号）",
         0x83, 0x0004, struct.pack("<HHBB", 10, 10, 0, 0))

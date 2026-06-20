@@ -62,7 +62,8 @@
 //-----------------------------------------------------------------------------
 #define V2K_KIND_PARAM  0x0001u  // Tunable parameter: participates in the parameter-plane write path (v2k_param.h)
 #define V2K_KIND_SCOPE  0x0002u  // Observable signal: participates in the scope sampling path (v2k_scope.h); prescaler is the default sampling hint
-// bit2..15 reserved, set to 0
+#define V2K_KIND_USER   0x0004u  // Origin: build-time-baked user variable; clear for platform/system descriptors
+// bit3..15 reserved, set to 0
 
 #define V2K_DESC_ERROR_NONE              0u
 #define V2K_DESC_ERROR_BLOB_HEADER       1u
@@ -100,7 +101,7 @@ V2K_ASSERT_SIZE_BITS(v2k_desc_entry_t, V2K_NAME_BITS(V2K_NAME_LEN) + 96u);
 //-----------------------------------------------------------------------------
 #define V2K_DESC_MAGIC 0x564B4454u   /* "VKDT" */
 #define V2K_USER_DESC_MAGIC 0x564B5544u /* "VKUD" */
-#define V2K_USER_DESC_VERSION 2u
+#define V2K_USER_DESC_VERSION 3u
 
 typedef struct {
     uint32_t magic;              // V2K_DESC_MAGIC; written last = publish

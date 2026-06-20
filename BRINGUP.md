@@ -148,7 +148,7 @@ Operating steps in `docs/phase3.5-sci-scope2000.md`.
 > the range-check result codes, and the unregistered-write count; subsequent verification only covers the mechanical-consistency check.
 
 - [x] wire v6: HELLO tick_hz/capabilities, STATUS cmd ack/result, single Scope entry for Stream/Capture
-- [x] contract version 9, static assertions, generator and golden vectors in sync
+- [x] contract version 10, static assertions, generator and golden vectors in sync
 - [x] CPU1 configures GPIO42/43 and SCIA CPU2 ownership; CPU2 RX ISR + COBS + CRC-32C
 - [x] CPU2 completes HELLO/ENUM/STATUS/CAL/DAQ_BIND/DAQ_CTRL/BLOCK/CMD services
 - [x] On the same frame seq, timeout-retry replays the cached response, without re-executing COMMIT/CMD/block consumption
@@ -255,7 +255,7 @@ This session does not claim FLASH, 100 kHz, full 100-cycle endurance, or Scope20
 
 Operating policy and acceptance items are in `docs/phase4.5-symbol-baking.md`.
 
-- [x] `V2K_DESC_MAX=128`, `V2K_USER_DESC_MAX=96`, contract version 9, and GS0 C28x size assertions pass
+- [x] `V2K_DESC_MAX=128`, `V2K_USER_DESC_MAX=96`, contract version 10, and GS0 C28x size assertions pass
 - [x] CPU1 reserves an exact-size patch blob in RAMD5_FREE for RAM and FLASH_BANK1 for FLASH
 - [x] TI `ofd2000 --xml --dwarf` baker scopes variables through Phase 4.1 linker ranges and expands supported scalar leaves
 - [x] Baker-generated final-image hash replaces the stale Git-HEAD hash and is stable across repeated patching
@@ -266,6 +266,8 @@ Operating policy and acceptance items are in `docs/phase4.5-symbol-baking.md`.
 - [x] Baker fixture tests and actual RAM `.out` dry-run pass; report roots match `cpu1.map` word addresses
 - [ ] CPU1 and CPU2 FLASH `buildProject` (the current CCS MCP exposes no active-configuration switch)
 - [x] On-target runtime acceptance (RAM/20 kHz, CCS MCP): `desc_error=0`, table/blob headers, baked names+addresses match the report (B), CAL_WRITE tunes a baked PARAM and a const leaf is rejected (D)
+- [x] Scope2000 software alignment: exact contract 10 acceptance, golden-vector mirror, stable 128-entry ENUM paging, post-enumeration build-hash confirmation, stale catalog-command rejection, and USER/system classification
+- [ ] Rebuild both cores and repeat the on-target ENUM/Scope2000 checks with contract 10 and user blob version 3
 - [ ] DAQ bind of a baked var over the link, and ENUM paging returns all entries on hardware (F host side)
 - [ ] Scope2000 clean-PC ENUM with no `.out` present (C) and build-hash re-enumeration after changing the user variable set (E)
 
@@ -276,9 +278,11 @@ Software verification record (CCS 21.0.0, active RAM configuration, 2026-06-20):
 | Managed build | CCS `buildProject(cpu1)` and `buildProject(cpu2)` | Both RAM builds complete with zero errors; CPU1 prints `user boundary verified` followed by `user descriptors patched: 30/96, skipped=2` |
 | CPU1 codestart clean rebuild | delete both generated `RAM/f28p65x_codestartbranch.obj` and `RAM/runtime/f28p65x_codestartbranch.obj`, then run CCS `buildProject(cpu1)` | CCS 21 emits the external startup object under `runtime/` while listing it as a root linker input; the tracked make hook copies it only when missing/different, boundary generation waits for that normalization, one link completes, and the final image remains baked |
 | Actual-image bake | `v2k_bake_user_desc.py ... --dry-run` on `cpu1/RAM/cpu1.out` plus map comparison | 30 leaves validate; examples include `setpoint@0xB000`, `pi.Kp@0xB002`, `trace.err[0]@0xB02A`, and const `gain[0]@0xB800`; all are C28x word addresses |
-| Kind and skip policy | inspect `v2k_user_desc_report.json` | data/BSS entries have kind 3, const entries have kind 2; `pi.sps` and `pi.css` are omitted with `pointer is unsupported` |
+| Kind and skip policy | inspect the contract-9 `v2k_user_desc_report.json` | data/BSS entries had kind 3, const entries had kind 2; `pi.sps` and `pi.css` were omitted with `pointer is unsupported` |
+| Contract-10 descriptor origin | baker fixtures, generated vectors, and host C contract compile | new user blobs use version 3 and emit kind 7 (`USER|PARAM|SCOPE`) for mutable leaves or kind 6 (`USER|SCOPE`) for const leaves; platform/system descriptors keep USER clear |
 | Final-image hash | rebuild once, then run the phony bake target again without relinking | both reports produce `build_hash=0x19406E08`; the blob section is normalized before hashing, so old patched bytes do not perturb the result |
-| Tests | Python baker/boundary/CRC suites, host C contract compile, golden-vector check | All automated checks pass; HELLO vector now carries contract 9 |
+| Tests | Python baker/boundary/CRC suites, host C contract compile, golden-vector check | All automated checks pass; HELLO vector now carries contract 10 |
+| Scope2000 alignment | `cargo test`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and exact vector-directory comparison | 32/32 Rust tests pass; the host accepts only wire 6 / contract 10, validates a stable catalog up to 128 entries, refreshes full device information on a build-hash change, rejects queued commands from the previous catalog, classifies descriptors by the USER kind bit, and folds struct/array paths into trees |
 
 Hardware verification record (LAUNCHXL-F28P65X, CCS 21.0.0, RAM/20 kHz, dual-core live debug, CCS MCP, 2026-06-20):
 
