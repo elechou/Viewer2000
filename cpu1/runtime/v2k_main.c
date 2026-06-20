@@ -120,11 +120,17 @@ void main(void)
 
     //
     // Ownership assignment (boot-master responsibility, before booting CPU2):
+    // CPU1 owns Flash Banks 0-2; CPU2 owns Banks 3-4 and boots from Bank 3.
     // GS4 goes to CPU2 (v2k_memmap.h: parameter shadow + scope cfg/cons + CPU2 code).
     // Loading CPU2's .out via the debugger also writes GS4, so CPU1 must run past
     // this line before CPU2 is loaded (see the debug-session order in
     // docs/phase1-sysconfig.md).
     //
+    SysCtl_allocateFlashBank(SYSCTL_FLASH_BANK0, SYSCTL_CPUSEL_CPU1);
+    SysCtl_allocateFlashBank(SYSCTL_FLASH_BANK1, SYSCTL_CPUSEL_CPU1);
+    SysCtl_allocateFlashBank(SYSCTL_FLASH_BANK2, SYSCTL_CPUSEL_CPU1);
+    SysCtl_allocateFlashBank(SYSCTL_FLASH_BANK3, SYSCTL_CPUSEL_CPU2);
+    SysCtl_allocateFlashBank(SYSCTL_FLASH_BANK4, SYSCTL_CPUSEL_CPU2);
     MemCfg_setGSRAMControllerSel(MEMCFG_SECT_GS4, MEMCFG_GSRAMCONTROLLER_CPU2);
 
     //
@@ -203,9 +209,8 @@ void main(void)
     v2k_tb_start();
 
     //
-    // Boot CPU2. The flash-bank partitioning is not finalized (AGENTS.md open
-    // decision); Phase 1 supports RAM builds only — the _FLASH branch keeps the
-    // TI template default as a placeholder, to be fixed once finalized.
+    // Boot CPU2 from the image selected by the active build configuration.
+    // Flash builds use the fixed CPU2 image entry at Bank 3 Sector 0.
     //
 #ifdef _FLASH
     Device_bootCPU2(BOOTMODE_BOOT_TO_FLASH_BANK3_SECTOR0);

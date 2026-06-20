@@ -21,12 +21,44 @@ Do NOT call any ccs-project, ccs-debug, ccs-sysconfig, or ccs-serial MCP tools u
 
 Going forward, write **code comments in English**. Existing Chinese comments are kept as-is and translated opportunistically when a file is next edited. **Commit messages and documentation (`.md`) are English.** (History: the repo was bilingual — Chinese comments/docs, English identifiers — until the 2026-06-19 switch that makes the whole repo referenceable by non-native-Chinese readers.)
 
-# Debug Hint
+# Debug / Flash Hint
 
-When using CCS MCP to start dubug, if you want to debug for example "targetConfigs/TMS320F28P650DK9.ccxml",
-please request "targetConfigs/TMS320F28P650DK9", MCP will Auto-Complete ".ccxml".
-If request "targetConfigs/TMS320F28P650DK9.ccxml", CCS MCP will incorrectly request "targetConfigs/TMS320F28P650DK9.ccxml.ccxml",
-and debug will not start.
+Do not use CCS MCP `launchTargetConfiguration` for this repo's project-local
+target configurations. In this environment that tool resolves names relative to
+`/Users/shou/ti/CCSTargetConfigurations` and appends `.ccxml`, so both
+`targetConfigs/TMS320F28P650DK9.ccxml` and absolute project-local paths can be
+misresolved. For project-local debug, use CCS GUI/debugProject/DSS instead.
+
+F28P65x Flash programming requires the CPU1 Flash Plugin bank map to be set
+before either core is loaded:
+
+- Bank0, Bank1, Bank2 -> CPU1
+- Bank3, Bank4 -> CPU2
+- click/configure the CPU1 Flash Plugin clock before CPU2-only Flash operations
+- use "Necessary Sectors Only (for Program Load)" unless deliberately erasing
+  selected banks
+
+Do not program CPU2 while the application is running from Bank3/Bank4. Enter a
+programming state with both C28x cores halted, or halt CPU1 before it executes
+`Device_bootCPU2()`. The repo script `tools/ccs/flash_dual_core_f28p65x.sh`
+sets the bank map explicitly and then loads `cpu1/FLASH/cpu1.out` and
+`cpu2/FLASH/cpu2.out`. Terminate any CCS GUI debug session first because the
+XDS110 probe can have only one owner, then run the script from the repo root:
+
+```sh
+tools/ccs/flash_dual_core_f28p65x.sh
+```
+
+The script is program-only: it disables CCS run-to-main and post-load debug
+breakpoints and connects only CPU1. During programming it temporarily assigns
+Bank0-4 to CPU1, loads both `cpu1.out` and `cpu2.out` through the CPU1 Flash
+Plugin with necessary-sectors-only erase, then restores the deployment map
+(Bank0-2 -> CPU1, Bank3-4 -> CPU2). CPU2 remains in the Boot-ROM wait state and
+is never connected during programming. This avoids the stale CPU2 debug context
+that caused XDS110 `-1041`/`-1044` during an earlier two-session DSS attempt. If
+an active CCS GUI debug session owns the probe, CPU1 acquisition fails before
+any erase/program operation. Application start and cold-boot acceptance still
+require a physical power cycle with S3 set to Flash boot.
 
 # AGENTS.md — Viewer2000 (C2000 RCP platform)
 
@@ -190,7 +222,7 @@ void user_step(const plat_in_t *in, plat_out_t *out);
 - **C28x char is 16-bit**: any byte-packed code (memcpy byte streams, packed structs, byte buffers) has a trap. The wire protocol confronts this head-on with **explicit serializers + golden vectors**; no byte-wise memcpy on the wire.
 - **CCS real-time mode writes multi-field parameters non-atomically** → must go through the parameter double-buffer commit (see v2k_param.h).
 - **The debugger is not an e-stop**: the XDS110 + USB link can hang; an e-stop trusts hardware trip only.
-- TODO, pending TRM verification: the actual size of ESC process-data RAM and the SyncManager configuration ceiling (decides the block/PDO size ceiling); the mapping of ePWM/eQEP resources to LaunchPad pins; flash bank partitioning and where the CPU2 image is stored.
+- TODO, pending TRM verification: the actual size of ESC process-data RAM and the SyncManager configuration ceiling (decides the block/PDO size ceiling); the mapping of ePWM/eQEP resources to LaunchPad pins.
 
 ## Roadmap
 
@@ -202,7 +234,7 @@ void user_step(const plat_in_t *in, plat_out_t *out);
 - **Phase 4 — User-interface boundary (L1↔user)** ([plan](docs/phase4-user-interface.md)): firmware boundary work — the user surface becomes Arduino-style **`setup()` / `control()`** (`void`) over a global `v2k_io.in/.out`; the port table + count↔physical + all driverlib move behind the chip/board **`wire`↔runtime compile-time seam** (`wire_acquire/apply/cycle_count/...`, zero ISR cost); the physical package becomes `runtime/`, `wire/`, and `app/`; remove the boot default binding. The first real client is one C2000Ware DCL block, loopback-fed, with no motor or platform-owned control math. Phase 4 proves the safe reset lifecycle on the demo.
 - **Phase 4.1 — User-code ownership and reset boundary** ([plan](docs/phase4.1-user-code-boundary.md)): turn the Phase 4 reset prototype into a general build/linker contract. All writable state owned by plain-C user objects is collected automatically, restored from linker-owned RAM/FLASH golden images on every START, and audited post-link; user pragmas and the fixed RAM snapshot disappear; overflow or escaped state fails the build. This phase defines the single user-object scope later consumed by Phase 4.5.
 - **Phase 4.5 — Build-time symbol baking** ([plan](docs/phase4.5-symbol-baking.md)): a build tool reads the firmware `.out` DWARF and bakes user plain-C variable `name→addr→type` into the descriptor table, so the names travel with the device and Scope2000 shows them by name on any PC with no `.out` present (no host DWARF parser, registration macro, or mandated declaration style). Baked entries carry the USER kind bit so Scope2000 can separate them from platform/system diagnostics. It consumes Phase 4.1's user-object scope but does not participate in runtime reset correctness.
-- **Phase 4.6 — Runtime load observability** ([plan](docs/phase4.6-runtime-load-observability.md)): aggregate one-second CPU1 ISR load windows with coherent peak-tick ADC/Control/Scope/Runtime breakdown, expose the values as system Variables and in STATUS diagnostics, and render the control-cycle budget in Scope2000. GPIO timing at 20/100 kHz remains the authority for profiler overhead.
+- **Phase 4.6 — Runtime load observability** ([plan](docs/phase4.6-runtime-load-observability.md)): aggregate one-second CPU1 ISR load windows with coherent peak-tick ADC/Control/Scope/Runtime breakdown, expose the values as system Variables and in STATUS diagnostics, and render the control-cycle budget in Scope2000. The current firmware acceptance baseline is 20 kHz; 100 kHz is deferred until the platform hot path is optimized. GPIO timing remains the authority for profiler overhead.
 - **Phase 5 — Motor bring-up (platform acceptance)**: open-loop V/f → current-sense calibration → current loop → encoder → speed loop → position loop. Each step is a small L3 application, validating the platform interface design along the way.
 - **Phase 6 — EtherCAT link maturity**: SSC port, ESI/EEPROM, state machine to OP, PDO mapping; ethercrab master @ 2 kHz loop. **Acceptance = 100 kHz × 8ch lossless continuous stream (zero sequence loss × long duration) + record-and-replay.**
 - **(Long-term) portability option**: the shared interfaces + host are chip-agnostic, and the **L1 control core is chip-agnostic** (it touches no registers — the L0↔L1 seam quarantines driverlib in L0). When swapping chips (F29x / AM26x) later, the rewrite is **L0 + the board substrate** (linker/memory map/dual-core/IPC), not L1. The platform's accumulated value lives in the interface definitions and the L1 core, not the chip.
@@ -226,6 +258,7 @@ void user_step(const plat_in_t *in, plat_out_t *out);
 - [x] **L0↔L1 portability seam**: the executor (L1 control core) calls a thin compile-time HAL (`l0_acquire/l0_apply/l0_cycle_count/...`); all driverlib + the port table + count↔physical live in L0. Zero ISR cost (direct/inline calls, not a runtime function-pointer HAL — the FreeRTOS-port-layer model). (Decided 2026-06-19.)
 - [x] **Observability of user variables = build-time symbol baking (Phase 4.5)**, not host `.out` parsing (would tie Scope2000 to the project + risk a stale/wrong ELF) and not a registration macro (mandated declaration style). The student writes plain C; names are baked into the descriptor table from DWARF at build time and travel with the device; the host is unchanged. (Decided 2026-06-19.)
 - [x] **Control-math sourcing**: generic primitives (PID/LPF/ramp) from C2000Ware DCL; PMSM transforms from MOTORCONTROL-SDK; SRM-specific control hand-written (the standard FOC SDK has no SRM equivalent — not wheel-reinvention). The platform ships none; demos/examples reach these via the include path. (Decided 2026-06-19.)
+- [x] **Current control-rate acceptance baseline = 20 kHz**. The already-recorded 100 kHz experiments remain useful evidence, and the communication architecture retains 100 kHz transport headroom, but 100 kHz is not a Phase 4.x acceptance gate. It may be reconsidered after profiling-driven platform optimization and/or CLA partitioning. (Decided 2026-06-20.)
+- [x] **Flash partition = CPU1 Banks 0-2, CPU2 Banks 3-4; CPU2 image entry = Bank 3 Sector 0.** CPU1 assigns all five bank owners before releasing CPU2. Bank 2 is currently reserved headroom in the CPU1 allocation. (Decided 2026-06-20.)
 - [ ] ESC process-data RAM size and SM configuration ceiling (TRM verification, decides the block ceiling)
 - [ ] The specific tiers for scope channel groups and decimation ratios
-- [ ] Flash bank partitioning and where the CPU2 image is stored

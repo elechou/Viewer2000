@@ -244,7 +244,10 @@ def render_fragment(objects: list[ObjectInfo], config: str) -> tuple[str, bool]:
         data_load = "USER_GOLDEN_RAM"
     else:
         text_place = ">> FLASH_BANK0 | FLASH_BANK1, ALIGN(8)"
-        const_place = ">> FLASH_BANK0 | FLASH_BANK1, ALIGN(8)"
+        # START/END/SIZE remain undefined for a section split with >> across
+        # multiple FLASH regions. Keep user const in one CPU1-owned bank so
+        # the verifier and descriptor baker receive an authoritative range.
+        const_place = "> FLASH_BANK1, ALIGN(8)"
         data_load = "FLASH_BANK1"
 
     def body(kind: str) -> str:

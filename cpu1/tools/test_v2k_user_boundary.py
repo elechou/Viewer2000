@@ -122,6 +122,18 @@ class FragmentTests(unittest.TestCase):
         self.assertIn("crc_table(V2K_UserDataCrcTable", fragment)
         self.assertIn("TYPE = NOINIT", fragment)
 
+    def test_flash_const_uses_one_bank_for_authoritative_range_symbols(self) -> None:
+        obj = boundary.ObjectInfo(
+            selector="app/user.obj",
+            path=Path("app/user.obj"),
+            sections=(
+                boundary.InputSection(".const:table", "const", 4),
+            ),
+        )
+        fragment, _ = boundary.render_fragment([obj], "FLASH")
+        self.assertIn("> FLASH_BANK1, ALIGN(8)", fragment)
+        self.assertNotIn(">> FLASH_BANK0 | FLASH_BANK1, ALIGN(8),\n        START", fragment)
+
 
 class LayoutTests(unittest.TestCase):
     manifest = {"configuration": "RAM", "has_user_data": True}
