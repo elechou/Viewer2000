@@ -27,6 +27,7 @@
 #include "../../common/v2k_planes.h"
 #include "v2k_timebase.h"
 #include "v2k_fault.h"
+#include "v2k_profile.h"
 #include "v2k_registry.h"
 #include "v2k_scope_runtime.h"
 #include "v2k_user_runtime.h"
@@ -137,6 +138,7 @@ void main(void)
     g_v2k_msg_1to2.cpu1_status.contract_ver = V2K_CONTRACT_VER;
     g_v2k_msg_1to2.cpu1_status.sys_state    = V2K_STATE_INIT;
     g_v2k_msg_1to2.cpu1_status.tick_hz      = V2K_ISR_HZ;
+    v2k_profile_init();
     v2k_registry_init();
     v2k_scope_init();
     v2k_user_runtime_init();
@@ -235,6 +237,8 @@ void main(void)
             // continuously reading GS4/MSGRAM.
             v2k_param_service();
             v2k_param_read_service();
+            v2k_profile_service();
+            v2k_profile_publish_status(&g_v2k_msg_1to2.cpu1_status);
             v2k_scope_service();
             v2k_scope_apply_ready();
             v2k_scope_ccs_view_service();

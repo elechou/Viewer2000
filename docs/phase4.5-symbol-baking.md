@@ -91,6 +91,6 @@ Record into BRINGUP.md: tool version, the `.out` parsed, the scoping rule, capac
 
 ## Relationship to the other layers
 
-- Phase 4.5 changes **how the descriptor table gets filled** and increases its shared-memory capacity. The 28-octet descriptor wire layout is unchanged; contract version 11 keeps descriptor `kind` bit 2 as the USER origin flag and adds CPU1-baked HELLO project metadata.
+- Phase 4.5 changes **how the descriptor table gets filled** and increases its shared-memory capacity. The 28-octet descriptor wire layout is unchanged; contract version 11 introduced descriptor `kind` bit 2 as the USER origin flag and CPU1-baked HELLO project metadata.
 - Phase 4.1 remains authoritative for which mutable storage resets. A variable still resets if it is not bakeable, not visible, or unsupported by the descriptor type system; descriptor capacity overflow fails the build instead of weakening reset coverage.
 - It supersedes the earlier "application variables are discovered host-side via `.out` (DWARF)" wording in `wire-spec.md` / `contracts/v2k_descriptor.h`: discovery is now **build-time baking into the descriptor table**, so the host needs no `.out`.

@@ -80,9 +80,20 @@ typedef struct {
     uint32_t heartbeat;     // CPU1 慢环递增
     v2k_tick_t tick;        // 当前 ISR tick 快照（host 对时/活性双重判据）
     uint32_t tick_hz;       // ISR tick 频率；host 将 tick 换算为秒
+    uint32_t prof_seq;      // Runtime-load snapshot sequence; written last
+    uint32_t cycle_budget;  // V2K_EPWMCLK_HZ / V2K_ISR_HZ
+    uint32_t load_avg;      // Mean ADC/EOC latency + ISR cycles in the completed window
+    uint32_t load_peak;     // Peak ADC/EOC latency + ISR cycles in the completed window
+    uint32_t ctrl_at_peak;  // User control() body cycles on the peak tick
+    uint32_t scope_at_peak; // Scope epilogue cycles on the peak tick
+    uint16_t lat_at_peak;   // ADC/EOC entry latency on the peak tick
+    uint16_t prof_reserved;
+    v2k_tick_t peak_tick;   // Hidden bring-up correlation tick for the peak record
+    uint32_t budget_violations; // Lifetime ISR budget violations
+    uint32_t isr_overflows;     // Lifetime ADC interrupt overflows
 } v2k_cpu1_status_t;
 
-V2K_ASSERT_SIZE_BITS(v2k_cpu1_status_t, 224u);
+V2K_ASSERT_SIZE_BITS(v2k_cpu1_status_t, 544u);
 
 //-----------------------------------------------------------------------------
 // CPU2 状态块（MSGRAM CPU2→CPU1）

@@ -43,9 +43,20 @@
 // C-side mirror value used to derive PRD.
 #define V2K_EPWMCLK_HZ      200000000u
 #define V2K_TB_PRD          (V2K_EPWMCLK_HZ / (2u * V2K_ISR_HZ))  // up-down count
+#define V2K_ISR_BUDGET_CYCLES (V2K_EPWMCLK_HZ / V2K_ISR_HZ)
 
 // The frequency must divide evenly, otherwise PRD truncation makes the actual ISR frequency deviate from nominal
 V2K_STATIC_ASSERT((V2K_EPWMCLK_HZ % (2u * V2K_ISR_HZ)) == 0u);
+
+// CPUTIMER1 (wire_cycle_count) runs at SYSCLKOUT; this mirror exists only to pin
+// the load profiler's cross-counter assumption. The profiler adds the ISR-entry
+// TBCTR latency (ePWM TBCLK ticks) to the ISR duration (CPUTIMER1/SYSCLK ticks),
+// which is meaningful only while one TBCLK tick == one CPUTIMER1 tick, i.e.
+// EPWMCLK == SYSCLK (EPWMCLKDIV=/1, errata-mandated above) AND the ePWM time-base
+// prescalers are /1 (syscfg: hsClockDiv=CLKDIV=1). Change the clock tree and the
+// latency must be rescaled before it is added to cycles.
+#define V2K_CPUTIMER_HZ     200000000u
+V2K_STATIC_ASSERT(V2K_EPWMCLK_HZ == V2K_CPUTIMER_HZ);
 
 //-----------------------------------------------------------------------------
 // Observables (CCS Expressions)
@@ -60,8 +71,8 @@ extern volatile uint16_t g_v2k_isr_lat_max;// Historical max. Note it includes a
 extern volatile uint32_t g_v2k_isr_ovf_cnt;// ADC INT overflow count (≠0 = ISR overran)
 extern volatile uint32_t g_v2k_isr_cycles; // Most recent ISR cycle count measured by CPUTIMER1
 extern volatile uint32_t g_v2k_isr_cycles_max;
-extern volatile uint32_t g_v2k_control_cycles; // acquire→apply, including control()
-extern volatile uint32_t g_v2k_control_cycles_max;
+extern volatile uint32_t g_v2k_control_cycles; // user control() body only (control_start→control_done); excludes acquire/apply
+extern volatile uint32_t g_v2k_control_cycles_max; // peak of the above; redefined in Phase 4.6 (was acquire→apply)
 extern volatile uint32_t g_v2k_scope_cycles;   // scope epilogue's separate budget
 extern volatile uint32_t g_v2k_scope_cycles_max;
 extern volatile uint32_t g_v2k_isr_budget_violation_cnt;

@@ -141,7 +141,7 @@ def build_cases():
     add("hello_req", "HELLO_REQ：空 payload", 0x01, 0x0001, b"")
     add("hello_resp", "HELLO_RESP：版本、build_hash、固件名、tick_hz、能力位、项目名与构建时间",
         0x81, 0x0001,
-        struct.pack("<HHIHH16sII32sI", 6, 11, BUILD_HASH, 10, 0,
+        struct.pack("<HHIHH16sII32sI", 6, 12, BUILD_HASH, 10, 0,
                     b"viewer2000", 20000, 0x7F,
                     b"phase4-demo", BUILD_TIME_UTC))
 
@@ -150,7 +150,7 @@ def build_cases():
     add("status_resp",
         "STATUS_RESP：RUNNING 态，Scope mode=STREAM",
         0x82, 0x0002,
-        struct.pack("<HHHIIIIHHI4BIHH",
+        struct.pack("<HHHIIIIHHI4BIHHIIIIIIHIIII",
                     2,            # sys_state = RUNNING
                     0,            # fault_code
                     0,            # status_flags
@@ -164,7 +164,18 @@ def build_cases():
                     1, 0, 0, 0,   # scope mode/flags/reserved
                     9,            # cmd_ack_seq
                     0,            # cmd_result = OK
-                    0))           # reserved
+                    0,            # reserved
+                    3,            # prof_seq begin
+                    10000,        # cycle_budget
+                    4200,         # load_avg
+                    7300,         # load_peak
+                    1600,         # ctrl_at_peak = user control() body
+                    900,          # scope_at_peak
+                    40,           # lat_at_peak
+                    123456700,    # peak_tick
+                    0,            # budget violations
+                    0,            # ISR overflows
+                    3))           # prof_seq end
 
     # ---- 4.3 ENUM ----
     add("enum_req", "ENUM_REQ：从 0 开始要 8 条", 0x03, 0x0003,

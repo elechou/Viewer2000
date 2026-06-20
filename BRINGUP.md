@@ -267,7 +267,7 @@ Operating policy and acceptance items are in `docs/phase4.5-symbol-baking.md`.
 - [ ] CPU1 and CPU2 FLASH `buildProject` (the current CCS MCP exposes no active-configuration switch)
 - [x] On-target runtime acceptance (RAM/20 kHz, CCS MCP): `desc_error=0`, table/blob headers, baked names+addresses match the report (B), CAL_WRITE tunes a baked PARAM and a const leaf is rejected (D)
 - [x] Scope2000 software alignment: exact contract 10 acceptance, golden-vector mirror, stable 128-entry ENUM paging, post-enumeration build-hash confirmation, stale catalog-command rejection, and USER/system classification
-- [ ] Rebuild both cores and repeat the on-target ENUM/Scope2000 checks with contract 11 and user blob version 4
+- [ ] Rebuild both cores and repeat the on-target ENUM/Scope2000 checks with the current contract and user blob version 4
 - [ ] DAQ bind of a baked var over the link, and ENUM paging returns all entries on hardware (F host side)
 - [ ] Scope2000 clean-PC ENUM with no `.out` present (C) and build-hash re-enumeration after changing the user variable set (E)
 
@@ -296,3 +296,38 @@ Hardware verification record (LAUNCHXL-F28P65X, CCS 21.0.0, RAM/20 kHz, dual-cor
 | 2026-06-20 | Offline baker suite | `python3 -m unittest test_v2k_bake_user_desc` | 9/9 pass: struct/array/const expansion, C28x wide-char round-trip, capacity+alignment overflow, duplicate/overlong-name reject, pointer report, typedef/const/TI-far resolve | The offline halves of checks A (extract/expand) and F (capacity overflow) hold in the current tree |
 
 On-target RAM/20 kHz functional acceptance (runtime accept, address correctness B, baked names, tune/reject D) passed this session. This record does not claim FLASH, the Scope2000 clean-PC ENUM (C), build-hash re-enumeration on a changed variable set (E), or ENUM paging over the link (F). Phase 4.5 final exit remains gated by those and by the open Phase 4.1 FLASH/reset checks; not tagged yet.
+
+---
+
+## Phase 4.6 - Runtime load observability (host software checks complete, target acceptance open)
+
+Operating semantics and acceptance items are in `docs/phase4.6-runtime-load-observability.md`.
+
+- [x] One-second CPU1 ISR windows publish average plus coherent peak-tick control/scope/latency/tick fields
+- [x] Five platform descriptors expose the snapshot signal values as system Variables (`load_avg/load_peak/ctrl_at_peak/scope_at_peak/lat_at_peak`); `prof_seq/cycle_budget/peak_tick` ride in STATUS only. STATUS carries the full profiler snapshot for system diagnostics
+- [x] Host-compiled profiler test covers window publication, average, coherent peak fields, status publication, and tick wrap
+- [x] Scope2000 STATUS reconciliation and System control-cycle-budget UI
+- [ ] CPU1 and CPU2 RAM builds complete with zero errors
+- [ ] RAM/20 kHz Scope OFF/Stream/Capture measurements and GPIO overhead comparison
+- [ ] RAM/100 kHz full-load regression with no new budget violation or ADC interrupt overflow
+- [ ] Host-stop/Scope-overrun isolation regression
+- [ ] Close the Stream channel-scaling investigation: controlled 1-8 channel matrix, normal/block-boundary Scope timing, GPIO reconciliation, and post-optimization repeat
+- [ ] Review ADC/EOC bar terminology: `lat_at_peak` is trigger-to-ISR-entry hardware latency, not CPU-executed ADC work
+
+Software verification record:
+
+| Date | Item | Method | Result |
+|---|---|---|---|
+| 2026-06-20 | Automated verification | Viewer2000 `python3 -m unittest discover -s cpu1/tools -p 'test_*.py' -v`, `python3 tools/gen_vectors.py --check`, and host contract compile; Scope2000 `cargo test`, `cargo fmt --check`, and `cargo clippy --all-targets -- -D warnings` | Viewer2000 25/25 host tests pass, vectors report `CHECK OK`, and PC contract assertions compile with `-Werror`; Scope2000 57/57 tests pass with clean formatting and clippy. No CCS target build or hardware acceptance is claimed |
+
+Hardware verification record (LAUNCHXL-F28P65X):
+
+| Date | Rate / mode | Avg / peak / violations | GPIO before / after | Conclusion |
+|---|---|---|---|---|
+| Pending | RAM/20 kHz, Scope OFF | — | — | Open |
+| Pending | RAM/20 kHz, Stream | — | — | Open |
+| Pending | RAM/20 kHz, 8-channel Capture | — | — | Open |
+| Pending | RAM/100 kHz, Scope OFF | — | — | Open |
+| Pending | RAM/100 kHz, Stream | — | — | Open |
+| Pending | RAM/100 kHz, 8-channel Capture | — | — | Open |
+| 2026-06-20 | Preliminary Stream observation; rate/build/channel types not recorded | Scope-at-total-peak: 1 channel = 376 cycles; 8 channels = 809 cycles; delta = 433 cycles (~61.9 per added channel) | — | **Open** — `scope_at_peak` is not Scope average or Scope-local maximum; run the controlled matrix and boundary-tick measurements in the Phase 4.6 document before drawing an optimization conclusion |

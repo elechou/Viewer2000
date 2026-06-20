@@ -72,6 +72,16 @@ V2K_ASSERT_OFFSET_BITS(v2k_cpu1_status_t,  ack_seq,   32u);
 V2K_ASSERT_OFFSET_BITS(v2k_cpu1_status_t,  heartbeat, 128u);
 V2K_ASSERT_OFFSET_BITS(v2k_cpu1_status_t,  tick,      160u);
 V2K_ASSERT_OFFSET_BITS(v2k_cpu1_status_t,  tick_hz,   192u);
+V2K_ASSERT_OFFSET_BITS(v2k_cpu1_status_t,  prof_seq,  224u);
+V2K_ASSERT_OFFSET_BITS(v2k_cpu1_status_t,  cycle_budget, 256u);
+V2K_ASSERT_OFFSET_BITS(v2k_cpu1_status_t,  load_avg,  288u);
+V2K_ASSERT_OFFSET_BITS(v2k_cpu1_status_t,  load_peak, 320u);
+V2K_ASSERT_OFFSET_BITS(v2k_cpu1_status_t,  ctrl_at_peak, 352u);
+V2K_ASSERT_OFFSET_BITS(v2k_cpu1_status_t,  scope_at_peak, 384u);
+V2K_ASSERT_OFFSET_BITS(v2k_cpu1_status_t,  lat_at_peak, 416u);
+V2K_ASSERT_OFFSET_BITS(v2k_cpu1_status_t,  peak_tick, 448u);
+V2K_ASSERT_OFFSET_BITS(v2k_cpu1_status_t,  budget_violations, 480u);
+V2K_ASSERT_OFFSET_BITS(v2k_cpu1_status_t,  isr_overflows, 512u);
 
 // 防"空 TU"告警
 typedef int v2k_check_contracts_nonempty;

@@ -141,7 +141,7 @@ An old parser can read only the 28-octet prefix; if a new parser receives a shor
 
 ### 4.2 STATUS (0x02 / 0x82)
 
-Request payload empty. Response 42 octets; doubles as the link heartbeat (host periodic polling):
+Request payload empty. Response 84 octets; doubles as the link heartbeat (host periodic polling):
 
 ```
 0   2  sys_state      V2K_STATE_* (v2k_command.h)
@@ -160,7 +160,24 @@ Request payload empty. Response 42 octets; doubles as the link heartbeat (host p
 34  4  cmd_ack_seq    the max system-command seq CPU1 has executed
 38  2  cmd_result     V2K_CMDR_* (corresponding to cmd_ack_seq)
 40  2  reserved
+42  4  prof_seq       runtime-load snapshot sequence, sampled before the profiler fields
+46  4  cycle_budget   V2K_EPWMCLK_HZ / V2K_ISR_HZ
+50  4  load_avg       mean ADC/EOC latency + ISR cycles in the completed one-second window
+54  4  load_peak      peak ADC/EOC latency + ISR cycles in the completed one-second window
+58  4  ctrl_at_peak   user control() body cycles on the peak tick
+62  4  scope_at_peak  scope epilogue cycles on the peak tick
+66  2  lat_at_peak    ADC/EOC entry latency on the peak tick
+68  4  peak_tick      hidden bring-up correlation tick for the peak record
+72  4  budget_violations  lifetime ISR budget violations
+76  4  isr_overflows  lifetime ADC interrupt overflows
+80  4  prof_seq_end   same source field as prof_seq, sampled after the profiler fields
 ```
+
+The host accepts profiler fields only when `prof_seq != 0` and
+`prof_seq == prof_seq_end`. A mismatch means CPU1 was publishing a new snapshot
+while CPU2 serialized STATUS; the regular status fields remain valid, but that
+profiler sample is discarded. Runtime cycles are host-derived as
+`load_peak - lat_at_peak - ctrl_at_peak - scope_at_peak`.
 
 ### 4.3 ENUM (0x03 / 0x83)
 

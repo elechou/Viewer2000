@@ -285,7 +285,18 @@ static void v2k_handle_status(uint16_t seq)
     v2k_put_u32(s_raw, (uint16_t)(off + 34u), cpu1->ack_seq);
     v2k_put_u16(s_raw, (uint16_t)(off + 38u), cpu1->cmd_result);
     v2k_put_u16(s_raw, (uint16_t)(off + 40u), 0u);
-    v2k_response_send(42u);
+    v2k_put_u32(s_raw, (uint16_t)(off + 42u), cpu1->prof_seq);
+    v2k_put_u32(s_raw, (uint16_t)(off + 46u), cpu1->cycle_budget);
+    v2k_put_u32(s_raw, (uint16_t)(off + 50u), cpu1->load_avg);
+    v2k_put_u32(s_raw, (uint16_t)(off + 54u), cpu1->load_peak);
+    v2k_put_u32(s_raw, (uint16_t)(off + 58u), cpu1->ctrl_at_peak);
+    v2k_put_u32(s_raw, (uint16_t)(off + 62u), cpu1->scope_at_peak);
+    v2k_put_u16(s_raw, (uint16_t)(off + 66u), cpu1->lat_at_peak);
+    v2k_put_u32(s_raw, (uint16_t)(off + 68u), cpu1->peak_tick);
+    v2k_put_u32(s_raw, (uint16_t)(off + 72u), cpu1->budget_violations);
+    v2k_put_u32(s_raw, (uint16_t)(off + 76u), cpu1->isr_overflows);
+    v2k_put_u32(s_raw, (uint16_t)(off + 80u), cpu1->prof_seq);
+    v2k_response_send(84u);
 }
 
 static void v2k_handle_enum(uint16_t seq, const uint16_t *payload,

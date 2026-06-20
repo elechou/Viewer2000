@@ -9,6 +9,7 @@
 #include "../wire/wire.h"
 #include "v2k_timebase.h"
 #include "v2k_fault.h"
+#include "v2k_profile.h"
 #include "v2k_user_runtime.h"
 
 extern uint16_t V2K_BssStart;
@@ -356,10 +357,26 @@ void v2k_registry_init(void)
                      &g_v2k_isr_cycles_max, slow_div);
     v2k_registry_add("ctrl_cycles_max", V2K_TYPE_U32, V2K_KIND_SCOPE,
                      &g_v2k_control_cycles_max, slow_div);
-    // scope_cyc_max is intentionally not registered: the scope-segment cycle
-    // count can be derived as isr_cycles_max − ctrl_cycles_max, freeing this
-    // slot for the protection signal tz_trip_cnt (g_v2k_scope_cycles_max is
-    // still directly viewable in CCS).
+    // Expose the five profiler signal values as system Variables (scope-bindable
+    // / CAL-readable). prof_seq (a publication sequence), cycle_budget (a build
+    // constant), and peak_tick (a hidden bring-up correlation id) ride in STATUS
+    // only: they are not meaningful to plot or bind, so registering them would
+    // spend scarce platform descriptor slots for nothing.
+    v2k_registry_add("load_avg", V2K_TYPE_U32, V2K_KIND_SCOPE,
+                     &g_v2k_load_avg, slow_div);
+    v2k_registry_add("load_peak", V2K_TYPE_U32, V2K_KIND_SCOPE,
+                     &g_v2k_load_peak, slow_div);
+    v2k_registry_add("ctrl_at_peak", V2K_TYPE_U32, V2K_KIND_SCOPE,
+                     &g_v2k_ctrl_at_peak, slow_div);
+    v2k_registry_add("scope_at_peak", V2K_TYPE_U32, V2K_KIND_SCOPE,
+                     &g_v2k_scope_at_peak, slow_div);
+    v2k_registry_add("lat_at_peak", V2K_TYPE_U16, V2K_KIND_SCOPE,
+                     &g_v2k_lat_at_peak, slow_div);
+    // scope_cyc_max is intentionally not registered, freeing this slot for the
+    // protection signal tz_trip_cnt (g_v2k_scope_cycles_max stays viewable in
+    // CCS, and the profiler's scope_at_peak carries the on-wire scope figure).
+    // Note: scope can no longer be back-derived as isr_cycles_max − ctrl_cycles_max,
+    // because ctrl now times only the user control() body (Phase 4.6).
     v2k_registry_add("scope_overrun", V2K_TYPE_U32, V2K_KIND_SCOPE,
                      &g_v2k_scope_overrun_total, slow_div);
     v2k_registry_add("tz_trip_cnt", V2K_TYPE_U32, V2K_KIND_SCOPE,
