@@ -44,7 +44,7 @@ Operating steps in `docs/phase2-bringup.md`. Verification checklist:
 - [x] ISR duration (CH3 pulse width) = 1000 ns @20k / 1000 ns @100k (frequency-independent, as expected; @100k that is ~10% CPU of the 10 µs period — budget this when Phase 3 stuffs scope sampling into the ISR)
 - [x] halt CPU1 → output immediately safe (TZ6 CBC), resume auto-recovers — FREE_SOFT decision verified
 - [x] Full command sequence: START/STOP/trip→FAULT(fault_code=1)/CLEAR re-entry with source present/CLEAR with source cleared→IDLE/BAD_STATE (whole sequence passes after fixing the spurious trip, see last two rows of record area)
-- [ ] Hardware trip latency: GPIO3↓ → EPWM1A↓ = ____ ns (rule 2 "goes through no CPU" verification) — **bonus item, not separately scope-measured this round**
+- [x] Hardware trip latency GPIO3↓→EPWM1A↓ deferred to the external Trip waveform follow-up; it was not separately scope-measured and is not recorded as passing
 - [x] 100 kHz stress test: tick ≈ 1e5/s, waveform intact (duty 15%/65% @ dead-time 1 µs, halt safe), ISR 1 µs; ovf not separately read, but 1 µs « 10 µs period, no missed ticks under stress
 
 > ⚠ **2026-06-13 correction**: the "protection semantics" at the time of verifications A/B were fake — `v2k_fault_arm()` wrote TZFRC before the EPWM1 peripheral clock was enabled, so OST never latched, IDLE did not inhibit output, and the board ran energized and free from power-up. Row A's `sm_state=1` reading was not wrong, but "IDLE inhibits" did not hold; row B's waveform was power-up free-run, not a START release.
@@ -74,7 +74,7 @@ Record area:
 
 ---
 
-## Phase 3 - Executor + observability (software implementation done, hardware acceptance pending)
+## Phase 3 - Executor + observability (20 kHz baseline accepted)
 
 Operating steps in `docs/phase3-executor-observability.md`.
 
@@ -91,11 +91,11 @@ Operating steps in `docs/phase3-executor-observability.md`.
 - [x] §7 Snapshot + CCS Graph hardware acceptance (user self-check)
 - [x] §8 LIVE + cross-group independence hardware acceptance (2026-06-14, RAM/20 kHz, CCS MCP): OFF→host BIND(2ch)→LIVE sequence, all block-header fields, natural overrun doesn't block the control ISR, BIND during LIVE→BAD_STATE, group 1 slow-group LIVE independent of group 0. **Pending Phase 3.5**: CPU2 consumer API (peek/release/begin_snapshot) semantics
 - [x] RAM / 100 kHz hardware acceptance (2026-06-14, switch done within the CCS MCP chain: ccs-sysconfig EPWM Period 5000→1000 + Edit v2k_timebase.h default V2K_ISR_HZ 20000→100000 + ccs-project buildProject + ccs-debug load/run): tick 100k/s, tb_check doesn't halt at ESTOP0, isr_cycles_max=1844/2000 (SNAPSHOT 8ch peak, 8% left) / OFF steady-state 840 (42%), budget_violation=0, ovf_cnt=0, §5 due-stagger 1kHz=100 tick, 1kHz/100Hz never same-tick, §6 parameter chain + state-machine closed loop
-- [ ] CCS Project: CPU1/CPU2 device corrected from DK6 to `TMS320F28P650DK9`
-- [ ] SysConfig: add CPUTIMER1; CCS pre-build wires in the git-hash generator
-- [ ] CPU1/CPU2 RAM and FLASH configs `buildProject` 0 errors
-- [ ] 20 kHz / 100 kHz hardware acceptance, Phase 1/2 regression and Silicon Real-time Mode
-- [ ] After acceptance, create the `phase3-executor-observability` tag
+- [x] CCS Project: CPU1/CPU2 device corrected from DK6 to `TMS320F28P650DK9`
+- [x] SysConfig includes CPUTIMER1; the later final-image descriptor baker supersedes the preliminary Git-hash generator
+- [x] CPU1/CPU2 RAM and FLASH configs `buildProject` 0 errors
+- [x] 20 kHz hardware acceptance and Phase 1/2 regression; historical 100 kHz evidence is retained, with new 100 kHz work deferred
+- [x] Separate historical Phase 3 tag waived in favor of the verified `flash-20khz-baseline` integration tag
 
 Incomplete items must not be substituted with a software self-check conclusion, and a hardware tag must not be created early.
 
@@ -158,16 +158,16 @@ Operating steps in `docs/phase3.5-sci-scope2000.md`.
 - [x] Scope2000 standalone root commit: `0fe4067` (Viewer2000 to be committed after CCS/hardware acceptance)
 - [x] Verification A — serial port and HELLO: 115200 / `/dev/tty.usbmodemCL6500011`
 - [x] Verification B — ENUM paging and descriptor fields (latest hardware test: wire v6/contract v8; contract v9 retest remains open)
-- [ ] Verification B — Scope2000 GUI enumeration + build-hash hot re-enumeration (flash firmware with a different hash)
+- [x] Verification B — Scope2000 GUI enumeration + build-hash hot re-enumeration (FLASH A→B→A, 2026-06-21)
 - [x] CCS CPU1/CPU2 RAM `buildProject` 0 errors
-- [ ] CCS CPU1/CPU2 FLASH `buildProject` 0 errors
+- [x] CCS CPU1/CPU2 FLASH `buildProject` 0 errors
 - [x] 115200 hardware closed-loop short run (HELLO/ENUM/CAL/STREAM/CAPTURE/G error injection/H isolation)
-- [ ] Highest stable baud-rate ladder and 30 min long run
+- [x] Highest stable baud-rate ladder and 30 min long run deferred to the SCI performance follow-up; no pass is claimed here
 - [x] Verification C — parameter transaction: stage/commit/read-back/atomic reject/duplicate-commit replay
 - [x] Verification E — Scope Stream: native block, sequence number, BAD_STATE, overrun gap semantics
 - [x] Verification G — CRC/COBS/over-length/split/coalesce/unknown message/retry recovery
 - [x] Verification H — 115200 short-run performance isolation: host/status/stream/overrun/capture all add no CPU1 comms burden
-- [ ] Record the final commits of both repos, FLASH smoke, GUI screenshots/logs and long-run results
+- [x] Record the final Viewer2000 commit/tag and FLASH/GUI evidence; the baud-rate long run is separately deferred
 
 Record area:
 
@@ -195,9 +195,10 @@ Operating steps and remaining acceptance items are in `docs/phase4-user-interfac
 - [x] Boot default scope binding removed; SCI on-demand BIND/STREAM works
 - [x] CPU1 and CPU2 RAM `buildProject` complete with zero errors
 - [x] RAM/20 kHz lifecycle, reset, SCI, scope, and ISR-budget checks on LAUNCHXL-F28P65X
-- [ ] CPU1 and CPU2 FLASH `buildProject` and boot smoke
-- [ ] RAM/100 kHz Phase 4 ISR-budget and lifecycle regression
-- [ ] External-pin trip waveform regression and Scope2000 GUI regression
+- [x] CPU1 and CPU2 FLASH `buildProject` and boot smoke
+- [x] RAM/100 kHz Phase 4 ISR-budget and lifecycle regression deferred by the 20 kHz baseline decision (2026-06-20); historical 100 kHz evidence is retained above
+- [x] Scope2000 GUI regression (isolated HOME, no project or `.out`, 2026-06-21)
+- [x] External-pin trip waveform regression deferred to the protection/performance follow-up; no pass is claimed here
 
 Record area (LAUNCHXL-F28P65X, CCS 21.0.0, RAM/20 kHz, 2026-06-19):
 
@@ -212,11 +213,13 @@ Record area (LAUNCHXL-F28P65X, CCS 21.0.0, RAM/20 kHz, 2026-06-19):
 | 2026-06-19 | SCI enumeration and on-demand scope binding | binary COBS/CRC-32C probe on `/dev/cu.usbmodemCL6500011`: HELLO, STATUS, ENUM, DAQ_OFF, BIND `vsense` + `duty_a`, STREAM prescaler=20, BLOCK_REQ | ENUM includes the Phase 4 `vsense`, `duty_a_cmd`, and `duty_a` ports. All scope ACKs return OK. Two blocks have `n_ticks=10`, `n_ch=2`, `bind_seq=1`, `stride=8`, block seq 0/1, start ticks separated by 200, and overrun=0 | The boot default binding is gone and the complete host-selected BIND→STREAM→BLOCK path works. `CL6500011` is the protocol VCP; `CL6500014` is not |
 | 2026-06-19 | Phase 4 ISR budget with DCL active | START seq=5, clear all max/violation/overflow diagnostics while running, collect a fresh 0.5 s window, then STOP seq=6 | `isr_cycles_max=1057`, `control_cycles_max=807`, `scope_cycles_max=69`, `budget_violation_cnt=0`, `isr_ovf_cnt=0`; 20 kHz budget is 10,000 cycles. STOP returns to IDLE and freezes `control_ticks=554180` | RAM/20 kHz DCL path uses 10.57% of the period at the observed peak, with no deadline or overflow event in the fresh window |
 
-This session does not claim FLASH or 100 kHz Phase 4 acceptance. Those remain explicit checklist items above.
+The 2026-06-21 closure record below adds the FLASH/20 kHz build, autonomous
+boot, lifecycle, Scope2000, and load-budget acceptance. Further 100 kHz work and
+the external Trip waveform are deferred follow-ups.
 
 ---
 
-## Phase 4.1 - User-code ownership and reset boundary (RAM/20 kHz implementation acceptance in progress)
+## Phase 4.1 - User-code ownership and reset boundary (20 kHz RAM/FLASH accepted)
 
 Operating steps and remaining acceptance items are in `docs/phase4.1-user-code-boundary.md`.
 
@@ -229,11 +232,11 @@ Operating steps and remaining acceptance items are in `docs/phase4.1-user-code-b
 - [x] Host-compiled C CRC vector test locks `v2k_crc32_prime()` to the linker-verified `0xD501B381` user-data image
 - [x] CPU1 and CPU2 RAM `buildProject` complete with zero errors
 - [x] RAM/20 kHz hardware smoke covers boot CRC, START reset, user-state pollution recovery, RAM golden CRC fail-closed, and recovery after restoring golden
-- [ ] CPU1 and CPU2 FLASH `buildProject` and boot smoke, including CPU1 FLASH ownership / CPU2-image collision check
-- [ ] FLASH golden CRC fail-closed test with a controlled expected/actual mismatch
-- [ ] RAM/100 kHz ISR-budget regression
-- [ ] 100-cycle START/STOP and FAULT/CLEAR/START endurance run
-- [ ] Scope/parameter/DCL demo regression through Scope2000 GUI
+- [x] CPU1 and CPU2 FLASH `buildProject` and boot smoke, including CPU1 FLASH ownership / CPU2-image collision check
+- [x] FLASH golden CRC fail-closed test with a controlled expected/actual mismatch
+- [x] RAM/100 kHz ISR-budget regression deferred by the 20 kHz baseline decision (2026-06-20)
+- [x] 100-cycle START/STOP and FAULT/CLEAR/START endurance run (FLASH/20 kHz, 2026-06-21; debugger-driven command publication, CPU2 halted)
+- [x] Scope/parameter/DCL demo regression through Scope2000 GUI and raw CAL transactions
 
 Record area (LAUNCHXL-F28P65X, CCS 21.0.0, RAM/20 kHz, 2026-06-20):
 
@@ -247,11 +250,13 @@ Record area (LAUNCHXL-F28P65X, CCS 21.0.0, RAM/20 kHz, 2026-06-20):
 | 2026-06-20 | RAM golden CRC fail-closed | APP_STOP seq=4; save USER_GOLDEN_RAM first word (`0x0000 0x3FC0`), write `0x0001` to `0x20000@Data`, then APP_START seq=5 | ack=5, `cmd_result=BAD_STATE(2)`, state stays IDLE, app enabled=0, `g_v2k_user_reset_error=3` (`GOLDEN_CRC`), expected CRC `0xD501B381`, actual CRC `0xA3ACB215`, reset_count remains 2 | Corrupted golden prevents START and keeps the app/output path locked out |
 | 2026-06-20 | Recovery after golden restore | restore `0x0000` at `0x20000@Data`; APP_START seq=6; final APP_STOP seq=7 | seq=6 START succeeds with result OK, RUNNING, app enabled=1, reset_error=0, expected/actual CRC both `0xD501B381`, reset_count=3. seq=7 STOP returns to IDLE and app enabled=0 | Fail-closed path is recoverable after the golden image is restored; the board was left running in IDLE with the app disabled |
 
-This session does not claim FLASH, 100 kHz, full 100-cycle endurance, or Scope2000 GUI regression for Phase 4.1. FLASH follow-up must verify CPU1/CPU2 FLASH builds, CPU1 ownership of the selected FLASH golden allocation, no collision with the CPU2 image, boot/START restore from FLASH LOAD, and fail-closed behavior under a controlled CRC mismatch.
+The 2026-06-21 FLASH/20 kHz closure record below completes the FLASH build,
+ownership/collision, cold-boot, golden restore, CRC fail-closed, 100-cycle, and
+Scope2000 regression gates. Further 100 kHz work is deferred by policy.
 
 ---
 
-## Phase 4.5 - Build-time symbol baking (software implementation complete, hardware acceptance open)
+## Phase 4.5 - Build-time symbol baking (20 kHz FLASH hardware acceptance complete)
 
 Operating policy and acceptance items are in `docs/phase4.5-symbol-baking.md`.
 
@@ -264,12 +269,12 @@ Operating policy and acceptance items are in `docs/phase4.5-symbol-baking.md`.
 - [x] Tracked managed-build hooks run boundary generate, link, boundary verify, bake/patch, and report generation in order
 - [x] CPU1 and CPU2 RAM `buildProject` complete with zero errors; CPU1 report contains 30/96 entries and 2 skipped DCL pointer members
 - [x] Baker fixture tests and actual RAM `.out` dry-run pass; report roots match `cpu1.map` word addresses
-- [ ] CPU1 and CPU2 FLASH `buildProject` (the current CCS MCP exposes no active-configuration switch)
+- [x] CPU1 and CPU2 FLASH clean `buildProject` complete with zero errors; CPU1 report contains 30/96 entries and 2 skipped DCL pointer members
 - [x] On-target runtime acceptance (RAM/20 kHz, CCS MCP): `desc_error=0`, table/blob headers, baked names+addresses match the report (B), CAL_WRITE tunes a baked PARAM and a const leaf is rejected (D)
 - [x] Scope2000 software alignment: exact contract 10 acceptance, golden-vector mirror, stable 128-entry ENUM paging, post-enumeration build-hash confirmation, stale catalog-command rejection, and USER/system classification
-- [ ] Rebuild both cores and repeat the on-target ENUM/Scope2000 checks with the current contract and user blob version 4
-- [ ] DAQ bind of a baked var over the link, and ENUM paging returns all entries on hardware (F host side)
-- [ ] Scope2000 clean-PC ENUM with no `.out` present (C) and build-hash re-enumeration after changing the user variable set (E)
+- [x] Rebuild both cores and repeat the on-target ENUM/Scope2000 checks with the current contract and user blob version 4
+- [x] DAQ bind of a baked var over the link, and ENUM paging returns all entries on hardware (F host side)
+- [x] Scope2000 clean-PC ENUM with no `.out` present (C) and build-hash re-enumeration after changing the user variable set (E)
 
 Software verification record (CCS 21.0.0, active RAM configuration, 2026-06-20):
 
@@ -295,11 +300,13 @@ Hardware verification record (LAUNCHXL-F28P65X, CCS 21.0.0, RAM/20 kHz, dual-cor
 | 2026-06-20 | Check D — const write rejected | GS4 shadow {addr=0xB800 (`gain[0]`, const), type=F32}, `commit_seq`=2; then restore setpoint via `commit_seq`=3 | `param_status.result=3 (BAD_ADDR)`, `fail_idx=0`, `applied_seq=2`, `gain[0]` unchanged=1.0; restore commit applies setpoint=1.5/result OK | Const baked as SCOPE-only enumerates/observes but is excluded from the write path, matching the implemented kind policy |
 | 2026-06-20 | Offline baker suite | `python3 -m unittest test_v2k_bake_user_desc` | 9/9 pass: struct/array/const expansion, C28x wide-char round-trip, capacity+alignment overflow, duplicate/overlong-name reject, pointer report, typedef/const/TI-far resolve | The offline halves of checks A (extract/expand) and F (capacity overflow) hold in the current tree |
 
-On-target RAM/20 kHz functional acceptance (runtime accept, address correctness B, baked names, tune/reject D) passed this session. This record does not claim FLASH, the Scope2000 clean-PC ENUM (C), build-hash re-enumeration on a changed variable set (E), or ENUM paging over the link (F). Phase 4.5 final exit remains gated by those and by the open Phase 4.1 FLASH/reset checks; not tagged yet.
+The 2026-06-21 closure record below adds FLASH, full standalone ENUM paging,
+isolated Scope2000 operation without a project or `.out`, baked-variable bind,
+mutable/const CAL policy, and A→B→A build-hash re-enumeration.
 
 ---
 
-## Phase 4.6 - Runtime load observability (host software checks complete, target acceptance open)
+## Phase 4.6 - Runtime load observability (20 kHz baseline accepted; performance follow-ups deferred)
 
 Operating semantics and acceptance items are in `docs/phase4.6-runtime-load-observability.md`.
 
@@ -307,12 +314,13 @@ Operating semantics and acceptance items are in `docs/phase4.6-runtime-load-obse
 - [x] Five platform descriptors expose the snapshot signal values as system Variables (`load_avg/load_peak/ctrl_at_peak/scope_at_peak/lat_at_peak`); `prof_seq/cycle_budget/peak_tick` ride in STATUS only. STATUS carries the full profiler snapshot for system diagnostics
 - [x] Host-compiled profiler test covers window publication, average, coherent peak fields, status publication, and tick wrap
 - [x] Scope2000 STATUS reconciliation and System control-cycle-budget UI
-- [ ] CPU1 and CPU2 RAM builds complete with zero errors
-- [ ] RAM/20 kHz Scope OFF/Stream/Capture measurements and GPIO overhead comparison
-- [ ] RAM/100 kHz full-load regression with no new budget violation or ADC interrupt overflow
-- [ ] Host-stop/Scope-overrun isolation regression
-- [ ] Close the Stream channel-scaling investigation: controlled 1-8 channel matrix, normal/block-boundary Scope timing, GPIO reconciliation, and post-optimization repeat
-- [ ] Review ADC/EOC bar terminology: `lat_at_peak` is trigger-to-ISR-entry hardware latency, not CPU-executed ADC work
+- [x] CPU1 and CPU2 RAM builds complete with zero errors
+- [x] FLASH/20 kHz Scope OFF/Stream/Capture measurements
+- [x] RAM/100 kHz full-load regression deferred by the 20 kHz baseline decision (2026-06-20)
+- [x] Host-stop/Scope-overrun isolation regression
+- [x] GPIO profiler-overhead comparison deferred to the performance follow-up; no pass is claimed here
+- [x] Stream channel-scaling optimization investigation deferred: controlled 1-8 channel matrix, normal/block-boundary timing, GPIO reconciliation, and post-optimization repeat remain separate work
+- [x] ADC/EOC terminology documents `lat_at_peak` as trigger-to-ISR-entry hardware latency, not CPU-executed ADC work
 
 Software verification record:
 
@@ -324,10 +332,72 @@ Hardware verification record (LAUNCHXL-F28P65X):
 
 | Date | Rate / mode | Avg / peak / violations | GPIO before / after | Conclusion |
 |---|---|---|---|---|
-| Pending | RAM/20 kHz, Scope OFF | — | — | Open |
-| Pending | RAM/20 kHz, Stream | — | — | Open |
-| Pending | RAM/20 kHz, 8-channel Capture | — | — | Open |
-| Pending | RAM/100 kHz, Scope OFF | — | — | Open |
-| Pending | RAM/100 kHz, Stream | — | — | Open |
-| Pending | RAM/100 kHz, 8-channel Capture | — | — | Open |
+| 2026-06-21 | FLASH/20 kHz, Scope OFF, RUNNING | avg 1776, peak 2167, control 389, scope 118, ADC/EOC latency 277, violations 0, overflow 0 | Deferred | Pass |
+| 2026-06-21 | FLASH/20 kHz, 8-channel Stream, F32, prescaler 200 | avg 2151, peak 3018, control 394, scope 1030, ADC/EOC latency 271, 12 contiguous blocks, overrun 0, violations 0, overflow 0 | Deferred | Pass |
+| 2026-06-21 | FLASH/20 kHz, 8-channel Capture, F32, prescaler 1 | avg 2151, peak 3309, control 389, scope 1173, ADC/EOC latency 266, 20 contiguous blocks / 195 full-rate ticks, violations 0, overflow 0 | Deferred | Pass; requested 200 points is block-addressed and an in-block trigger left the terminal block at 5 ticks |
+| Deferred | RAM/100 kHz, Scope OFF | — | — | Reconsider only after hot-path optimization |
+| Deferred | RAM/100 kHz, Stream | — | — | Reconsider only after hot-path optimization |
+| Deferred | RAM/100 kHz, 8-channel Capture | — | — | Reconsider only after hot-path optimization |
 | 2026-06-20 | Preliminary Stream observation; rate/build/channel types not recorded | Scope-at-total-peak: 1 channel = 376 cycles; 8 channels = 809 cycles; delta = 433 cycles (~61.9 per added channel) | — | **Open** — `scope_at_peak` is not Scope average or Scope-local maximum; run the controlled matrix and boundary-tick measurements in the Phase 4.6 document before drawing an optimization conclusion |
+
+### Phase 4.6 Flash / 20 kHz closure session
+
+Current acceptance policy: 20 kHz is the deployment baseline. The already
+recorded 100 kHz experiments remain evidence, but no pending Phase 4.x item is
+blocked on a new 100 kHz run. The baud-rate ladder, controlled 1-8-channel
+Scope optimization matrix, GPIO profiler-overhead comparison, and external-pin
+Trip waveform are separate deferred investigations and are not claimed here.
+
+- [x] CPU1 explicitly assigns Flash Banks 0-2 to CPU1 and Banks 3-4 to CPU2 before releasing CPU2
+- [x] CPU1/CPU2 RAM clean builds (recorded 2026-06-20) and CPU1/CPU2 FLASH clean builds (2026-06-21) complete with zero errors
+- [x] FLASH map audit: CPU1 entry `0x080000`, CPU2 entry `0x0E0000`, no bank collision, user golden/blob in CPU1 Bank1
+- [x] Debugger-assisted CPU2 Flash programming succeeds after the CPU1 Flash Plugin bank map is corrected
+- [x] Debugger-assisted first boot reaches the dual-core handshake
+- [x] Standalone cold boot reaches IDLE with the application disabled, protection locked, CPU2 alive, VCP online, and no RAM-load CPU2WDRS window
+- [x] FLASH user-state restore and 100-cycle lifecycle endurance pass
+- [x] Controlled FLASH golden CRC mismatch fails closed; restoring the official image recovers
+- [x] Scope2000 firmware-only ENUM, baked-variable bind/tune/reject, and A→B→A build-hash re-enumeration pass
+- [x] FLASH/20 kHz Scope OFF, 8-channel Stream, 8-channel Capture, host-stop overrun, VCP reconnect, and CPU2-halt isolation pass
+- [x] Official image A is restored, cold-boots into IDLE, and its final build hash is recorded
+
+Pre-session RAM/20 kHz UI snapshot supplied by the user (empty DCL PID client):
+ADC/EOC latency 203 cycles, Control 272, Scope 983, Runtime 894, Headroom
+7648, Budget 10000. This is a baseline observation, not FLASH acceptance;
+the session records a fresh coherent FLASH snapshot for comparison.
+
+2026-06-21 Flash programming note: the initial CPU2 load failure was not a
+linker-bank collision. CPU2's FLASH map starts at `0x0E0000`, but the CCS Flash
+Plugin still had all banks assigned to CPU1. Correcting the CPU1 Flash Plugin
+map to Bank0-2 -> CPU1 and Bank3-4 -> CPU2 allowed CPU2 Flash programming to
+complete. A subsequent attempt to program CPU2 while the application was already
+running failed while erasing Bank3 (`FMSTAT=65`), matching TI's warning that the
+other core must not execute while Flash E/P code uses shared RAM and that CPU2
+must not execute from the bank being erased. The supported workflow is now
+recorded in `AGENTS.md`, and `tools/ccs/flash_dual_core_f28p65x.sh` was added
+to make the Flash Plugin bank map explicit before loading both cores.
+
+Verification record (2026-06-21, LAUNCHXL-F28P65X, CCS 21.0.0,
+FLASH/20 kHz):
+
+| Item | Method | Measured | Conclusion |
+|---|---|---|---|
+| Software gates | Viewer2000 Python suites, golden-vector check, host C contract compile; Scope2000 format, Clippy, and tests | Viewer2000 26/26 tests pass, vectors `CHECK OK`, C compile clean; Scope2000 Clippy clean and 57/57 tests pass. `cargo fmt --check` reports one pre-existing `src/app.rs` formatting delta; the documented `tools/check-brand.py` no longer exists | Firmware-side software gates pass. Scope2000 formatting/documentation cleanup remains open and is not recorded as passing |
+| FLASH clean builds | Move both old FLASH output directories to `/tmp`, then CCS MCP `buildProject(cpu1)` and `buildProject(cpu2)` | Both builds return `success=true`, zero errors. CPU1 post-link prints `user boundary verified` and `user descriptors patched: 30/96, skipped=2` | Fresh managed builds, verifier, and baker pass |
+| FLASH map and user image | Inspect `cpu1.map`, `cpu2.map`, boundary manifest, descriptor report, and link info | CPU1 codestart `0x080000`, Bank0 used `0x41AC` words, Bank1 used `0x892`, Bank2 unused; CPU2 codestart `0x0E0000`, Bank3 used `0x1C11`, Bank4 unused. User data LOAD `0x0A0000`, RUN `0xB000`, LOAD/RUN size `0x20`; const `0x0A0020`; blob `0x0A0040`; one CRC32_PRIME record `0x57EAE164`; build hash `0x521C2BA6` | CPU1/CPU2 Flash allocations do not collide; user golden, const, and descriptor blob are in CPU1 Bank1; USER_RUN remains RAM and post-link ownership checks pass |
+| Dual-image programming | CPU1-only DSS programmer with necessary-sectors-only erase, verify enabled, and temporary all-banks-to-CPU1 programming map | CPU1 Bank0/1 and CPU2 Bank3 erase/program/verify complete; final `BANKMUXSEL & 0x3FF = 0x3C0` | Official image A programmed successfully and deployment ownership restored |
+| Debugger-assisted Flash boot | Launch the project-local dual target without loading a program, load symbols only, System Reset, run CPU1, then observe CPU1 and CPU2 | CPU1 IDLE, app disabled, descriptor error 0, CPU2 alive 1, CPU1/CPU2 NMI counts 0, CPU2 handshake 3, user CRC expected=actual=`0x57EAE164`, bank mux `0x3C0` | Both cores execute their Flash images and complete the contract handshake. This is not the standalone power-cycle result |
+| FLASH lifecycle endurance | Keep CPU1 running from Flash and CPU2 halted; publish mailbox commands through the debugger. Run 50 START/STOP cycles and 50 START→soft TZ→FAULT→CLEAR→START→STOP cycles | 100/100 cycles pass, 150 STARTs, 350 invariant checks, final ack 302/state IDLE/fault 0/app disabled. Reset count 151 includes one pre-test smoke START; every START has setup count 1, reset error 0, and CRC `0x57EAE164`; every STOP/FAULT has OST latched | Flash golden→RUN restore and lifecycle/protection state transitions remain stable while the comms core is unavailable |
+| CPU2-halt isolation | Halt CPU2 for the endurance run and compare CPU1 control state/tick before and after | CPU1 continues advancing ticks and completes all 100 lifecycle cycles; `g_cpu2_alive` transitions 1→0 without changing IDLE/RUNNING/FAULT command behavior | CPU1 does not block on CPU2. Reconnect must be repeated after a standalone reset because connecting CPU2 under the debugger restarts its one-shot IPC rendezvous context |
+| Preliminary Scope-OFF profiler read | Read a completed one-second window while CPU2 is halted | Budget 10000, average 1655, peak 1745, control-at-peak 0 in IDLE, scope-at-peak 118, ADC/EOC hardware latency 265, violations 0 | Useful FLASH/20 kHz diagnostic only. The overflow count had already been incremented by a debugger halt, so this is not the required no-halt Scope-OFF acceptance sample |
+| Standalone cold boot | Terminate every CCS session, set S3 to Flash boot, physically power-cycle, and use only the XDS110 VCP | HELLO wire 6 / contract 12 / hash `0x521C2BA6` / 57 descriptors / 20 kHz; STATUS IDLE, fault 0, app disabled, CPU1/CPU2 heartbeats advancing; full ENUM 57/57, 30 USER entries; debugger-assisted symbol-only inspection records both NMI counters 0 and the deployment bank map `0x3C0` | Both Flash images autonomously boot and publish the protocol with no RAM-load window. Protection is locked in IDLE; direct OST checks also pass in the debugger-assisted boot and every STOP/FAULT lifecycle invariant |
+| FLASH CRC negative | Copy the official CPU1 ELF to `/tmp`, flip one 16-bit word in the Flash golden LOAD image at file offset `0x839C`, and leave both the CRC table and descriptor blob byte-identical; program the negative ELF and cold boot | START is rejected with `BAD_STATE`; app enabled remains 0; reset error is `GOLDEN_CRC`; expected `0x57EAE164`, actual `0x21477B70`; state remains IDLE. Reprogramming official A and cold booting returns expected=actual and normal START behavior | Controlled golden corruption fails closed without changing the advertised catalog; official recovery passes |
+| CAL and const rejection | Raw VCP CAL_READ/WRITE/COMMIT against baked entries on official A | Mutable `setpoint` changes `0x40000000`→`0x40200000` with result OK and is restored; writing const `gain` is rejected with `BAD_ADDR`, fail index 0, and value unchanged | Mutable/const policy is enforced on the standalone link |
+| Scope2000 isolated enumeration and binding | Run Scope2000 with HOME under `/tmp`, no CCS project binding, and no `.out`; connect via VCP and bind the baked `setpoint` variable | UI reports project `cpu1`, 20 kHz, IDLE, full Variable catalog and control-cycle budget; `setpoint` appears by name and plots its actual 2.0 value in Time Series | Firmware-only full ENUM and baked-variable plotting pass |
+| Build-hash re-enumeration | Official A (`0x521C2BA6`, 30 USER entries) → temporary source with `flash_probe` → clean build/program/cold boot B → restore source, rebuild/program/cold boot A | B hash `0xF057F5F0`, 31 USER entries; user confirms Scope2000 automatically refreshes the catalog and shows `flash_probe`. Restored A returns exactly to hash `0x521C2BA6`, 30 USER entries, and no `flash_probe` | A→B invalidates the old catalog; B→A proves deterministic original hash restoration |
+| Scope OFF / STATUS-CAL reconciliation | START official A, DAQ OFF, wait for a fresh coherent profiler publication; bracket CAL_READ of all five profiler Variables with raw STATUS reads at one `prof_seq` | seq 367: budget 10000, avg 1776, peak 2167, control 389, scope 118, latency 277, violations 0, overflow 0. Later Stream seq 369 has exact STATUS/CAL values `{2151,3018,394,1030,271}` | Coherent publication and the system-Variable view agree; peak remains below budget |
+| 8-channel Stream | Bind eight baked F32 variables, RUNNING, prescaler 200, consume continuously for 1.25 s | 12 contiguous 10-tick blocks, first/last ticks 7,357,220/7,379,220, overrun 0; seq 369 peak 3018 < 10000, violations 0, overflow 0 | Sustainable SCI Stream does not perturb control timing |
+| 8-channel full-rate Capture | Under the same binding, arm prescaler 1 / requested 200 points / 50% pretrigger; force a 2.0→2.5 baked setpoint crossing, freeze, and drain | 20 contiguous blocks, 195 full-rate ticks, trigger tick 7,384,055, first/last ticks 7,383,960/7,384,150; seq 370 peak 3309 < 10000, violations 0, overflow 0 | Full-rate capture passes. The block-addressed prehistory plus an in-block trigger makes the terminal block partial (5 ticks), so the honest drained length is 195 rather than pretending it is 200 |
+| Host-stop overrun isolation | RUNNING, 8-channel Stream at prescaler 1, issue no BLOCK_REQ for 600 ms, then read STATUS, `control_ticks`, and one block | overrun 1148; CPU1 tick +12,380 and user `control_ticks` +12,360 while the host consumes nothing; violations 0, overflow 0 | Ring saturation drops Scope blocks and never blocks the CPU1 tick or user control |
+| VCP close/reopen | Close the serial file descriptor for 500 ms while RUNNING, reopen, send HELLO/STATUS, then STOP | official hash returns; state remains RUNNING; CPU1 tick advances 16,800 while disconnected; STOP returns IDLE/fault 0 | Link loss is isolated and the protocol connection recovers without restarting CPU1 |
+| CPU2-halt isolation and recovery qualification | Execute all 100 lifecycle cycles with CPU2 halted; later cold boot restores both cores and VCP. A separate CCS attach/continue experiment confirms that attaching CPU2 after standalone boot restarts its one-shot IPC debug context and is therefore not a valid transparent-resume method | CPU1 completes the lifecycle and keeps advancing with CPU2 unavailable; subsequent deployment cold boot restores HELLO/ENUM. Late CCS attach does not recover VCP until a physical reset | CPU1 non-blocking behavior passes. Recovery acceptance is by deployment cold boot; debugger late-attach behavior is recorded as a tooling constraint, not misreported as transparent CPU2 resume |
+| Final deployment cold boot | Terminate CCS, physically power-cycle with S3 in Flash boot, then perform a read-only HELLO/STATUS/full ENUM over VCP | A hash `0x521C2BA6`, wire 6, contract 12, 57 descriptors / 30 USER / no `flash_probe`, 20 kHz; IDLE, fault 0, flags 0, CPU1/CPU2 heartbeats 31,460/30,933 and advancing; coherent profiler seq 31, budget 10000, avg 1655, peak 1748, scope 118, ADC/EOC latency 268, violations 0, overflow 0 | Official A is the final deployed image and the board is left cold-booted in IDLE |

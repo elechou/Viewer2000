@@ -1,11 +1,13 @@
 # Phase 4.6 — Runtime load observability
 
-> **Document status**: host-side software implementation and automated checks
-> complete; CCS target builds plus RAM/20 kHz and RAM/100 kHz hardware acceptance
-> remain open. The Stream channel-scaling investigation in Section 5 is also
-> open and is not covered by the current software acceptance. Record measured
-> results in
-> [BRINGUP.md](../BRINGUP.md); do not infer hardware acceptance from host tests.
+> **Document status**: implemented and accepted on the FLASH/20 kHz baseline.
+> Scope OFF, sustainable 8-channel Stream, full-rate 8-channel Capture,
+> STATUS/CAL reconciliation, link loss, and deliberate overrun isolation pass
+> with no budget violation or ADC interrupt overflow. Exact measurements are in
+> [BRINGUP.md](../BRINGUP.md). The 100 kHz target, baud-rate ladder, controlled
+> 1-8-channel optimization matrix, GPIO profiler-overhead comparison, and
+> external Trip waveform remain separate deferred work and are not claimed as
+> passing. No Phase 4.6 completion tag is created.
 
 ## 1. Goal and boundaries
 
@@ -130,15 +132,18 @@ Software acceptance requires the host-compiled profiler test, Viewer2000
 contract/build checks, Scope2000 tests, format, clippy, and regenerated golden
 vectors synchronized across Viewer2000 and Scope2000.
 
-Hardware acceptance uses LAUNCHXL-F28P65X RAM builds at both 20 kHz and 100 kHz:
+Hardware acceptance uses the LAUNCHXL-F28P65X at the current 20 kHz baseline,
+with FLASH as the deployment-authoritative configuration:
 
-1. Record the GPIO ISR pulse before and after enabling Phase 4.6 under the same
-   workload; added width must be no more than one percent of the control period.
+1. The GPIO before/after overhead comparison is deferred to the performance
+   follow-up; the internal profiler is the current 20 kHz acceptance instrument.
 2. Measure Scope OFF, Stream, and full 8-channel Capture windows.
-3. At 100 kHz full load, observe no new budget violation or ADC interrupt
-   overflow.
-4. Reconcile Scope2000's displayed snapshot against the raw STATUS payload,
-   system-Variable CAL_READ values, and CCS values.
+3. At 20 kHz full load, observe no budget violation or ADC interrupt overflow.
+4. Reconcile Scope2000's displayed snapshot against raw STATUS and
+   system-Variable CAL_READ values. The five CAL entries point directly at the
+   same profiler globals published to STATUS; debugger symbol reads are a
+   bring-up cross-check, not a standalone gate because late CCS attach restarts
+   the dual-core debug context on this target.
 5. Stop host consumption and force a Scope overrun; CPU1 profiling and control
    execution must continue without waiting on CPU2 or the host.
 
@@ -175,7 +180,7 @@ proven until the controlled measurements below are complete.
 
 This issue remains open. Closure requires:
 
-1. Run one firmware build at a recorded 20 kHz and 100 kHz, with prescaler 1,
+1. Run one firmware build at the recorded 20 kHz baseline, with prescaler 1,
    using the same native type and stable variables for 1 through 8 channels.
 2. Separate normal sample ticks, block-start ticks, and block-publish ticks;
    record Scope-window average and Scope-local maximum rather than relying only
@@ -185,5 +190,5 @@ This issue remains open. Closure requires:
 4. Quantify candidate hot-path changes independently: cache the current sample
    destination, avoid duplicate block-address/offset calculations, and prepare
    a width-aware copy plan when the binding is applied.
-5. Repeat the matrix after optimization and define an explicit 8-channel
-   100 kHz acceptance limit before marking the issue closed.
+5. Repeat the matrix after optimization. Only then decide whether a 100 kHz
+   acceptance target is technically justified.

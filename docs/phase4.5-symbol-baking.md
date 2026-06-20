@@ -1,6 +1,11 @@
 # Phase 4.5 — Build-time symbol baking (auto-observability)
 
-> **Document status**: firmware and build-tool implementation complete; on-target runtime acceptance passed on RAM/20 kHz (2026-06-20 — `desc_error=0`, baked names/addresses match the report (B), a baked PARAM tunes and a const leaf is rejected (D); see [BRINGUP.md](../BRINGUP.md)). Remaining open: Scope2000 clean-PC ENUM with no `.out` (C), build-hash re-enumeration on a changed variable set (E), ENUM paging over the link (F), and the FLASH build. Tag `phase4.5-symbol-baking` only after these pass.
+> **Document status**: implemented and accepted on RAM/20 kHz and
+> FLASH/20 kHz. On 2026-06-21 an isolated Scope2000 instance with no project or
+> `.out` enumerated all 57 entries, bound and plotted a baked variable, enforced
+> mutable/const CAL policy, and refreshed its catalog across deterministic
+> A (`0x521C2BA6`) → B (`0xF057F5F0`, `flash_probe`) → A transitions. See
+> [BRINGUP.md](../BRINGUP.md).
 >
 > **Why it's "4.5"**: it serves the same user-facing layer as [Phase 4](phase4-user-interface.md) — the L2/L3 experience — but it is a **build-tooling** effort (host/build side). It consumes the user-object ownership contract established by [Phase 4.1](phase4.1-user-code-boundary.md), while remaining independent of the runtime reset mechanism.
 

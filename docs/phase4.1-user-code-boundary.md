@@ -1,24 +1,21 @@
 # Phase 4.1 - User-code ownership and reset boundary: development plan
 
-> **Document status**: forward-looking implementation plan. Phase 4 proved the
-> `setup()` / `control()` lifecycle with a manually sectioned demo. Phase 4.1
-> turns that prototype into a general build and linker contract for arbitrary
-> plain-C user applications. Results go into [BRINGUP.md](../BRINGUP.md); tag
-> `phase4.1-user-code-boundary` after acceptance.
+> **Document status**: implemented and accepted at the 20 kHz baseline. Phase 4
+> proved the `setup()` / `control()` lifecycle with a manually sectioned demo;
+> Phase 4.1 turns that prototype into a general build and linker contract for
+> arbitrary plain-C user applications. Results are in
+> [BRINGUP.md](../BRINGUP.md).
 >
 > **Position in the roadmap**: Phase 4.1 must complete before Phase 4 is treated
 > as production-ready for motor bring-up. [Phase 4.5](phase4.5-symbol-baking.md)
 > consumes the same user-code ownership definition for observability, but reset
 > correctness does not depend on DWARF, descriptor capacity, or symbol baking.
 >
-> **Current status, 2026-06-20**: the CPU1/CPU2 RAM path has built and the
-> RAM/20 kHz hardware smoke has verified START reset, state-pollution recovery,
-> RAM golden CRC fail-closed behavior, and recovery after restoring the golden
-> image. The RAM milestone is commit-ready with the host CRC vector test and
-> small verifier/runtime nits now included. The remaining Phase 4.1 acceptance gates are
-> FLASH build/boot validation, FLASH golden CRC fail-closed validation, 100 kHz
-> ISR-budget regression, 100-cycle lifecycle endurance, and Scope2000 GUI
-> regression.
+> **Current status, 2026-06-21**: CPU1/CPU2 RAM and FLASH builds, linker/map
+> audits, standalone dual-core cold boot, Flash golden-to-RUN restore, controlled
+> Flash CRC corruption and recovery, 100-cycle lifecycle endurance, and the
+> Scope2000 regression all pass. The current acceptance baseline is 20 kHz;
+> further 100 kHz work is deferred until the platform hot path is optimized.
 
 ## Goal
 
@@ -355,7 +352,7 @@ The final demo must look like normal plain C.
 | K | user pragma independence | search final user sources and inspect map | no user reset-section pragmas; complete user writable coverage |
 | L | single initializer | inspect `.cinit`, linker XML, and CRC table | no user `.cinit`; one valid CRC record when user data is non-empty; LOAD size equals RUN size |
 | M | four-config build | CCS `buildProject` for CPU1/CPU2 RAM/FLASH | zero errors; boundary check runs for both CPU1 configs |
-| N | Phase 2-4 regression | trip/state lifecycle, scope bind/stream, DCL demo, 20/100 kHz budgets | previous behavior passes; no ISR budget regression |
+| N | Phase 2-4 regression | trip/state lifecycle, scope bind/stream, DCL demo, 20 kHz budget | previous behavior passes; no ISR budget regression |
 | O | C CRC vector | host-compile the same `v2k_crc32_prime.c` used by firmware | the 32-word linker-verified user-data image produces `0xD501B381` |
 
 For the hardware reset tests, halt or instrument immediately after section

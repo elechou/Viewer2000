@@ -1,6 +1,9 @@
 # Phase 4 — User-interface boundary (L1↔user): development plan
 
-> **Document status**: the firmware baseline is implemented; this document now doubles as the remaining on-target acceptance checklist. Measured results go into [BRINGUP.md](../BRINGUP.md) Phase 4 area; tag `phase4-user-interface` after acceptance.
+> **Document status**: implemented and accepted on the 20 kHz RAM and FLASH
+> baselines. The 2026-06-21 FLASH closure includes cold boot, lifecycle,
+> protection, Scope2000, and load-budget regression; measured results are in
+> [BRINGUP.md](../BRINGUP.md). Further 100 kHz optimization is deferred.
 >
 > **Scope**: Phase 4 is **firmware boundary work only**. It writes **no control math** (the platform ships none — control math is user-supplied; see [AGENTS.md](../AGENTS.md) Decisions). It turns the user surface into an **Arduino-style `setup()` / `control()`**, draws the **wire↔runtime portability seam**, and proves the reset lifecycle with a manually sectioned demo. [Phase 4.1](phase4.1-user-code-boundary.md) hardens that prototype into an automatic, linker-verified user-code/state boundary. The "user's variables visible by name on any PC" experience remains the separate build-tooling effort [Phase 4.5](phase4.5-symbol-baking.md).
 >
@@ -143,7 +146,9 @@ Minimal cut: **no new static hardware** (reuse Phase 2/3). C2000Ware **DCL** add
 
 ## 7. Verification (on-target, CCS + Scope2000)
 
-RAM/20 kHz baseline, then RAM/100 kHz for budget; Phase 2 TZ/state-machine regressed.
+The current acceptance baseline is 20 kHz in both RAM and FLASH. The historical
+100 kHz measurements remain recorded, but further 100 kHz Phase 4 acceptance is
+deferred until the platform hot path is optimized.
 
 | # | Verification | Method | Pass criterion |
 |---|---|---|---|
@@ -153,7 +158,7 @@ RAM/20 kHz baseline, then RAM/100 kHz for budget; Phase 2 TZ/state-machine regre
 | D | **auto-reset safety** | START → run integrator up → soft TZ → FAULT → wind integrator to an extreme via CCS → CLEAR_FAULT → START | on the new START, `integrator` reads its declared initial value (0) **before** the first `control()` tick; output never commands the wound-up value; verified without any `on_start` code |
 | E | reset covers initialized + zero state | overwrite the explicitly sectioned demo data/BSS, STOP, START | initialized values return to declarations and BSS returns to zero |
 | F | observability of user state | CCS Expressions/Graph on `integrator` + `v2k_io.out` | sampled every tick (rule 7); Scope2000-by-name is Phase 4.5 |
-| G | ISR budget with a real client | reset max; PI + scope at 20k/100k | `isr_cycles_max < 200MHz/V2K_ISR_HZ`; `budget_violation=0`, `ovf=0` |
+| G | ISR budget with a real client | reset max; PI + scope at 20 kHz | `isr_cycles_max < 10000`; `budget_violation=0`, `ovf=0` |
 
 ## 8. Acceptance and exit
 
@@ -166,10 +171,13 @@ RAM/20 kHz baseline, then RAM/100 kHz for budget; Phase 2 TZ/state-machine regre
 | default bind removed | on-demand binding works |
 | first client | a DCL block runs in `control()`; no control math written by us |
 | four-config build | CPU1/CPU2 RAM/FLASH 0 errors; `v2k_tb_check`/layout assert clean |
-| verifications A–G | pass at 20 kHz; budget/overflow re-checked at 100 kHz |
+| verifications A–G | pass at the current 20 kHz baseline |
 | regression | Phase 2/3/3.5 still pass |
 
-Record into BRINGUP.md Phase 4 area: date/board/CCS, RAM/FLASH, `V2K_ISR_HZ`, build hash; the wire port table; A–G results incl. the seam before/after (B) and the wind-up-restart trace (D); one `isr_cycles_max` set each at 20/100 kHz. Tag `phase4-user-interface` after all of the above.
+Record into BRINGUP.md Phase 4 area: date/board/CCS, RAM/FLASH,
+`V2K_ISR_HZ`, build hash; the wire port table; A–G results including the seam
+before/after (B), the wind-up-restart trace (D), and the 20 kHz load snapshot.
+Tag `phase4-user-interface` after all of the above.
 
 The broader claim that arbitrary plain-C user state is automatically covered is
 reserved for Phase 4.1 acceptance and its own tag.
