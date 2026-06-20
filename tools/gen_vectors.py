@@ -125,6 +125,7 @@ def block(start_tick, block_seq, flags, bind_seq, ch_types, samples_2d):
 
 
 BUILD_HASH = 0x08CCB6EB  # 样本固定值（取自本 repo initial commit 短哈希）
+BUILD_TIME_UTC = 1_781_913_600  # 2026-06-20 00:00:00 UTC, fixed for deterministic vectors
 
 # ---------------------------------------------------------------------------
 # vector 用例表
@@ -138,10 +139,11 @@ def build_cases():
 
     # ---- 4.1 HELLO ----
     add("hello_req", "HELLO_REQ：空 payload", 0x01, 0x0001, b"")
-    add("hello_resp", "HELLO_RESP：版本、build_hash、固件名、tick_hz 与能力位",
+    add("hello_resp", "HELLO_RESP：版本、build_hash、固件名、tick_hz、能力位、项目名与构建时间",
         0x81, 0x0001,
-        struct.pack("<HHIHH16sII", 6, 10, BUILD_HASH, 10, 0,
-                    b"viewer2000", 20000, 0x7F))
+        struct.pack("<HHIHH16sII32sI", 6, 11, BUILD_HASH, 10, 0,
+                    b"viewer2000", 20000, 0x7F,
+                    b"phase4-demo", BUILD_TIME_UTC))
 
     # ---- 4.2 STATUS ----
     add("status_req", "STATUS_REQ：空 payload（兼任链路心跳）", 0x02, 0x0002, b"")

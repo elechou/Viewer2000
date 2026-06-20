@@ -2,6 +2,7 @@
 V2K_USER_BOUNDARY_TOOL := ../tools/v2k_user_boundary.py
 V2K_USER_BOUNDARY_SPEC := ../tools/user_boundary.json
 V2K_USER_DESC_TOOL := ../tools/v2k_bake_user_desc.py
+V2K_PROJECT_INFO := ../.project
 V2K_BUILD_CONFIG := $(notdir $(CURDIR))
 
 # CCS 21 may emit the external C2000Ware startup object into runtime/ while
@@ -36,6 +37,7 @@ v2k_user_desc_bake: v2k_user_boundary_verify
 	@python3 "$(V2K_USER_DESC_TOOL)" bake \
 		--manifest "$(V2K_USER_BOUNDARY_MANIFEST)" \
 		--link-info cpu1_linkInfo.xml --elf cpu1.out \
-		--report "$(V2K_USER_DESC_REPORT)"
+		--report "$(V2K_USER_DESC_REPORT)" \
+		--project-info "$(V2K_PROJECT_INFO)"
 
 all: v2k_user_desc_bake

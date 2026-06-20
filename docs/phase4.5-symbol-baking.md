@@ -45,6 +45,7 @@ The decisive win: Scope2000 needs no DWARF parser or project file. It reads user
      - resolves typedef/const/volatile/TI-far wrappers;
      - expands supported arrays and structs to scalar leaves;
      - hashes the final ELF with the blob normalized, plus the generated records;
+     - reads CPU1's CCS/Eclipse `cpu1/.project` `<name>` and bakes the human-readable project name/build time;
      - patches v2k_user_desc in cpu1.out and decodes it back for verification;
      - emits v2k_user_desc_report.json.
 ⑥ v2k_registry_init registers platform descriptors, appends the baked records,
@@ -55,13 +56,14 @@ The tracked `makefile.init` and `makefile.targets` hooks implement this order wi
 
 ## Implemented policy
 
-- **Capacity**: `V2K_DESC_MAX=128`; 32 slots are reserved for platform descriptors and the baked blob holds at most 96 user leaves. The GS0 plane is 2916 C28x words, below its 4096-word allocation.
+- **Capacity**: `V2K_DESC_MAX=128`; 32 slots are reserved for platform descriptors and the baked blob holds at most 96 user leaves. The GS0 plane is 2950 C28x words, below its 4096-word allocation.
 - **Names**: `V2K_NAME_LEN` remains 16. The tool uses source-level names, never linker-name fallback, and fails rather than truncating names longer than 15 visible ASCII characters. Function statics use the source variable name and therefore collide explicitly when ambiguous.
 - **Types**: I16/U16/I32/U32/F32 are accepted. Pointers, unions, enums, doubles, 64-bit leaves, bitfields, and other unsupported forms are omitted and listed in the JSON report.
 - **Kinds**: user data/BSS leaves are `PARAM|SCOPE`; user const leaves are `SCOPE` only. Runtime write validation excludes const while read/scope validation includes it.
 - **Addresses**: TI OFD reports C28x word addresses. A 32-bit leaf must be even-aligned and fully contained in one authoritative user range.
 - **ELF**: the patcher requires ELF32 little-endian, an exact-size `SHT_PROGBITS` section, matching blob magic/version/capacity, and a successful decode after patching.
 - **Build hash**: the blob carries a nonzero 32-bit hash derived from the normalized final ELF and baked records. Re-baking an unchanged image is stable; changing code, linked addresses, or the variable set changes the hash even before commit.
+- **Project info**: the project name comes from CPU1's CCS/Eclipse `.project` `<name>` as-is. Empty names become `untitled`; `untitled` only emits a post-link warning. Overlong or non-printable names fail because HELLO carries a fixed 32-octet printable ASCII field. Project name and build time are excluded from `build_hash` and exist only for human identification in HELLO.
 - **Runtime diagnostics**: the platform reserves exactly 32 descriptors and appends the user set only after validating every entry and total capacity. The platform descriptor `desc_error` reports 0=OK, 1=bad blob header, 2=platform capacity, 3=combined table capacity, or 4=invalid user entry.
 
 ## Verification
@@ -89,6 +91,6 @@ Record into BRINGUP.md: tool version, the `.out` parsed, the scoping rule, capac
 
 ## Relationship to the other layers
 
-- Phase 4.5 changes **how the descriptor table gets filled** and increases its shared-memory capacity. The 28-octet wire layout is unchanged; contract version 10 assigns descriptor `kind` bit 2 as the USER origin flag so the host can separate baked user variables from platform/system descriptors.
+- Phase 4.5 changes **how the descriptor table gets filled** and increases its shared-memory capacity. The 28-octet descriptor wire layout is unchanged; contract version 11 keeps descriptor `kind` bit 2 as the USER origin flag and adds CPU1-baked HELLO project metadata.
 - Phase 4.1 remains authoritative for which mutable storage resets. A variable still resets if it is not bakeable, not visible, or unsupported by the descriptor type system; descriptor capacity overflow fails the build instead of weakening reset coverage.
 - It supersedes the earlier "application variables are discovered host-side via `.out` (DWARF)" wording in `wire-spec.md` / `contracts/v2k_descriptor.h`: discovery is now **build-time baking into the descriptor table**, so the host needs no `.out`.

@@ -55,6 +55,7 @@ const v2k_user_desc_blob_t g_v2k_user_desc_blob = {
     V2K_USER_DESC_MAX,
     0u,
     0uL,
+    { V2K_DEFAULT_PROJECT_NAME, 0uL },
     {{0}}
 };
 
@@ -136,6 +137,53 @@ static void v2k_desc_name(char dst[V2K_NAME_LEN], const char *src)
     }
 }
 
+static uint16_t v2k_project_name_valid(const char name[V2K_PROJECT_NAME_LEN])
+{
+    uint16_t i;
+
+    for (i = 0u; i < V2K_PROJECT_NAME_LEN; i++)
+    {
+        uint16_t c = (uint16_t)name[i];
+        if (c == 0u)
+        {
+            return (i > 0u) ? 1u : 0u;
+        }
+        if ((c < 0x20u) || (c > 0x7Eu))
+        {
+            return 0u;
+        }
+    }
+    return 1u;
+}
+
+static void v2k_default_project_name(char dst[V2K_PROJECT_NAME_LEN])
+{
+    static const char default_name[V2K_PROJECT_NAME_LEN] =
+        V2K_DEFAULT_PROJECT_NAME;
+    uint16_t i;
+
+    for (i = 0u; i < V2K_PROJECT_NAME_LEN; i++)
+    {
+        dst[i] = default_name[i];
+    }
+}
+
+static void v2k_publish_firmware_info(void)
+{
+    v2k_firmware_info_t *info = &g_v2k_gs0.firmware_info;
+
+    memset(info, 0, sizeof(*info));
+    if (v2k_project_name_valid(g_v2k_user_desc_blob.firmware_info.project_name))
+    {
+        *info = g_v2k_user_desc_blob.firmware_info;
+    }
+    else
+    {
+        v2k_default_project_name(info->project_name);
+        info->build_time_utc = 0uL;
+    }
+}
+
 void v2k_registry_add(const char *name, uint16_t type, uint16_t kind,
                       volatile void *addr, uint16_t prescaler)
 {
@@ -168,7 +216,8 @@ static uint16_t v2k_user_desc_blob_valid(void)
         (blob->version == V2K_USER_DESC_VERSION) &&
         (blob->capacity == V2K_USER_DESC_MAX) &&
         (blob->count <= blob->capacity) &&
-        (blob->build_hash != 0uL));
+        (blob->build_hash != 0uL) &&
+        v2k_project_name_valid(blob->firmware_info.project_name));
 }
 
 static uint16_t v2k_user_desc_entry_valid(const v2k_desc_entry_t *entry)
@@ -256,6 +305,7 @@ void v2k_registry_init(void)
 
     g_v2k_desc_error = V2K_DESC_ERROR_NONE;
     memset(table, 0, sizeof(*table));
+    v2k_publish_firmware_info();
     table->hdr.contract_ver = V2K_CONTRACT_VER;
     if (v2k_user_desc_blob_valid())
     {

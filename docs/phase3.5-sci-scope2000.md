@@ -25,7 +25,7 @@ This phase's acceptance target is the **interfaces, the isolation boundary, and 
 
 | Artifact | Content |
 |---|---|
-| `contracts/v2k_common.h`, `v2k_command.h` | contract v9; HELLO's `tick_hz/capabilities`; STATUS's `cmd_ack_seq/cmd_result`; native capability bits |
+| `contracts/v2k_common.h`, `v2k_command.h` | contract v11; HELLO's `tick_hz/capabilities/project metadata`; STATUS's `cmd_ack_seq/cmd_result`; native capability bits |
 | `docs/wire-spec.md` | wire v6 messages, Stream/Capture shared Scope, retry idempotency, build-hash re-enumeration, independent compatibility-bridge boundary |
 | `contracts/vectors/`, `tools/gen_vectors.py` | HELLO/STATUS/ENUM/CAL/DAQ/CMD/BLOCK golden vectors and negative cases |
 | `cpu2/v2k_sci_service.c/.h` | SCIA send/receive, COBS, CRC-32C, request dispatch, response replay, shared-plane service and diagnostic counts |
@@ -158,7 +158,7 @@ Phase 3.5 fixes:
 | Item | Value |
 |---|---|
 | `V2K_WIRE_VER` | 6 |
-| `V2K_CONTRACT_VER` | 10 |
+| `V2K_CONTRACT_VER` | 11 |
 | max payload | 1024 octets |
 | framing | COBS, `0x00` delimiter |
 | integrity | CRC-32C |
@@ -224,7 +224,7 @@ Only after the host abandons the old request and uses a new seq is it a new serv
 
 | wire message | CPU2 behavior | CPU1 reconcile |
 |---|---|---|
-| HELLO | read version, build hash, descriptor count, tick_hz, capability bits | no side effect |
+| HELLO | read version, build hash, descriptor count, tick_hz, capability bits, and human-readable project metadata | no side effect |
 | STATUS | summarize state, heartbeat, parameter result, scope mode, command result | no side effect |
 | ENUM | paged read of the descriptor table, up to 8 entries per page | `desc_count/build_hash` |
 | CAL_WRITE | stage into GS4 shadow; same address overwrites | not yet published |
@@ -271,7 +271,7 @@ service semantics
 The GUI first cut provides:
 
 - serial-port enumeration, 115200/higher experimental baud, and connection status;
-- HELLO version, build hash, tick_hz, capability;
+- HELLO version, build hash, tick_hz, capability, project name, and build time;
 - runtime variable enumeration and binding up to 16 channels;
 - parameter Stage/Commit and value-mirror refresh;
 - Start/Stop/Clear Fault;
@@ -406,6 +406,7 @@ Record a set of `g_v2k_isr_cycles_max/control_cycles_max/scope_cycles_max` **bef
 | descriptor count | consistent with `entry_count` |
 | tick_hz | consistent with `V2K_ISR_HZ` |
 | capabilities | full native capability bits |
+| project_name/build_time_utc | present for human identification; not used as a safety check |
 
 5. Unplug the VCP or stop requests for more than ~2 s, `link_state` should return to 0; CPU1 tick is unaffected.
 6. After restoring the connection, re-HELLO without resetting either CPU.
@@ -613,7 +614,7 @@ After RAM fully passes, verify CPU1/CPU2 FLASH:
 | SysConfig responsibility | CPU1 only generates the SCIA→CPU2 ownership; CPU2 generates SCIA/pinmux; the business C has no static override |
 | four-config build | CPU1/CPU2 RAM/FLASH all succeed via CCS `buildProject` |
 | protocol conformance | Viewer vectors and Scope2000 tests all pass |
-| HELLO/ENUM/STATUS | version, capability, tick, hash, enumeration and re-enumeration correct |
+| HELLO/ENUM/STATUS | version, capability, tick, project metadata, hash, enumeration and re-enumeration correct |
 | CAL/CMD | two-stage async reconcile, rejection semantics, and retry idempotency correct |
 | Scope Stream | native block, partial block, contiguous sequence, and gaps correct |
 | Scope Capture | trigger, pre-trigger, freeze order, and slow drain correct |

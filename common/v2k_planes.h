@@ -28,6 +28,7 @@ typedef struct {
     v2k_param_status_t param_status;  // 参数应用状态
     v2k_param_read_resp_t param_read_resp; // CAL_READ 按需读响应
     v2k_scope_prod_t   scope_prod;    // 示波生产者控制块
+    v2k_firmware_info_t firmware_info; // CPU1 生成的人工可读项目信息，CPU2 只转发 HELLO
 } v2k_gs0_plane_t;
 
 //-----------------------------------------------------------------------------
@@ -55,7 +56,7 @@ typedef struct {
 
 #if V2K_PLATFORM_C28X
 // 区块占用自检（单位 word = 16 bit；与 v2k_memmap.h 头部核算表一致）
-V2K_STATIC_ASSERT(sizeof(v2k_gs0_plane_t) == 2916u);
+V2K_STATIC_ASSERT(sizeof(v2k_gs0_plane_t) == 2950u);
 V2K_STATIC_ASSERT(sizeof(v2k_gs4_plane_t) == 312u);
 V2K_STATIC_ASSERT(sizeof(v2k_gs0_plane_t) <= V2K_GS0_PLANE_WORDS);
 V2K_STATIC_ASSERT(sizeof(v2k_gs4_plane_t) <= 0x200u);  // ≤ RAMGS4_V2K 子区（cpu2 .cmd）

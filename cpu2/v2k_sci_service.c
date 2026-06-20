@@ -251,7 +251,14 @@ static void v2k_handle_hello(uint16_t seq)
                 V2K_MSG_1TO2_RO->cpu1_status.tick_hz);
     v2k_put_u32(s_raw, (uint16_t)(off + 32u),
                 V2K_CAPABILITIES_NATIVE);
-    v2k_response_send(36u);
+    for (i = 0u; i < V2K_PROJECT_NAME_LEN; i++)
+    {
+        s_raw[(uint16_t)(off + 36u + i)] =
+            ((uint16_t)V2K_GS0_RO->firmware_info.project_name[i]) & 0xFFu;
+    }
+    v2k_put_u32(s_raw, (uint16_t)(off + 68u),
+                V2K_GS0_RO->firmware_info.build_time_utc);
+    v2k_response_send(72u);
 }
 
 static void v2k_handle_status(uint16_t seq)

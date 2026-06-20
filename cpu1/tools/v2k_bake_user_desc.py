@@ -12,17 +12,21 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 
 NAME_LEN = 16
+PROJECT_NAME_LEN = 32
+DEFAULT_PROJECT_NAME = "untitled"
 USER_CAPACITY = 96
 USER_MAGIC = 0x564B5544
-USER_VERSION = 3
+USER_VERSION = 4
 BLOB_HEADER_FORMAT = "<IHHHHI"
 BLOB_HEADER_SIZE = struct.calcsize(BLOB_HEADER_FORMAT)
+FIRMWARE_INFO_SIZE = PROJECT_NAME_LEN * 2 + 4
 ENTRY_SIZE = 44
 KIND_PARAM = 1
 KIND_SCOPE = 2
@@ -76,6 +80,12 @@ class Descriptor:
 class Skipped:
     name: str
     reason: str
+
+
+@dataclass(frozen=True)
+class FirmwareInfo:
+    project_name: str = DEFAULT_PROJECT_NAME
+    build_time_utc: int = 0
 
 
 def parse_int(text: str | None) -> int:
@@ -137,6 +147,67 @@ def load_manifest(path: Path) -> dict:
     if manifest.get("version") != 1 or not manifest.get("ownership_sha256"):
         raise BakeError(f"{path}: unsupported or incomplete boundary manifest")
     return manifest
+
+
+def validate_project_name(name: str) -> str:
+    normalized = name.strip()
+    if not normalized:
+        return DEFAULT_PROJECT_NAME
+    try:
+        encoded = normalized.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise BakeError("CCS project name must use printable ASCII characters") from exc
+    if len(encoded) > PROJECT_NAME_LEN:
+        raise BakeError(
+            f"CCS project name exceeds {PROJECT_NAME_LEN} visible characters: {normalized!r}"
+        )
+    if any(value < 0x20 or value > 0x7E for value in encoded):
+        raise BakeError("CCS project name must use printable ASCII characters")
+    return normalized
+
+
+def load_project_name(path: Path | None) -> str:
+    if path is None:
+        raise BakeError("missing CCS .project path")
+    try:
+        root = ET.parse(path).getroot()
+    except (OSError, ET.ParseError) as exc:
+        raise BakeError(f"cannot read CCS project file {path}: {exc}") from exc
+    return validate_project_name(child_text(root, "name") or "")
+
+
+def current_epoch_utc() -> int:
+    now = int(time.time())
+    if not 0 <= now <= 0xFFFF_FFFF:
+        raise BakeError("current Unix time does not fit in HELLO build_time_utc u32")
+    return now
+
+
+def select_build_time(
+    previous_hash: int,
+    previous_info: FirmwareInfo,
+    build_hash: int,
+    project_name: str,
+    now: int,
+) -> int:
+    if (
+        previous_hash == build_hash
+        and previous_info.project_name == project_name
+        and previous_info.build_time_utc != 0
+    ):
+        return previous_info.build_time_utc
+    return now
+
+
+def emit_default_project_warning(path: Path | None) -> None:
+    target = str(path) if path is not None else "../.project"
+    print(
+        f"{target}: warning: CCS project name is still \"{DEFAULT_PROJECT_NAME}\"; "
+        "Scope2000 can only show this default name and cannot distinguish the project. "
+        f"Rename the CCS cpu1 project or edit {target} <name> to a meaningful "
+        f"1-{PROJECT_NAME_LEN} printable ASCII character name.",
+        file=sys.stderr,
+    )
 
 
 def load_ranges(path: Path) -> list[AddressRange]:
@@ -405,9 +476,14 @@ def encode_blob(
     entries: list[Descriptor],
     build_hash: int = 0,
     capacity: int = USER_CAPACITY,
+    firmware_info: FirmwareInfo | None = None,
 ) -> bytes:
     if len(entries) > capacity:
         raise BakeError(f"user descriptor capacity exceeded: {len(entries)} > {capacity}")
+    info = firmware_info or FirmwareInfo()
+    project_name = validate_project_name(info.project_name)
+    if not 0 <= info.build_time_utc <= 0xFFFF_FFFF:
+        raise BakeError("build_time_utc does not fit in u32")
     output = bytearray(
         struct.pack(
             BLOB_HEADER_FORMAT,
@@ -419,6 +495,9 @@ def encode_blob(
             build_hash,
         )
     )
+    encoded_project = project_name.encode("ascii").ljust(PROJECT_NAME_LEN, b"\0")
+    output.extend(b"".join(struct.pack("<H", value) for value in encoded_project))
+    output.extend(struct.pack("<I", info.build_time_utc))
     for index in range(capacity):
         if index < len(entries):
             entry = entries[index]
@@ -430,8 +509,8 @@ def encode_blob(
     return bytes(output)
 
 
-def decode_blob(data: bytes) -> tuple[int, list[Descriptor]]:
-    expected_size = BLOB_HEADER_SIZE + USER_CAPACITY * ENTRY_SIZE
+def decode_blob(data: bytes) -> tuple[int, FirmwareInfo, list[Descriptor]]:
+    expected_size = BLOB_HEADER_SIZE + FIRMWARE_INFO_SIZE + USER_CAPACITY * ENTRY_SIZE
     if len(data) != expected_size:
         raise BakeError(f"user descriptor section size is {len(data)}, expected {expected_size}")
     magic, version, count, capacity, reserved, build_hash = struct.unpack_from(
@@ -441,8 +520,14 @@ def decode_blob(data: bytes) -> tuple[int, list[Descriptor]]:
         raise BakeError("invalid user descriptor blob header")
     if count > capacity:
         raise BakeError("user descriptor blob count exceeds capacity")
+    project_words = struct.unpack_from(f"<{PROJECT_NAME_LEN}H", data, BLOB_HEADER_SIZE)
+    project_name = bytes(value & 0xFF for value in project_words).split(b"\0", 1)[0].decode("ascii")
+    build_time_utc = struct.unpack_from(
+        "<I", data, BLOB_HEADER_SIZE + PROJECT_NAME_LEN * 2
+    )[0]
+    firmware_info = FirmwareInfo(project_name, build_time_utc)
     result: list[Descriptor] = []
-    offset = BLOB_HEADER_SIZE
+    offset = BLOB_HEADER_SIZE + FIRMWARE_INFO_SIZE
     for index in range(capacity):
         name_words = struct.unpack_from("<16H", data, offset)
         name = bytes(value & 0xFF for value in name_words).split(b"\0", 1)[0].decode("ascii")
@@ -450,7 +535,7 @@ def decode_blob(data: bytes) -> tuple[int, list[Descriptor]]:
         if index < count:
             result.append(Descriptor(name, type_code, kind, address, prescaler, entry_reserved))
         offset += ENTRY_SIZE
-    return build_hash, result
+    return build_hash, firmware_info, result
 
 
 def canonical_build_hash(
@@ -501,16 +586,26 @@ def elf_section(path: Path, name: str) -> tuple[int, int]:
     raise BakeError(f"{path}: section {name!r} not found")
 
 
-def prepare_blob(path: Path, entries: list[Descriptor]) -> tuple[bytes, int]:
+def prepare_blob(
+    path: Path, entries: list[Descriptor], project_name: str
+) -> tuple[bytes, int, FirmwareInfo]:
     offset, size = elf_section(path, "v2k_user_desc")
     image = path.read_bytes()
     expected_size = len(encode_blob([]))
     if size != expected_size:
         raise BakeError(f"{path}: v2k_user_desc size is {size}, expected {expected_size}")
     current = image[offset : offset + size]
-    decode_blob(current)
+    previous_hash, previous_info, _ = decode_blob(current)
     build_hash = canonical_build_hash(image, offset, size, entries)
-    return encode_blob(entries, build_hash=build_hash), build_hash
+    build_time_utc = select_build_time(
+        previous_hash, previous_info, build_hash, project_name, current_epoch_utc()
+    )
+    firmware_info = FirmwareInfo(project_name, build_time_utc)
+    return (
+        encode_blob(entries, build_hash=build_hash, firmware_info=firmware_info),
+        build_hash,
+        firmware_info,
+    )
 
 
 def patch_elf(path: Path, blob: bytes, dry_run: bool) -> None:
@@ -534,11 +629,12 @@ def report_entry(entry: Descriptor) -> dict:
 
 def command_bake(args: argparse.Namespace) -> None:
     manifest = load_manifest(args.manifest)
+    project_name = load_project_name(args.project_info)
     ranges = load_ranges(args.link_info)
     ofd = args.ofd or find_ofd()
     root, banner = run_ofd(args.elf, ofd)
     entries, skipped = collect_entries(root, ranges)
-    blob, build_hash = prepare_blob(args.elf, entries)
+    blob, build_hash, firmware_info = prepare_blob(args.elf, entries, project_name)
     patch_elf(args.elf, blob, args.dry_run)
     report = {
         "version": 1,
@@ -549,6 +645,13 @@ def command_bake(args: argparse.Namespace) -> None:
         "patched": not args.dry_run,
         "build_hash": build_hash,
         "build_hash_hex": f"0x{build_hash:08X}",
+        "project_info": {
+            "path": str(args.project_info) if args.project_info is not None else None,
+            "project_name": firmware_info.project_name,
+            "build_time_utc": firmware_info.build_time_utc,
+            "build_time_utc_hex": f"0x{firmware_info.build_time_utc:08X}",
+            "default_name": firmware_info.project_name == DEFAULT_PROJECT_NAME,
+        },
         "entry_count": len(entries),
         "capacity": USER_CAPACITY,
         "platform_reserved": 32,
@@ -557,7 +660,14 @@ def command_bake(args: argparse.Namespace) -> None:
     }
     args.report.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="ascii")
     action = "validated" if args.dry_run else "patched"
-    print(f"user descriptors {action}: {len(entries)}/{USER_CAPACITY}, skipped={len(skipped)}")
+    print(
+        f"user descriptors {action}: {len(entries)}/{USER_CAPACITY}, "
+        f"skipped={len(skipped)}, project={firmware_info.project_name}, "
+        f"build_time_utc={firmware_info.build_time_utc}"
+    )
+    if firmware_info.project_name == DEFAULT_PROJECT_NAME:
+        sys.stdout.flush()
+        emit_default_project_warning(args.project_info)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -568,6 +678,7 @@ def build_parser() -> argparse.ArgumentParser:
     bake.add_argument("--link-info", type=Path, required=True)
     bake.add_argument("--elf", type=Path, required=True)
     bake.add_argument("--report", type=Path, required=True)
+    bake.add_argument("--project-info", type=Path)
     bake.add_argument("--ofd", type=Path)
     bake.add_argument("--dry-run", action="store_true")
     bake.set_defaults(func=command_bake)

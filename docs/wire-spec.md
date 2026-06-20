@@ -108,7 +108,7 @@ off sz field
 
 ### 4.1 HELLO (0x01 / 0x81)
 
-Request payload empty. Response base prefix 28 octets, the current wire v6 response is 36 octets; new fields are only allowed appended at the tail:
+Request payload empty. Response base prefix 28 octets, the current wire v6 response is 72 octets; new fields are only allowed appended at the tail:
 
 ```
 0   2  proto_ver     = V2K_WIRE_VER (host disconnects on mismatch, hinting a firmware/host version mismatch)
@@ -119,6 +119,8 @@ Request payload empty. Response base prefix 28 octets, the current wire v6 respo
 12  16 fw_name       ASCII, e.g. "viewer2000"
 28  4  tick_hz       CPU1 ISR tick frequency; the sole basis for converting block tick to seconds
 32  4  capabilities  device capability bits
+36  32 project_name  CPU1-baked project name, printable ASCII, NUL-padded; max 32 visible chars
+68  4  build_time_utc CPU1 firmware build time as Unix UTC seconds; human-readable only, not a safety hash
 ```
 
 `capabilities` (append-only, no reuse):
@@ -133,7 +135,9 @@ Request payload empty. Response base prefix 28 octets, the current wire v6 respo
 | 5 | SYSTEM_CMD | Start / Stop / Clear Fault |
 | 6 | NATIVE_BLOCK | native-bit-width `ScopeBlock` |
 
-An old parser can read only the 28-octet prefix; if a new parser receives a shorter response, the tail capabilities are treated as 0.
+An old parser can read only the 28-octet prefix; if a new parser receives a shorter response, the absent tail fields are treated as 0/empty.
+
+`project_name` is copied from CPU1's CCS/Eclipse `cpu1/.project` `<name>` field as-is, after only the wire-level printable-ASCII/32-character check. If the name is empty it becomes `untitled`. If it is `untitled`, the CPU1 post-link baker emits a build warning but does not fail the build. These HELLO fields are for human identification only. Machine safety and host cache invalidation still use `build_hash`.
 
 ### 4.2 STATUS (0x02 / 0x82)
 

@@ -74,7 +74,7 @@ V2K_ASSERT_SIZE_BITS(float, 32);
 
 // 共享内存布局版本：任何共享 struct 字段变更必须 +1（CPU1/CPU2 固件不同期
 // 烧录时的握手自检用，见 v2k_command.h 握手流程）。
-#define V2K_CONTRACT_VER    10u
+#define V2K_CONTRACT_VER    11u
 
 //-----------------------------------------------------------------------------
 // 设备能力位（HELLO capabilities；只追加，不复用）

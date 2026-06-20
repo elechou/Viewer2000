@@ -32,6 +32,11 @@ V2K_ASSERT_OFFSET_BITS(v2k_desc_entry_t, prescaler, V2K_NAME_BITS(V2K_NAME_LEN) 
 
 // ---- 描述符表头 ----
 V2K_ASSERT_OFFSET_BITS(v2k_desc_table_hdr_t, build_hash, 64u);
+V2K_ASSERT_OFFSET_BITS(v2k_firmware_info_t, build_time_utc,
+                       V2K_NAME_BITS(V2K_PROJECT_NAME_LEN));
+V2K_ASSERT_OFFSET_BITS(v2k_user_desc_blob_t, firmware_info, 128u);
+V2K_ASSERT_OFFSET_BITS(v2k_user_desc_blob_t, entries,
+                       128u + V2K_NAME_BITS(V2K_PROJECT_NAME_LEN) + 32u);
 
 // ---- 示波 block 头与控制块 ----
 V2K_ASSERT_OFFSET_BITS(v2k_block_hdr_t, block_seq, 32u);

@@ -267,7 +267,7 @@ Operating policy and acceptance items are in `docs/phase4.5-symbol-baking.md`.
 - [ ] CPU1 and CPU2 FLASH `buildProject` (the current CCS MCP exposes no active-configuration switch)
 - [x] On-target runtime acceptance (RAM/20 kHz, CCS MCP): `desc_error=0`, table/blob headers, baked names+addresses match the report (B), CAL_WRITE tunes a baked PARAM and a const leaf is rejected (D)
 - [x] Scope2000 software alignment: exact contract 10 acceptance, golden-vector mirror, stable 128-entry ENUM paging, post-enumeration build-hash confirmation, stale catalog-command rejection, and USER/system classification
-- [ ] Rebuild both cores and repeat the on-target ENUM/Scope2000 checks with contract 10 and user blob version 3
+- [ ] Rebuild both cores and repeat the on-target ENUM/Scope2000 checks with contract 11 and user blob version 4
 - [ ] DAQ bind of a baked var over the link, and ENUM paging returns all entries on hardware (F host side)
 - [ ] Scope2000 clean-PC ENUM with no `.out` present (C) and build-hash re-enumeration after changing the user variable set (E)
 

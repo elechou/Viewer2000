@@ -18,6 +18,7 @@
 // │        │      │ v2k_param_status_t            (   4 words)   │
 // │        │      │ v2k_param_read_resp_t         (  68 words)   │
 // │        │      │ v2k_scope_prod_t              (  20 words)   │
+// │        │      │ v2k_firmware_info_t           (  34 words)   │
 // │ GS0后半│ CPU1 │ Stream/Capture 共用示波环 28K words           │
 // │ GS1-3  │ CPU1 │ （与 GS0 后半连续，同一 ring section）         │
 // │ GS4    │ CPU2 │ v2k_param_shadow_t            ( 100 words)   │
