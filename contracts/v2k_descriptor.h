@@ -52,9 +52,9 @@
 #define V2K_NAME_LEN   16u   // Fixed name length (incl. NUL padding); ASCII, 1 octet/char on the wire
 #define V2K_PROJECT_NAME_LEN 32u // HELLO project name length; ASCII, NUL-padded on the wire
 #define V2K_DEFAULT_PROJECT_NAME "untitled"
-#define V2K_DESC_MAX   128u  // Table capacity cap (128 × 22 words ≈ 2.8K words, budget in memmap)
-#define V2K_USER_DESC_MAX 96u // Build-time baked user-variable capacity; the first 32 slots remain for platform descriptors
-#define V2K_PLATFORM_DESC_MAX (V2K_DESC_MAX - V2K_USER_DESC_MAX)
+#define V2K_DESC_MAX   176u // Table cap: 8-word header + 176 × 22 words = 3880 words
+#define V2K_PLATFORM_DESC_MAX 64u  // Platform/system descriptor capacity
+#define V2K_USER_DESC_MAX 112u     // Build-time baked user-variable capacity
 
 // Octets per descriptor on the wire (wire-spec §4.3 ENUM_RESP; mirrors the struct fields one-to-one)
 #define V2K_DESC_WIRE_OCTETS 28u

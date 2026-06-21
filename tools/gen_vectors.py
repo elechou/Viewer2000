@@ -141,7 +141,7 @@ def build_cases():
     add("hello_req", "HELLO_REQ：空 payload", 0x01, 0x0001, b"")
     add("hello_resp", "HELLO_RESP：版本、build_hash、固件名、tick_hz、能力位、项目名与构建时间",
         0x81, 0x0001,
-        struct.pack("<HHIHH16sII32sI", 6, 12, BUILD_HASH, 10, 0,
+        struct.pack("<HHIHH16sII32sI", 6, 13, BUILD_HASH, 10, 0,
                     b"viewer2000", 20000, 0x7F,
                     b"phase4-demo", BUILD_TIME_UTC))
 

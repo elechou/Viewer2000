@@ -21,7 +21,8 @@ from pathlib import Path
 NAME_LEN = 16
 PROJECT_NAME_LEN = 32
 DEFAULT_PROJECT_NAME = "untitled"
-USER_CAPACITY = 96
+USER_CAPACITY = 112
+PLATFORM_CAPACITY = 64
 USER_MAGIC = 0x564B5544
 USER_VERSION = 4
 BLOB_HEADER_FORMAT = "<IHHHHI"
@@ -654,7 +655,7 @@ def command_bake(args: argparse.Namespace) -> None:
         },
         "entry_count": len(entries),
         "capacity": USER_CAPACITY,
-        "platform_reserved": 32,
+        "platform_reserved": PLATFORM_CAPACITY,
         "entries": [report_entry(entry) for entry in entries],
         "skipped": [asdict(item) for item in skipped],
     }

@@ -61,7 +61,7 @@ The tracked `makefile.init` and `makefile.targets` hooks implement this order wi
 
 ## Implemented policy
 
-- **Capacity**: `V2K_DESC_MAX=128`; 32 slots are reserved for platform descriptors and the baked blob holds at most 96 user leaves. The GS0 plane is 2950 C28x words, below its 4096-word allocation.
+- **Capacity**: `V2K_DESC_MAX=176`; 64 slots are reserved for platform descriptors and the baked blob holds at most 112 user leaves. The GS0 plane is 4006 C28x words, below its 4096-word allocation.
 - **Names**: `V2K_NAME_LEN` remains 16. The tool uses source-level names, never linker-name fallback, and fails rather than truncating names longer than 15 visible ASCII characters. Function statics use the source variable name and therefore collide explicitly when ambiguous.
 - **Types**: I16/U16/I32/U32/F32 are accepted. Pointers, unions, enums, doubles, 64-bit leaves, bitfields, and other unsupported forms are omitted and listed in the JSON report.
 - **Kinds**: user data/BSS leaves are `PARAM|SCOPE`; user const leaves are `SCOPE` only. Runtime write validation excludes const while read/scope validation includes it.
@@ -69,7 +69,7 @@ The tracked `makefile.init` and `makefile.targets` hooks implement this order wi
 - **ELF**: the patcher requires ELF32 little-endian, an exact-size `SHT_PROGBITS` section, matching blob magic/version/capacity, and a successful decode after patching.
 - **Build hash**: the blob carries a nonzero 32-bit hash derived from the normalized final ELF and baked records. Re-baking an unchanged image is stable; changing code, linked addresses, or the variable set changes the hash even before commit.
 - **Project info**: the project name comes from CPU1's CCS/Eclipse `.project` `<name>` as-is. Empty names become `untitled`; `untitled` only emits a post-link warning. Overlong or non-printable names fail because HELLO carries a fixed 32-octet printable ASCII field. Project name and build time are excluded from `build_hash` and exist only for human identification in HELLO.
-- **Runtime diagnostics**: the platform reserves exactly 32 descriptors and appends the user set only after validating every entry and total capacity. The platform descriptor `desc_error` reports 0=OK, 1=bad blob header, 2=platform capacity, 3=combined table capacity, or 4=invalid user entry.
+- **Runtime diagnostics**: the platform reserves exactly 64 descriptors and appends the user set only after validating every entry and total capacity. The platform descriptor `desc_error` reports 0=OK, 1=bad blob header, 2=platform capacity, 3=combined table capacity, or 4=invalid user entry.
 
 ## Verification
 
@@ -80,7 +80,7 @@ The tracked `makefile.init` and `makefile.targets` hooks implement this order wi
 | C | names travel | flash the patched `.out`; on a **clean PC without the project**, open Scope2000, ENUM | the user's plain-C variable names appear by name; bind + plot one |
 | D | tune a baked var | CAL_WRITE to a baked PARAM var | takes effect; `applied_seq` reconciles (no descriptor-table-membership special-casing needed) |
 | E | stale guard | flash a different build (changed vars) | `build_hash` changes → Scope2000 re-enumerates; old names gone, new names present |
-| F | capacity | unit-test overflow and build the 128-entry shared layout | overflow fails; GS0 RAM fits; ENUM paging returns all on hardware |
+| F | capacity | unit-test overflow and build the 176-entry shared layout | overflow fails; GS0 RAM fits; ENUM paging returns all on hardware |
 
 ## Acceptance and exit
 
