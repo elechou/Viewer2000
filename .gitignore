@@ -5,6 +5,10 @@
 .metadata/
 .claude/ccs.settings.md
 .mcp.json
+.logs/
+
+# TI appdata/cache created by DSS runs (see tools/ccs/*.js)
+.ti_appdata/
 
 # clangd generated data
 **/.clangd/.cache/

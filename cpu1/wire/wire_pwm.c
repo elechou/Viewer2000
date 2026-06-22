@@ -102,6 +102,34 @@ static void wire_pwm_configure_current_trip_base(uint32_t base)
                                         EPWM_DC_MODULE_A,
                                         EPWM_DC_EVENT_1,
                                         EPWM_DC_EVENT_INPUT_NOT_SYNCED);
+    // The TZCTL.DCAEVT1 per-event action drives EPWMxA whenever the DCAEVT1
+    // digital-compare condition is asserted. That force is applied independently
+    // of whether DCAEVT1 is selected as an OST source in TZSEL, so "disarmed"
+    // (TZSEL cleared) does NOT make DCAEVT1 harmless. Its reset value is
+    // High-Impedance (0), which floats EPWMxA only (DCBEVT1 is unused), and in
+    // DRY_RUN the gate driver sleeps so the CSA outputs sit near 0 V and the
+    // CMPSS low comparator asserts TRIPIN7 with no real current. That idle
+    // DCAEVT1 floated all three high-side outputs (Phase 5.1). Default the action
+    // to DISABLE here; the real force-low is installed only while armed.
+    EPWM_setTripZoneAction(base, EPWM_TZ_ACTION_EVENT_DCAEVT1,
+                           EPWM_TZ_ACTION_DISABLE);
+}
+
+// Install (armed) or remove (disarmed) the DCAEVT1 output force on all phases.
+// Armed = force EPWMxA low on a current trip (safe state, replacing the unsafe
+// reset High-Impedance); disarmed = no action, so the level-sensitive DCAEVT1
+// condition can never drive the high-side pins outside an armed POWERED run.
+static void wire_pwm_set_current_trip_output_action(uint16_t armed)
+{
+    EPWM_TripZoneAction action =
+        (armed != 0u) ? EPWM_TZ_ACTION_LOW : EPWM_TZ_ACTION_DISABLE;
+
+    EPWM_setTripZoneAction(WIRE_PWM_PHASE_A_BASE,
+                           EPWM_TZ_ACTION_EVENT_DCAEVT1, action);
+    EPWM_setTripZoneAction(WIRE_PWM_PHASE_B_BASE,
+                           EPWM_TZ_ACTION_EVENT_DCAEVT1, action);
+    EPWM_setTripZoneAction(WIRE_PWM_PHASE_C_BASE,
+                           EPWM_TZ_ACTION_EVENT_DCAEVT1, action);
 }
 
 static uint16_t wire_pwm_current_trip_base_is_valid(uint32_t base)
@@ -443,8 +471,8 @@ uint16_t wire_pwm_release_output_lock(void)
 
 uint16_t wire_pwm_output_is_locked(void)
 {
-    return wire_pwm_base_is_locked(WIRE_PWM_PHASE_A_BASE) &&
-           wire_pwm_base_is_locked(WIRE_PWM_PHASE_B_BASE) &&
+    return wire_pwm_base_is_locked(WIRE_PWM_PHASE_A_BASE) ||
+           wire_pwm_base_is_locked(WIRE_PWM_PHASE_B_BASE) ||
            wire_pwm_base_is_locked(WIRE_PWM_PHASE_C_BASE);
 }
 
@@ -472,6 +500,7 @@ uint16_t wire_pwm_arm_current_trip(void)
                                EPWM_TZ_SIGNAL_DCAEVT1);
     EPWM_enableTripZoneSignals(WIRE_PWM_PHASE_C_BASE,
                                EPWM_TZ_SIGNAL_DCAEVT1);
+    wire_pwm_set_current_trip_output_action(1u);
     s_current_trip_armed = 1u;
 
     if (wire_pwm_capture_current_sources() != 0u)
@@ -490,6 +519,7 @@ void wire_pwm_disarm_current_trip(void)
                                 EPWM_TZ_SIGNAL_DCAEVT1);
     EPWM_disableTripZoneSignals(WIRE_PWM_PHASE_C_BASE,
                                 EPWM_TZ_SIGNAL_DCAEVT1);
+    wire_pwm_set_current_trip_output_action(0u);
     s_current_trip_armed = 0u;
     XBAR_disableEPWMMux(POWER_TRIP_XBAR,
                         POWER_TRIP_XBAR_ENABLED_MUXES);
