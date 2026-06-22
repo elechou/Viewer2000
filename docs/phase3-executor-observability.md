@@ -4,7 +4,7 @@
 
 Phase 2 proved a bare time base (ePWM→ADC→EOC ISR) and a pure-hardware protection chain. Phase 3 **grows the platform's real job** on top of that time base:
 
-- **Executor** — a fixed-order control ISR (`acquire → parameter commit → user_step → apply → scope sample → trigger evaluation → tick++`). The user owns only the one `user_step` slot; every other step belongs to L1. This is the mechanization, in the time dimension, of rule 7 (observability day 0) and rule 4 (L3 sees only physical quantities, touches no registers): **there is no un-sampled control path**.
+- **Executor** — a fixed-order control ISR (`acquire → parameter commit → user_step → apply → scope sample → trigger evaluation → tick++`). The user owns only the one `user_step` slot; every other step belongs to L1. This is the mechanization, in the time dimension, of rule 7 (observability day 0) and rule 4 (L3 sees only completed results / physical quantities, touches no configuration): **there is no un-sampled control path**.
 - **Observability** — of the four shared interfaces frozen in Phase 0, this phase lands the producer side of three: the descriptor table (runtime enumeration), the parameter double-buffer (host→control), and the Stream/Capture shared RAM scope (control→host, Stream continuous flow + Capture trigger-freeze). The command/status plane was landed in Phase 2.
 
 > **2026-06-17 Scope contract update**: the scope keeps the two entries Stream/Capture, but no longer exposes a fixed 8-channel group. CPU1 has only one `scope_prod`, CPU2 has only one `scope_cfg/scope_bind/scope_cons`. `STREAM` is a continuous flow, `CAPTURE_ARMED` is the Capture entry enabling trigger-freeze, and after `CAPTURE_FROZEN` you can drain via the CCS view or `BLOCK_REQ`.
@@ -18,7 +18,7 @@ The division of labor follows Phase 2 and extrapolates: **SysConfig owns static 
 | Artifact | Content |
 |---|---|
 | `cpu1/v2k_executor.c/.h` | fixed-order control ISR; down-counter-divided multi-rate scheduling (1 kHz / 100 Hz / parameter-commit, three slots phase-staggered); CPUTIMER1 self-timed stopwatch segmenting control/scope/total cycles; ADC overflow and ISR budget counters |
-| `cpu1/app/v2k_platform.h` | historical compatibility include for the user-facing API |
+| `cpu1/app/v2k_platform.h` | historical compatibility include for the user-facing API, removed after the `v2k.h` boundary became the only main entry |
 | `cpu1/v2k_user.c` | the default L3 example (**weak symbol**, an application may override with a strong definition): passes `pwm1_duty_cmd` straight to the output, no internal state |
 | `cpu1/v2k_registry.c/.h` | descriptor-table registration; background mechanical validation of parameter batches + ISR-safe-point atomic commit; CAL_READ on-demand read service |
 | `cpu1/v2k_scope_runtime.c/.h` | Stream/Capture shared scope producer; background config/bind sequence handshake and capacity calculation; post-freeze CCS view de-interleave |

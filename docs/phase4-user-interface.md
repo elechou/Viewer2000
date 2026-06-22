@@ -1,9 +1,15 @@
-# Phase 4 — User-interface boundary (L1↔user): development plan
+# Phase 4 — User-interface boundary (L1↔L3): development plan
 
 > **Document status**: implemented and accepted on the 20 kHz RAM and FLASH
 > baselines. The 2026-06-21 FLASH closure includes cold boot, lifecycle,
 > protection, Scope2000, and load-budget regression; measured results are in
 > [BRINGUP.md](../BRINGUP.md). Further 100 kHz optimization is deferred.
+>
+> **Phase 5.0 supersession**: the `wire_acquire()` + platform count-to-physical
+> input model below records the Phase 4 single-channel proof as implemented. It
+> is not the current motor-acquisition contract. Phase 5.0 keeps platform-owned
+> ADC timing/EOC validity and safe output application, but lets user code call
+> non-blocking DriverLib result APIs directly and own physical conversion.
 >
 > **Scope**: Phase 4 is **firmware boundary work only**. It writes **no control math** (the platform ships none — control math is user-supplied; see [AGENTS.md](../AGENTS.md) Decisions). It turns the user surface into an **Arduino-style `setup()` / `control()`**, draws the **wire↔runtime portability seam**, and proves the reset lifecycle with a manually sectioned demo. [Phase 4.1](phase4.1-user-code-boundary.md) hardens that prototype into an automatic, linker-verified user-code/state boundary. The "user's variables visible by name on any PC" experience remains the separate build-tooling effort [Phase 4.5](phase4.5-symbol-baking.md).
 >
@@ -15,7 +21,7 @@ Phase 3/3.5 proved the platform can schedule, observe, tune, and stream — but 
 
 ## Starting state of the boundary
 
-Grounded in the pre-Phase-4 code (`cpu1/app/v2k_platform.h`, `v2k_executor.c`, `v2k_registry.c`, `v2k_scope_runtime.c`):
+Grounded in the pre-Phase-4 code (`cpu1/app/v2k_platform.h`, a historical compatibility include now removed, `v2k_executor.c`, `v2k_registry.c`, `v2k_scope_runtime.c`):
 
 | Piece | Current (Phase 3 stub) | Gap to close |
 |---|---|---|
@@ -190,4 +196,4 @@ reserved for Phase 4.1 acceptance and its own tag.
 - **No general user-object ownership enforcement** — Phase 4 proves the reset lifecycle on an annotated demo; [Phase 4.1](phase4.1-user-code-boundary.md) makes the boundary automatic and build-verified.
 - **No L2 directory** — control math remains user/vendor-owned; Phase 4 only wires a DCL PI demo.
 - **No PC simulation / SimSource, no Simulink binding** — only the contract is kept forward-compatible.
-- **Note (unresolved)**: whether to let advanced students drop below the `control()` boundary to touch registers (rule 4 loosening / "embedded teaching bench" mode) was raised but not pursued — the boundary stays; hardware learning is served by SysConfig-by-hand + the readable open `wire/`.
+- **Resolved by Phase 5.0**: user code may read platform-configured peripheral results through documented non-blocking DriverLib APIs. Configuration and safety ownership do not move: users may not retime/retrigger ADC, alter ePWM/interrupt ownership, or modify X-BAR/CMPSS/TZ and fault clearing.
