@@ -95,6 +95,8 @@
                     </folderInfo>
                     <sourceEntries>
                         <entry excluding="device/driverlib|28p65x_generic_ram_lnk_cpu2.cmd" flags="VALUE_WORKSPACE_PATH|RESOLVED" kind="sourcePath" name=""/>
+                        <entry flags="VALUE_WORKSPACE_PATH|RESOLVED" kind="sourcePath" name="device/driverlib/ccs/Release"/>
+                        <entry flags="VALUE_WORKSPACE_PATH|RESOLVED" kind="sourcePath" name="device/driverlib/ccs/Debug"/>
                     </sourceEntries>
                 </configuration>
             </storageModule>
@@ -194,6 +196,8 @@
                     </folderInfo>
                     <sourceEntries>
                         <entry excluding="device/driverlib|28p65x_generic_flash_lnk_cpu2.cmd" flags="VALUE_WORKSPACE_PATH|RESOLVED" kind="sourcePath" name=""/>
+                        <entry flags="VALUE_WORKSPACE_PATH|RESOLVED" kind="sourcePath" name="device/driverlib/ccs/Release"/>
+                        <entry flags="VALUE_WORKSPACE_PATH|RESOLVED" kind="sourcePath" name="device/driverlib/ccs/Debug"/>
                     </sourceEntries>
                 </configuration>
             </storageModule>
