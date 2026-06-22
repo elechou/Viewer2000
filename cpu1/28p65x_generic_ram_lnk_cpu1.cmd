@@ -73,9 +73,11 @@ SECTIONS
    .bss             : > RAMLS5, START(V2K_BssStart), END(V2K_BssEnd)
    .bss:output      : > RAMLS3, START(V2K_BssOutputStart), END(V2K_BssOutputEnd)
    .init_array      : > RAMM0
-	   .const           : > RAMLS5
+	   /* Keep assertion/DriverLib string tables out of the contiguous writable
+	      state range; Phase 5.0 no longer fits .const + .bss in RAMLS5. */
+	   .const           : > RAMLS4
 	   .data            : > RAMLS5, START(V2K_DataStart), END(V2K_DataEnd)
-	   .sysmem          : > RAMLS4
+	   .sysmem          : > RAMLS5
 	   .TI.crctab       : > RAMM0, ALIGN(2)
 	   dclfuncs         : > RAMM0
 #else
