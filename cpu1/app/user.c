@@ -1,47 +1,30 @@
 //=============================================================================
-// user.c - Phase 4.1 plain-C user application
+// user.c - Phase 5.0 neutral motor-interface smoke application
 //=============================================================================
 
+#include "board.h"
+#include "driverlib.h"
 #include "v2k.h"
-#include "user_state.h"
-#include "libraries/control/DCL/c28/include/DCLF32.h"
+#include "wire/wire_as5600.h"
 
-typedef struct
-{
-    float err[3];
-    uint16_t idx;
-} user_trace_t;
+#define USER_VBUS_ADC_FULL_SCALE_V   52.29859719f
+#define USER_VBUS_VOLTS_PER_COUNT    (USER_VBUS_ADC_FULL_SCALE_V / 4096.0f)
 
-float setpoint = 2.0f;
-
-DCL_PI pi = {
-    0.35f,              // Kp
-    0.015f,             // Ki
-    0.0f,               // i10
-    0.80f,              // Umax
-    0.05f,              // Umin
-    1.0f,               // i6
-    0.0f,               // i11
-    0.80f,              // Imax
-    0.05f,              // Imin
-    NULL_ADDR,          // sps
-    NULL_ADDR           // css
-};
-
-const float gain[4] = {1.0f, 0.75f, 0.50f, 0.25f};
-float offset[3] = {0.10f, -0.05f, 0.025f};
 uint32_t setup_count;
-float last_error;
-float last_output;
 uint32_t control_ticks;
-user_trace_t trace;
-
-static float user_filter(float input)
-{
-    static float history;
-    history += 0.125f * (input - history);
-    return history;
-}
+uint16_t adc_va_raw;
+uint16_t adc_vb_raw;
+uint16_t adc_vc_raw;
+uint16_t adc_vbus_raw;
+float vbus_V;
+uint16_t adc_ia_raw;
+uint16_t adc_ib_raw;
+uint16_t adc_ic_raw;
+uint16_t enc_raw;
+uint16_t enc_status;
+float enc_angle;
+uint32_t enc_seq;
+uint16_t enc_ok;
 
 void setup(void)
 {
@@ -50,22 +33,27 @@ void setup(void)
 
 void control(void)
 {
-    float duty;
-    float feedback = user_filter(v2k_io.in.vsense + offset[0]);
+    wire_as5600_sample_t encoder;
 
-    last_error = setpoint - feedback;
-    duty = DCL_runPI_C2(&pi,
-                        setpoint,
-                        feedback * gain[0]);
+    // EPWM1 SOCA has completed this seven-channel frame before ISR entry.
+    adc_va_raw = ADC_readResult(myADC0_RESULT_BASE, myADC0_SOC0);
+    adc_vb_raw = ADC_readResult(myADC0_RESULT_BASE, myADC0_SOC1);
+    adc_vc_raw = ADC_readResult(myADC1_RESULT_BASE, myADC1_SOC0);
+    adc_vbus_raw = ADC_readResult(myADC0_RESULT_BASE, myADC0_SOC3);
+    // BOOSTXL-DRV8323RS VBUS divider with the LaunchPad's external 3.0 V VREF.
+    vbus_V = (float)adc_vbus_raw * USER_VBUS_VOLTS_PER_COUNT;
+    adc_ia_raw = ADC_readResult(myADC1_RESULT_BASE, myADC1_SOC1);
+    adc_ib_raw = ADC_readResult(myADC0_RESULT_BASE, myADC0_SOC2);
+    adc_ic_raw = ADC_readResult(myADC2_RESULT_BASE, myADC2_SOC0);
 
-    v2k_io.out.duty_a = duty;
-    last_output = duty;
+    enc_ok = wire_as5600_get_latest(&encoder);
+    enc_raw = encoder.raw_angle;
+    enc_status = encoder.status;
+    enc_angle = encoder.angle_rad;
+    enc_seq = encoder.sequence;
+
+    v2k_io.out.duty_a = V2K_DUTY_NEUTRAL;
+    v2k_io.out.duty_b = V2K_DUTY_NEUTRAL;
+    v2k_io.out.duty_c = V2K_DUTY_NEUTRAL;
     control_ticks++;
-    trace.err[trace.idx] = last_error;
-    trace.idx++;
-    if (trace.idx >= 3u)
-    {
-        trace.idx = 0u;
-    }
-    user_secondary_step();
 }
