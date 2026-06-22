@@ -1,0 +1,15 @@
+# Normalize line endings repo-wide so Mac/Windows checkouts agree.
+# Stored as LF in the repo and checked out as LF (no CRLF phantom diffs).
+* text=auto eol=lf
+
+# Binary assets: never apply EOL conversion.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.out  binary
+*.bin  binary
+*.hex  binary
+*.elf  binary
