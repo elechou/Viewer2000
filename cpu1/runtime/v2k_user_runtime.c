@@ -30,6 +30,13 @@ volatile uint16_t g_v2k_user_reset_active;
 volatile uint32_t g_v2k_user_crc_expected;
 volatile uint32_t g_v2k_user_crc_actual;
 
+static void v2k_user_set_neutral_output(void)
+{
+    v2k_io.out.duty_a = V2K_DUTY_NEUTRAL;
+    v2k_io.out.duty_b = V2K_DUTY_NEUTRAL;
+    v2k_io.out.duty_c = V2K_DUTY_NEUTRAL;
+}
+
 #pragma WEAK(setup)
 void setup(void)
 {
@@ -191,7 +198,7 @@ void v2k_user_runtime_init(void)
 {
     g_v2k_app_enabled = 0u;
     g_v2k_user_reset_active = 1u;
-    v2k_io.out.duty_a = V2K_DUTY_A_SAFE;
+    v2k_user_set_neutral_output();
     (void)v2k_user_restore(0u);
     g_v2k_user_reset_active = 0u;
 }
@@ -200,7 +207,7 @@ uint16_t v2k_user_prepare_start(void)
 {
     g_v2k_app_enabled = 0u;
     g_v2k_user_reset_active = 1u;
-    v2k_io.out.duty_a = V2K_DUTY_A_SAFE;
+    v2k_user_set_neutral_output();
 
     if (v2k_user_restore(1u) == 0u)
     {
@@ -209,7 +216,7 @@ uint16_t v2k_user_prepare_start(void)
     }
 
     setup();
-    v2k_io.out.duty_a = V2K_DUTY_A_SAFE;
+    v2k_user_set_neutral_output();
     g_v2k_user_reset_active = 0u;
     g_v2k_app_enabled = 1u;
     return 1u;
@@ -218,7 +225,7 @@ uint16_t v2k_user_prepare_start(void)
 void v2k_user_disable(void)
 {
     g_v2k_app_enabled = 0u;
-    v2k_io.out.duty_a = V2K_DUTY_A_SAFE;
+    v2k_user_set_neutral_output();
 }
 
 uint16_t v2k_user_is_enabled(void)

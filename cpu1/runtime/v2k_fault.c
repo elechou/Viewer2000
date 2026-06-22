@@ -11,6 +11,17 @@ volatile uint16_t g_v2k_fault_code = V2K_FAULT_NONE;
 volatile uint32_t g_v2k_tz_int_cnt;
 
 static uint32_t s_cmd_handled;   // cmd_seq already accepted
+static uint32_t s_start_seq;
+static uint16_t s_start_pending;
+
+static void v2k_fault_latch(uint16_t fault_code)
+{
+    v2k_user_disable();
+    g_v2k_sm_state = V2K_STATE_FAULT;
+    g_v2k_fault_code = fault_code;
+    wire_fault_defer_driver_shutdown();
+    wire_fault_disable_irq();
+}
 
 //-----------------------------------------------------------------------------
 // TZ interrupt (OST source only; the EPWM-level TZEINT.OST tracks the PIE-level
@@ -37,10 +48,11 @@ static uint32_t s_cmd_handled;   // cmd_seq already accepted
 static __interrupt void v2k_tz_isr(void)
 {
     g_v2k_tz_int_cnt++;
-    v2k_user_disable();
-    g_v2k_sm_state   = V2K_STATE_FAULT;
-    g_v2k_fault_code = V2K_FAULT_TZ1_EXT;     // Phase 2's only interrupt trip source is TZ1
-    wire_fault_disable_irq();
+    v2k_fault_latch((wire_fault_trip_is_current() != 0u) ?
+                    V2K_FAULT_OVERCURRENT : V2K_FAULT_TZ1_EXT);
+    // Hardware TZ has already forced all PWM inputs low. Preserve DRV SPI
+    // diagnostics and defer the bounded status read + ENABLE-low transition to
+    // the foreground instead of extending the control-critical ISR.
     wire_fault_ack_isr();
 }
 
@@ -54,11 +66,11 @@ void v2k_fault_arm(void)
     // comes on only at Board_init→SYSCTL_init. Writing TZFRC directly with no
     // clock makes the write get dropped and OST not latch — exactly the root
     // cause of "outputs waveform at power-on, IDLE is a no-op" (confirmed on
-    // hardware 2026-06-13). So we must explicitly enable EPWM1's clock here, wait
-    // a few cycles for it to take effect, then force OST. At this point TZCTL is
-    // still at its reset value (Hi-Z) and TZSEL is unconfigured, so this pass only
-    // aims to "gate as early as possible"; the authoritative latch — with the
-    // force-low action and via TZSEL — is completed in v2k_fault_init plus a
+    // hardware 2026-06-13). So we must explicitly enable the motor ePWM clocks
+    // here, wait a few cycles for them to take effect, then force OST on all
+    // phases. At this point TZCTL is still at its reset value (Hi-Z) and TZSEL is
+    // unconfigured, so this pass only aims to "gate as early as possible"; the
+    // authoritative latch — with the force-low action and via TZSEL — is completed in v2k_fault_init plus a
     // read-back assertion.
     //
     wire_fault_pre_board_lock_outputs();
@@ -68,9 +80,9 @@ void v2k_fault_init(void)
 {
     //
     // Authoritative lockout point (protection-first, second line, guaranteed to
-    // take): Board_init has now landed — EPWM1's clock is on, TZSEL=OSHT1,
-    // TZA/TZB=force-low are all configured — so forcing OST here is certain to
-    // latch and take effect as force-low. The arm() pass was a best-effort "gate
+    // take): Board_init has now landed — all motor ePWM clocks are on,
+    // TZSEL=OSHT1, TZA/TZB=force-low are all configured — so forcing OST here is
+    // certain to latch and take effect as force-low. The arm() pass was a best-effort "gate
     // as early as possible"; this pass is the guarantee (independent of whether
     // arm() caught the clock in time).
     //
@@ -122,10 +134,74 @@ void v2k_fault_poll(volatile v2k_cpu1_status_t *st)
     const volatile v2k_cmd_req_t *req = &V2K_MSG_2TO1_RO->cmd_req;
     uint32_t seq = req->cmd_seq;
 
-    if (seq != s_cmd_handled)
+    if (s_start_pending != 0u)
+    {
+        uint16_t start_result = wire_powerstage_start_poll();
+
+        if (start_result == WIRE_START_FAILED)
+        {
+            v2k_user_disable();
+            wire_apply(&v2k_io.out);
+            s_start_pending = 0u;
+            s_cmd_handled = s_start_seq;
+            st->ack_seq = s_start_seq;
+            st->cmd_result = V2K_CMDR_NOT_READY;
+        }
+        else if (start_result == WIRE_START_READY)
+        {
+            uint16_t result = V2K_CMDR_OK;
+
+            if (v2k_user_prepare_start() == 0u)
+            {
+                wire_powerstage_cancel_start();
+                result = V2K_CMDR_START_FAILED;
+            }
+            else
+            {
+                uint16_t release_ok;
+
+                wire_apply(&v2k_io.out);
+                // The driver is awake and nFAULT is released in powered mode;
+                // dry-run mode intentionally leaves the driver disabled. Clear
+                // wake-time TZ flags only now, then release the MCU PWM pins.
+                wire_fault_clear_interrupt_flag();
+                g_v2k_fault_code = V2K_FAULT_NONE;
+                g_v2k_sm_state = V2K_STATE_RUNNING;
+                release_ok = wire_fault_release_output_lock();
+                if (release_ok != 0u)
+                {
+                    wire_fault_enable_irq();
+                }
+
+                // Close the interval between arming the current trip and
+                // enabling its interrupt. Hardware remains the shutdown
+                // authority; this check makes a pre-interrupt latch visible
+                // to the state machine instead of acknowledging START as OK.
+                if ((release_ok == 0u) ||
+                    (wire_fault_output_is_locked() != 0u) ||
+                    (wire_fault_trip_is_current() != 0u))
+                {
+                    uint16_t fault_code =
+                        (wire_fault_trip_is_current() != 0u) ?
+                        V2K_FAULT_OVERCURRENT : V2K_FAULT_TZ1_EXT;
+
+                    v2k_fault_latch(fault_code);
+                    result = V2K_CMDR_START_FAILED;
+                }
+            }
+
+            s_start_pending = 0u;
+            s_cmd_handled = s_start_seq;
+            st->ack_seq = s_start_seq;
+            st->cmd_result = result;
+        }
+    }
+
+    if ((s_start_pending == 0u) && (seq != s_cmd_handled))
     {
         uint16_t code   = req->cmd_code;
         uint16_t result = V2K_CMDR_OK;
+        uint16_t complete = 1u;
 
         switch (code)
         {
@@ -135,39 +211,10 @@ void v2k_fault_poll(volatile v2k_cpu1_status_t *st)
             case V2K_CMD_APP_START:
                 if (g_v2k_sm_state == V2K_STATE_IDLE)
                 {
-                    if (v2k_user_prepare_start() == 0u)
-                    {
-                        result = V2K_CMDR_BAD_STATE;
-                        break;
-                    }
-                    wire_apply(&v2k_io.out);
-                    // Release + arm the TZ interrupt. The ordering fixes two
-                    // Phase 2 debug root causes:
-                    //   ① clear OST to release the output + clear INT first;
-                    //   ② set state to RUNNING before enabling the interrupt — if
-                    //      the trip source is still present (GPIO3 low), enabling
-                    //      TZEINT.OST/PIE synchronously enters the ISR and re-
-                    //      enters FAULT, and FAULT is safe from being overwritten
-                    //      only if written after RUNNING. The old code wrote
-                    //      RUNNING after enable, clobbering the FAULT the ISR had
-                    //      just set → a START with a live trip could never reach
-                    //      FAULT (a spurious trip was likewise clobbered into a
-                    //      stuck RUNNING);
-                    //   ③ clear OST before enabling TZEINT.OST: with no trip
-                    //      source, after clearing OST there is no assertion and
-                    //      PIEIFR is clean → enabling PIE will not spuriously fire.
-                    // Outcome: with a trip → the ISR has already set state to
-                    // FAULT; without a trip → it stays RUNNING. Both are correct,
-                    // and no further check is needed after enable.
-                    wire_fault_release_output_lock();
-                    // Defensive fault-code clear: a normal IDLE must be NONE, but
-                    // an APP_STOP race may leave a stale TZ1_EXT (see the note
-                    // there). Clear it before enabling the interrupt — if a real
-                    // trip then pre-empts into the ISR, it resets the code to this
-                    // run's value and is not clobbered by this clear.
-                    g_v2k_fault_code = V2K_FAULT_NONE;
-                    g_v2k_sm_state = V2K_STATE_RUNNING;
-                    wire_fault_enable_irq();
+                    wire_powerstage_start_begin();
+                    s_start_seq = seq;
+                    s_start_pending = 1u;
+                    complete = 0u;
                 }
                 else { result = V2K_CMDR_BAD_STATE; }
                 break;
@@ -208,7 +255,7 @@ void v2k_fault_poll(volatile v2k_cpu1_status_t *st)
                     // Leave the OST latch alone (IDLE gates the output just the
                     // same); the PIE-level TZ interrupt stays disabled (the ISR
                     // disabled it). Only adjudicate whether the trip source is
-                    // gone: source still present (GPIO3 still low) → keep FAULT
+                    // gone: source still present (DRV nFAULT/GPIO82 still low) → keep FAULT
                     // (accepted but not released).
                     if (wire_fault_source_is_released() != 0u)
                     {
@@ -225,9 +272,12 @@ void v2k_fault_poll(volatile v2k_cpu1_status_t *st)
                 break;
         }
 
-        s_cmd_handled  = seq;
-        st->ack_seq    = seq;
-        st->cmd_result = result;
+        if (complete != 0u)
+        {
+            s_cmd_handled  = seq;
+            st->ack_seq    = seq;
+            st->cmd_result = result;
+        }
     }
 
     st->sys_state  = g_v2k_sm_state;

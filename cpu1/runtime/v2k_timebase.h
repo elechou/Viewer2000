@@ -1,9 +1,9 @@
 //=============================================================================
-// v2k_timebase.h — Phase 2 time-base proof: ePWM1 → ADC SOC → EOC ISR (CPU1 only)
+// v2k_timebase.h — control time-base proof: ePWM sync group -> ADC SOC -> EOC ISR (CPU1 only)
 //
 // Division of labor (boundary with SysConfig):
-//   SysConfig owns the static hardware — ePWM1 waveform/dead-band/SOC/TZ, ADCA,
-//   DACA, pin mux — and the engine checks conflicts and errata (config checklist
+//   SysConfig owns the static hardware — motor ePWM waveform/dead-band/SOC/TZ,
+//   ADC, GPIO, I2C/SPI pin mux — and the engine checks conflicts and errata (config checklist
 //   in docs/phase2-bringup.md §1).
 //   This module owns only the runtime — ISR body and registration, duty (a
 //   runtime quantity), EPWMCLKDIV (the clock domain belongs to device.c / the C

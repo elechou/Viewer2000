@@ -1,19 +1,18 @@
 //=============================================================================
-// v2k_fault.h — Phase 2 protection: fault-latch state machine (CPU1 only)
+// v2k_fault.h — protection fault-latch state machine (CPU1 only)
 //
 // Protection is a pure-hardware chain (basic rule 2): trip source → TZ → PWM
 // shutoff, through no CPU at all; the software part of this module does only the
 // "after the fact" work — latch state, report fault_code, accept commands.
-// The TZ static config (source select / action / X-BAR / pins) lives in syscfg,
-// reconciled by v2k_tb_check.
+// The TZ static config (action/pins) starts in SysConfig; the selected GPIO to
+// INPUT X-BAR binding and all read-back reconciliation live in wire_f28p65x.c.
 //
-// Phase 2 trip sources (power stage not yet fitted; the CMPSS analog source is
-// deferred until the current-sense pins are finalized):
-//   TZ1  ← INPUT X-BAR INPUT1 ← GPIO3 (J8 header pin 79, pulled up): jumper to ground = external trip
+// Phase 5.0 trip sources:
+//   TZ1  ← INPUT X-BAR INPUT1 ← DRV nFAULT on GPIO82: active-low gate-driver trip
 //   TZ6  ← emulation stop (CBC): forces the output low while the debugger halts, auto-restored on resume
 //   software ← EPWM_forceTripZoneEvent(OST): reused by the STOP command and the initial lockout
-// Switching to CMPSS / DRV8323 nFAULT only touches the syscfg TZ source select +
-// the self-check reconciliation bits; the logic is unchanged.
+// CMPSS current-threshold trips are a Phase 5.0 hardware-verification item once
+// the final current-sense pins and thresholds are measured.
 //
 // State machine (sys_state, value range = contract V2K_STATE_*, reaches MSGRAM via v2k_fault_poll):
 //   IDLE/FAULT both have outputs locked off by a one-shot TZ latch (OST); they

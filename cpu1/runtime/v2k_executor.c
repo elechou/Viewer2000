@@ -89,7 +89,7 @@ __interrupt void v2k_executor_isr(void)
     cycle_start = wire_cycle_count();
     latency = wire_pwm_counter();
 
-    wire_acquire(&v2k_io.in);
+    v2k_io.in.tick = g_v2k_tick;
     v2k_io.in.sys_state = g_v2k_sm_state;
     v2k_io.in.fault_code = g_v2k_fault_code;
     v2k_io.in.due_mask = v2k_schedule(&param_due);

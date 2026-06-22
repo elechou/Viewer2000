@@ -31,6 +31,7 @@
 #include "v2k_registry.h"
 #include "v2k_scope_runtime.h"
 #include "v2k_user_runtime.h"
+#include "../wire/wire.h"
 
 extern void SetDBGIER(uint16_t dbgier);
 
@@ -155,7 +156,7 @@ void main(void)
     // device.c does; the syscfg-generated version depends on config) — always
     // disable it explicitly first; then pre-emptively latch OST — so throughout
     // the following Board_init landing of the syscfg config
-    // (EPWM1/ADCA/DACA/X-BAR/probe and trip pins), PWM can never reach the pins.
+    // (motor ePWM/ADC/X-BAR/probe and trip pins), PWM can never reach the pins.
     //
     SysCtl_disablePeripheral(SYSCTL_PERIPH_CLK_TBCLKSYNC);
     v2k_fault_arm();
@@ -164,7 +165,7 @@ void main(void)
     // GPIO: pad config (incl. LED_CPU2's Core Select→CPU2) is done by the
     // sysconfig-generated Board_init; here we set CSEL once more explicitly as a
     // backstop (setting it again is harmless). From Phase 2 on Board_init also
-    // lands EPWM1/ADCA/DACA/INPUTXBAR/GPIO2/3.
+    // lands the motor ePWM/ADC/GPIO/I2C/SPI configuration.
     //
     Device_initGPIO();
     Board_init();
@@ -244,6 +245,7 @@ void main(void)
             v2k_param_read_service();
             v2k_profile_service();
             v2k_profile_publish_status(&g_v2k_msg_1to2.cpu1_status);
+            wire_background_service();
             v2k_scope_service();
             v2k_scope_apply_ready();
             v2k_scope_ccs_view_service();

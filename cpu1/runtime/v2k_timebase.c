@@ -1,11 +1,11 @@
 //=============================================================================
 // v2k_timebase.c — Phase 2 time-base proof (runtime part)
 //
-// Signal chain (static config in syscfg): ePWM1 (up-down, FREE_SOFT=free-run) →
-// SOCA @ CTR=ZERO → ADCA SOC0 samples ADCINA0 → EOC1 → INT_ADCA1 into
-// v2k_tb_isr. ADCINA0 shares a pin with the DACA output (BP1 header pin 30), and
-// DACA sits at mid-scale (syscfg sets 2048), giving the data path a zero-wiring
-// deterministic sanity value.
+// Signal chain (static config in SysConfig, reconciled in wire_f28p65x.c):
+// ePWM1 (up-down, FREE_SOFT=free-run, master sync) -> SOCA @ CTR=ZERO -> all
+// selected ADC SOCs -> ADCA EOC3 -> INT_ADCA1 into v2k_tb_isr. Phase 5.0 uses
+// ePWM1/ePWM2/ePWM8 as the three motor PWM modules, with ePWM1 kept as the
+// master time base and ADC trigger source.
 //
 // FREE_SOFT decision (AGENTS.md "C2000-specific traps", first item) = FREE_RUN,
 // with three layers of meaning. "Phase" below means TBCTR's position within the
