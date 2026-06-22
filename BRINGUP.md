@@ -401,3 +401,159 @@ FLASH/20 kHz):
 | VCP close/reopen | Close the serial file descriptor for 500 ms while RUNNING, reopen, send HELLO/STATUS, then STOP | official hash returns; state remains RUNNING; CPU1 tick advances 16,800 while disconnected; STOP returns IDLE/fault 0 | Link loss is isolated and the protocol connection recovers without restarting CPU1 |
 | CPU2-halt isolation and recovery qualification | Execute all 100 lifecycle cycles with CPU2 halted; later cold boot restores both cores and VCP. A separate CCS attach/continue experiment confirms that attaching CPU2 after standalone boot restarts its one-shot IPC debug context and is therefore not a valid transparent-resume method | CPU1 completes the lifecycle and keeps advancing with CPU2 unavailable; subsequent deployment cold boot restores HELLO/ENUM. Late CCS attach does not recover VCP until a physical reset | CPU1 non-blocking behavior passes. Recovery acceptance is by deployment cold boot; debugger late-attach behavior is recorded as a tooling constraint, not misreported as transparent CPU2 resume |
 | Final deployment cold boot | Terminate CCS, physically power-cycle with S3 in Flash boot, then perform a read-only HELLO/STATUS/full ENUM over VCP | A hash `0x521C2BA6`, wire 6, contract 12, 57 descriptors / 30 USER / no `flash_probe`, 20 kHz; IDLE, fault 0, flags 0, CPU1/CPU2 heartbeats 31,460/30,933 and advancing; coherent profiler seq 31, budget 10000, avg 1655, peak 1748, scope 118, ADC/EOC latency 268, violations 0, overflow 0 | Official A is the final deployed image and the board is left cold-booted in IDLE |
+
+---
+
+## Phase 5.0 - Power-stage interface bring-up
+
+Hardware verification record (LAUNCHXL-F28P65X, FLASH/20 kHz, 2026-06-21 to 2026-06-22):
+
+| Item | Method | Measured | Conclusion |
+|---|---|---|---|
+| Standalone dry-run boot | LaunchPad only; BOOSTXL-DRV8323RS, motor, and VM disconnected; S3 Flash boot; cold power cycle; raw XDS110 VCP HELLO/STATUS | Wire 6, contract 13, build hash `0x9DC6696F`, 55 descriptors, project `cpu1`, 20 kHz; CPU1/CPU2 heartbeats advance; initial state IDLE, fault 0 | Both Flash images boot autonomously and the SCI link is live before power-stage hardware is attached |
+| Three-phase MCU PWM dry run | Send APP_START over VCP in checked-in DRY_RUN mode; scope all six Site 2 PWM pins | RUNNING, fault 0. Phase A/B/C high- and low-side outputs each measure approximately 48% duty with 1 us dead time; all three phases change edges together | The EPWM2/EPWM1/EPWM8 synchronization, complementary outputs, and dead-band configuration pass with the gate driver and VM absent |
+| Dry-run shutdown | Send APP_STOP over VCP and read STATUS | State returns to IDLE, fault 0 | MCU PWM dry run ends through the normal command path before BoosterPack installation |
+| Unpowered BoosterPack insertion | Power down, install BOOSTXL-DRV8323RS on Site 2 with J5 and VM disconnected, cold boot from USB, read HELLO/STATUS, and probe control pins | SCI link remains live; state IDLE, fault 0; ENABLE=0 V; nFAULT/GPIO82=3.325 V; J5 disconnected | BoosterPack insertion does not disturb standalone boot or the protected IDLE state; the unpowered nFAULT pull-up is released |
+| Isolated Booster-powered cold boot | Remove both JP1 shunts; install JP8 3.3-V shunt; leave JP8 5-V open; remove J16 and install J17. Power the XDS side from USB and the MCU/BoosterPack side from J1 at a 12-V/0.25-A limit; J5 disconnected; query through the isolated XDS110 VCP | VM=11.94 V, steady input current=0.147 A, ENABLE=0 V, nFAULT=3.274 V, no abnormal heating or odor. HELLO succeeds on `/dev/cu.usbmodemCL6500011`; STATUS reports IDLE, fault 0, flags 0, and an advancing control tick | BOOSTXL buck powers the F28P65x hot side while both JP1 power/ground shunts keep the PC/XDS side isolated; the reinforced-isolator VCP remains usable |
+| First vendored-driver `DRV_DIAG` | With VM current-limited and J5/motor disconnected, send the binary Wire 6 `V2K_CMD_DRV_DIAG` over the XDS110 VCP, wait for the matching command acknowledgement, then read all DRV diagnostics through ENUM/CAL_READ | Build `0x3CF8970D`, IDLE/fault 0 before and after; command accepted as sequence 1 but completed `NOT_READY`, `start_block=0x0008`, `drv_diag_result=FAILED`. Status registers remained zero and `drv_spi_errors=0`. Control read-back stayed at reset `{0x000,0x3FF,0x7FF,0x159,0x283}` while the requested image was `{0x080,0x3FF,0x7FF,0x15E,0x243}` | SPI mode, CS, and read transactions are valid, but writes were not latched. Code review found upstream `DRV8323_writeSPI()` releases CS after a fixed NOP loop rather than transfer completion; at 400 kHz that can truncate the frame. The vendored driver now waits for and drains the RX word with a bounded timeout. Rebuild/flash and rerun remain pending |
+| Patched vendored-driver `DRV_DIAG` pass | Rebuild and flash the bounded write-completion patch, cold boot under the same current-limited VM and disconnected J5/motor conditions, then repeat CMD/STATUS/ENUM/CAL_READ over the XDS110 VCP | Build `0x28159EDB`; initial and final state IDLE/fault 0/flags 0. Command sequence 1 completed `OK`; `drv_diag_result=PASSED`, `start_block=0`, `drv_cfg_valid=1`, `drv_spi_errors=0`, and both status registers were zero. Requested/read-back images matched exactly: `{CTRL2=0x080, CTRL3=0x3FF, CTRL4=0x7FF, CTRL5=0x15E, CTRL6=0x243}` | The vendored TI driver, Viewer2000 SPI adapter, 400-kHz SPI mode, bounded transfer completion, register writes, register reads, and safe IDLE-only diagnostic lifecycle pass on hardware. The VCP was closed after the test |
+| External nFAULT-low trip polarity and recovery | In checked-in DRY_RUN mode with current-limited VM and J5/motor disconnected, send APP_START, then hold Site 2 nFAULT/GPIO82 to the hot-side BoosterPack ground. While held low, read STATUS/CAL and issue CLEAR_FAULT; release the short, issue CLEAR_FAULT again, then run a START/STOP regression | START sequence 2 reached RUNNING. Pulling nFAULT low produced `state=FAULT`, `fault_code=1`, and `tz_trip_cnt=1`. With the source held low, CLEAR sequence 3 completed but correctly remained FAULT and the trip count did not repeat. After release, CLEAR sequence 4 returned IDLE/fault 0; START sequence 5 reached RUNNING and STOP sequence 6 returned IDLE without a stale re-trip. Final DRV status registers and SPI error count remained zero | The physical nFAULT active-low polarity, GPIO82/INPUT X-BAR/TZ1 route, fault latch, source-present clear interlock, and post-release recovery pass. Boot-time read-back already verifies TZ1 selection and force-low action on all three ePWMs. An oscilloscope capture of the nFAULT edge against all six PWM pins is still required for physical shutdown-latency evidence. The board was left in IDLE and the VCP was closed |
+| VBUS ADC route and scale | Keep the firmware in DRY_RUN with J5/motor disconnected. At each supply point, enter RUNNING only for 64 Wire 6 CAL_READ samples of all seven baked ADC raw variables, then STOP. Compare `adc_vbus_raw` against a DMM across VM and hot-side ground using TI's external-reference BOOSTXL-DRV8323RS full scale of 52.29859719 V | At DMM 11.94 V: mean 935.516 counts, range 934-937, nominal conversion 11.9449 V. At DMM 9.95 V: mean 778.938 counts, range 777-780, nominal conversion 9.9456 V. Both errors are below 5 mV, inside the DMM's 0.01 V resolution. `isr_overflow=0` at both points. Other disconnected analog routes remained near zero except phase-voltage A at 77.1/58.1 counts. Each acquisition ended in IDLE | The physical VM divider route to A5/ADCA SOC3, EPWM1-SOCA sampling, baked `adc_vbus_raw` path, and TI nominal zero-offset scale pass at two hardware points. The Phase 5.0 user example now publishes `vbus_V = adc_vbus_raw * 52.29859719 / 4096`. The board was left at approximately 9.95 V in IDLE and the VCP was closed |
+| Post-flash `vbus_V` runtime verification | Flash the rebuilt CPU1 image, cold boot at nominal 12 V, enumerate the new descriptor, and repeat the 64-sample dry-run acquisition with a 250 ms settling interval | Target build changed to `0xE280E663`, descriptor count 72, and `vbus_V` enumerated as F32. Settled mean was 935.516 counts and 11.9449 V; the published `vbus_V` mean was 11.945 V. `isr_overflow=0`. The unfiltered per-tick VBUS signal showed occasional 14-count peak-to-peak excursions in the polled sample set | The flashed physical conversion and descriptor baking pass. The platform preserves the real per-tick value; application-level voltage-loop filtering remains user-owned. Switching-noise characterization remains a school-equipment analog measurement. The board was left in IDLE and the VCP was closed |
+| First AS5600 hot-plug test | Boot build `0xE280E663` without the AS5600 attached, connect it after boot on Site 1 GPIO105/SCL and GPIO104/SDA, enter dry-run RUNNING, and poll the baked encoder variables 96 times after a 500 ms settling interval | `enc_ok=0`, `enc_raw=0`, `enc_status=0`, and `enc_seq=0` throughout; ISR overflow remained zero and STOP returned IDLE | No complete I2C status+angle transaction was published after hot-plug. Foreground service invocation, pinmux, 400-kHz configuration, and CPU1 ownership were present. Code review also found SysConfig FIFO enabled while the state machine polled the non-FIFO `RX_DATA_RDY` flag; TI FIFO polling examples instead use `I2C_getRxFIFOStatus()`. The 1-2 byte driver was changed to non-FIFO mode and gained platform error/sequence/status descriptors. This mismatch was real but not yet proven to be the only failure cause |
+| Boot-connected AS5600 non-FIFO wiring-fault retest | Attach and power the AS5600 before boot, flash build `0x0EE49558`, cold boot, and repeat the 96-sample static test using the new platform diagnostics | Target enumerated 75 descriptors. `enc_ok=0`, all encoder values and both user/platform publication sequences remained zero. `as5600_errors` increased from 44,295 to 44,960 during the poll; ISR overflow remained zero and STOP returned IDLE. The physical wiring was subsequently found to have SCL and SDA reversed | The non-FIFO foreground driver continuously attempted and recovered without blocking the control ISR. This run is retained as wiring-fault diagnostic evidence, not a sensor or driver failure: zero publication sequence plus a rapidly increasing error counter correctly distinguished a bus-level failure |
+| Corrected-wiring AS5600 static pass | Correct SCL to Site 1 pin 9/GPIO105 and SDA to Site 1 pin 10/GPIO104, retain build `0x0EE49558`, then enter dry-run RUNNING and poll 96 cached samples after settling | `enc_ok=1`; `enc_raw=1486..1487`; `enc_angle_rad=2.279495..2.281029`; user sequence and `as5600_seq` advanced monotonically from 199 to 347; `as5600_errors=0`; ISR overflow remained zero; STOP returned IDLE. Raw STATUS was `0x33`; the defined status bits mask to `0x30` (`MD=1`, `ML=1`, `MH=0`) | Corrected wiring restores complete status-plus-angle publications. The I2C state machine, coherent cache, raw-angle register pair, radians conversion, sequence publication, error recovery, and ISR non-blocking boundary pass statically. The AS5600 detects the magnet but reports it too weak, so magnet spacing/centering and a full-turn wraparound test remain pending. The VCP was closed after the test |
+| AS5600 full-turn and wraparound pass | With the fixed encoder structure adjusted to its best available alignment, retain build `0x0EE49558`, enter dry-run RUNNING, and rotate continuously during a 15-second cached-sample acquisition | 401 host polls covered raw counts 3..4077 with two wrap events; circular travel was 9,224 counts and net travel 9,054 counts (about 2.2 turns). `enc_ok=1` throughout; publication sequence advanced monotonically by 1,664; radians conversion maximum error was 0.000000389 rad; `as5600_errors` delta and ISR overflow were zero. STATUS remained raw `0x33`, defined bits `0x30` (`MD=1`, `ML=1`, `MH=0`) for all samples | Full-turn coverage, both sides of the 0/4095 boundary, angle conversion, coherent publication, sequence progress, bus reliability, and ISR isolation pass. The fixed mechanical structure still reports a weak magnet field, but it produced no invalid or dropped samples during this test; record ML as a hardware-margin limitation for later mechanical revision rather than a Phase 5.0 software blocker. STOP returned IDLE and the VCP was closed |
+| AS5600 runtime disconnect and recovery | Without rebooting build `0x0EE49558`, enter dry-run RUNNING, disconnect only SDA/GPIO104, reconnect it, then perform a fresh 96-sample cached read | The timing window captured `enc_ok` changing to zero and `as5600_errors` increasing by 2,068 while SDA was absent. Reconnection occurred after that acquisition window, so a second test was run immediately without target reset: `enc_ok=1` throughout, raw angle 2701, user/platform sequence advanced 51,863 to 52,011, accumulated `as5600_errors` remained stable at 3,635, and ISR overflow remained zero | Bus failure invalidates health and drives the diagnostic counter without blocking the ISR. After the physical bus is restored, the foreground state machine recovers and resumes complete publications without firmware reset or an explicit recovery command. The final STOP returned IDLE and the VCP was closed |
+| Independent current low-route trips | Cold boot build `0x741FE67E` in DRY_RUN with VM current-limited and J5/motor disconnected. For each source, START, issue `CURRENT_DIAG` with arg0 1/2/3 to select only A-low CMPSS7, B-low CMPSS8, or C-low ADCC PPB1 in XBAR TRIP7, then require FAULT and CLEAR back to IDLE | All three trials latched `fault_code=2`; `tz_trip_cnt` advanced exactly 0→1→2→3. `curr_diag_src` reported 1/2/3. `curr_trip_last` was `0x000A` for the A/B trials and `0x002A` for C, reflecting all live low comparator statuses even though only the selected mux could trip. After each foreground shutdown, `curr_trip_arm=0` and `curr_trip_cfg=0`, proving the complete five-source XBAR mask was restored. ADC current raws were 0 and ISR overflow remained 0. All three CLEAR commands returned IDLE/fault 0 | The physical A-low CMPSS7, B-low CMPSS8, and C-low PPB1 sources independently propagate through their selected XBAR mux, TRIP7, the ePWM DCA/ISR fault path, foreground disarm, and recovery. Boot read-back covers all three ePWM DCA configurations; physical all-six-output evidence still belongs to the deferred edge-timing capture. High-window injection also remains pending. The target was left IDLE and the VCP was closed |
+
+Software status on 2026-06-22: the DRV8323RS register layer was migrated from
+project-local raw SPI/register code to the vendored TI MotorControl SDK
+`drv8323s` driver, with bounded RX FIFO completion/timeout patches for both
+read and write transactions in the vendored copy.
+The AS5600 foreground service owns a non-blocking I2C state machine. Its
+cached `raw_angle` reads the AS5600 `RAW_ANGLE` register pair. Corrected SCL/SDA
+wiring has passed static publication, recovery, full-turn, and wraparound
+checks, including runtime SDA disconnect/reconnect without a target reset. The
+fixed encoder structure still reports `ML=1`; this is recorded as a mechanical
+magnetic-margin limitation after a zero-error multi-turn test.
+
+The asymmetric three-channel current-protection substrate is now implemented
+in software while the checked-in build remains DRY_RUN. SysConfig routes
+B6 through CMPSS7 high/low, A10 through CMPSS8 high/low, and C5 through ADCC
+PPB1 high/low limits. All five events feed XBAR TRIP7 and asynchronous
+DCAEVT1 one-shot shutdown on ePWM1, ePWM2, and ePWM8. Initial thresholds are
+512/3584 raw counts; they are provisional TI bring-up values, not accepted
+ampere limits. Boot-time read-back checks the CMPSS DACs, XBAR muxes, PPB
+limits/SOC/source, and all three ePWM DCA configurations. Powered START also
+requires in-window current samples and checks for a trip across the OST-release
+boundary. Fault code 2 and `curr_trip_*` diagnostics retain the source.
+CPU1/CPU2 FLASH builds complete with zero errors and 26 host tests pass. The
+first current-protection artifact, build `0xE569365B`, was programmed and
+verified with deployment bank map `0x3C0`, but CPU1 stopped in the new
+current-trip startup assertion. Debugging found a software read-back bug rather
+than a hardware configuration failure: the code correctly selected
+`EPWM_DC_EVENT_INPUT_NOT_SYNCED`, for which DriverLib sets
+`DCACTL.EVT1FRCSYNCSEL=1`, while the read-back predicate incorrectly required
+that bit to be zero. All three ePWMs were therefore falsely rejected.
+
+The corrected artifact is build `0xE44DEF24`. Its predicate requires the
+asynchronous bit to be set. The unconditional ESTOP loop is replaced by the
+enumerated `current_trip_cfg_err` bit mask; any real mismatch keeps DCAEVT1
+disarmed and blocks powered START, while the protected DRY_RUN platform remains
+available for diagnostics. The corrected image still requires programming,
+cold boot, and runtime confirmation that `current_trip_cfg_err=0`. This is not
+current-trip hardware acceptance: no current source was injected and no
+powered approval was enabled.
+
+Cold boot of `0xE44DEF24` reached IDLE and showed that CMPSS, XBAR, and all
+three asynchronous ePWM DCA read-backs passed, but its diagnostic reported
+phase-C PPB error `0x0040`. This was a second read-back bug, not a failed PPB
+configuration: C2000Ware 26.1 `ADC_setPPBTripLimits()` enables the extended low
+limit and writes it to `PPB1TRIPLO2`, while the predicate still inspected the
+legacy low-limit field in `PPB1TRIPLO`. The fixed predicate now checks both
+`PPB1TRIPLO.LIMITLO2EN` and the 24-bit `PPB1TRIPLO2` value. Diagnostic names
+were also shortened to fit the wire descriptor name field without truncation.
+
+Hardware cold-boot verification of final build `0x36029A37` passed over the
+XDS110 VCP: wire 6 / contract 13, 79 descriptors, 20 kHz, IDLE, fault 0, both
+heartbeats and the CPU1 tick advancing, `curr_trip_cfg=0`, `curr_trip_arm=0`,
+`curr_trip_last=0`, thresholds 512/3584, trip count 0, and ISR overflow 0. A
+subsequent DRY_RUN START reached RUNNING with DRV disabled and current trip
+still intentionally disarmed; STOP returned cleanly to IDLE with no fault,
+trip, or overflow. The VCP was closed after both tests. Analog CMPSS/PPB source
+injection remains pending and powered approval remains disabled.
+
+Build `0x741FE67E` adds an explicitly bounded DRY_RUN current-trip diagnostic.
+From RUNNING, command 5 with arg0 1/2/3 temporarily
+selects only A-low CMPSS7, B-low CMPSS8, or C-low ADCC PPB1 in XBAR TRIP7 and
+arms DCAEVT1 while DRV ENABLE remains low. Fault cleanup restores all five
+production muxes. Both FLASH projects build with zero errors and 26 host tests
+pass. Hardware cold boot and all three independent low-route trials passed as
+recorded above.
+
+Build `0xC141DF35` adds a DRY_RUN A/B high-window route diagnostic. The
+disabled current-sense outputs sit at 0 raw counts (measured before this work:
+`adc_ia_raw`, `adc_ib_raw`, and `adc_ic_raw` all 0 with span 0 in DRY_RUN
+RUNNING, while VBUS read 11.95 V), so a high comparator cannot be exercised by
+lowering its threshold against a 0 V signal the way the low routes use the
+naturally-below-512 signal. Command 6 with arg0 4/5 therefore reuses the
+DRV_DIAG envelope: from IDLE it enables the DRV with OST latched and the
+inverter inputs forced low (motor disconnected, VM current-limited), which
+biases the bidirectional CSA outputs near mid-scale, then drops only the
+selected CMPSS7 (A) or CMPSS8 (B) high DAC to 1024 counts so the real high
+comparator asserts. The firmware confirms the CMPSS high filter latch and the
+DCAEVT1 one-shot flag on ePWM1, ePWM2, and ePWM8 before declaring PASS, then
+restores the high DAC to 3584 and the full five-mux XBAR mask and disables the
+DRV back to IDLE. CPU1 FLASH builds with zero errors (CPU2 unchanged); the host
+contract check, 24 boundary/baking unit tests, and the golden-vector check all
+pass. Both routes passed on hardware cold boot: A-high reported
+`drv_diag_result=1`, `curr_trip_last=0x0001`, `curr_diag_src=4`; B-high reported
+`drv_diag_result=1`, `curr_trip_last=0x0004`, `curr_diag_src=5`. Each left
+`curr_trip_cfg=0` and `curr_trip_arm=0` and returned to IDLE with fault 0, and
+`tz_trip_cnt` stayed 0 across both trials because OST remained latched
+throughout. This proves the A/B high comparator -> XBAR TRIP7 -> asynchronous
+DCAEVT1 source route into all three ePWM one-shot latches, independent of the TZ
+interrupt sink the low-route trials already exercised. The VCP was closed after
+the run. This is a route-propagation proof, not an ampere-calibrated threshold:
+the 1024-count injection sits below the zero-current CSA bias rather than being a
+measured current limit, and no powered approval was enabled.
+
+Not yet verified after this migration: energized gate outputs, current
+offset/scaling, an all-six-PWM scope timing/dead-time capture, measured ampere
+limits to replace the provisional 512/3584 raw counts, and an
+nFAULT-edge-to-all-six-PWM shutdown-latency capture.
+The home logic analyzer cannot perform the required edge-triggered acquisition,
+so the digital shutdown-latency capture is deferred with the gate-source,
+switching-node, and analog switching-transient measurements to school
+equipment. The functional physical nFAULT trip and recovery test remains valid.
+
+Phase 5.0 was closed on 2026-06-22 after every verification executable with
+the available bench equipment passed. Commands 4 through 6, their per-source
+trip injection paths, and the dedicated `drv_diag_result`/`curr_diag_src` and
+DRV pre/write-image Variables were temporary acceptance instrumentation and
+were removed from the production interface after preserving the evidence
+above. Production START still performs bounded DRV wake/configure/read-back,
+arms the complete current-protection route only after readiness checks, and
+fails closed before output release. The final catalog retains power-stage
+readiness, DRV status/read-back, current-trip source/configuration, and AS5600
+health Variables; the AS5600 health set is registered once at its slow-rate
+default.
+
+The closure build remains `WIRE_POWERSTAGE_MODE_DRY_RUN` with powered approval
+disabled. Calibrated current limits, gate-source and switching-node waveforms,
+all-six-output shutdown timing, nFAULT-to-PWM latency, and switching-transient
+measurements are mandatory Phase 5 powered-operation gates rather than open
+Phase 5.0 interface work. No new energized-operation claim is made by this
+closure.
+
+Final software verification used the CCS dual-core system project for full RAM
+builds and the CCS project builder for FLASH. CPU1/CPU2 RAM and FLASH all linked
+with zero errors. CPU1 RAM and FLASH both reported `user boundary verified` and
+`user descriptors patched: 15/112, skipped=0`. The Phase 5.0 static data exposed
+an old RAM-linker crowding problem: assertion strings filled RAMLS5 before the
+new platform BSS could be placed. The RAM linker now places `.const` in the
+previously unused RAMLS4 while keeping the writable `.bss`/`.data` ranges
+contiguous in RAMLS5. The 26 host unit tests, golden-vector check, PC C99
+contract compile with `-Werror`, removed-symbol audit, and platform descriptor
+name-uniqueness audit all pass. No firmware was flashed for the cleanup build.
