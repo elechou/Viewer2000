@@ -10,12 +10,9 @@ V2K_BUILD_CONFIG := $(notdir $(CURDIR))
 # before any target that consumes the managed-build object list.
 .PHONY: v2k_codestart_object
 v2k_codestart_object: f28p65x_codestartbranch.obj
-	@if [ -f runtime/f28p65x_codestartbranch.obj ] && \
-		{ [ ! -f ./f28p65x_codestartbranch.obj ] || \
-		  ! cmp -s runtime/f28p65x_codestartbranch.obj ./f28p65x_codestartbranch.obj; }; then \
-		cp runtime/f28p65x_codestartbranch.obj ./f28p65x_codestartbranch.obj; \
-	fi
-	@test -f ./f28p65x_codestartbranch.obj
+	@python3 "$(V2K_USER_BOUNDARY_TOOL)" normalize-codestart \
+		--source runtime/f28p65x_codestartbranch.obj \
+		--output ./f28p65x_codestartbranch.obj
 
 $(V2K_USER_BOUNDARY_CMD): $(OBJS) $(V2K_USER_BOUNDARY_TOOL) $(V2K_USER_BOUNDARY_SPEC) | v2k_codestart_object
 	@python3 "$(V2K_USER_BOUNDARY_TOOL)" generate \

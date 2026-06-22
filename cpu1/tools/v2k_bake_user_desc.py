@@ -102,17 +102,22 @@ def child_text(node: ET.Element, name: str) -> str | None:
 
 def find_ofd() -> Path:
     candidates: list[Path] = []
+    executable_names = ("ofd2000.exe", "ofd2000")
     cg_root = os.environ.get("CG_TOOL_ROOT")
     if cg_root:
-        candidates.append(Path(cg_root) / "bin" / "ofd2000")
-    candidates.extend(
-        sorted(
-            Path("/Applications/ti/ccs2100/ccs/tools/compiler").glob(
-                "ti-cgt-c2000_*/bin/ofd2000"
-            ),
-            reverse=True,
-        )
-    )
+        candidates.extend(Path(cg_root) / "bin" / name for name in executable_names)
+    compiler_roots = [
+        Path("C:/ti/ccs2100/ccs/tools/compiler"),
+        Path("/Applications/ti/ccs2100/ccs/tools/compiler"),
+    ]
+    ccs_install_dir = os.environ.get("CCS_INSTALL_DIR")
+    if ccs_install_dir:
+        compiler_roots.insert(0, Path(ccs_install_dir) / "ccs" / "tools" / "compiler")
+    for compiler_root in compiler_roots:
+        for compiler_dir in sorted(
+            compiler_root.glob("ti-cgt-c2000_*"), reverse=True
+        ):
+            candidates.extend(compiler_dir / "bin" / name for name in executable_names)
     for candidate in candidates:
         if candidate.is_file():
             return candidate
@@ -120,9 +125,10 @@ def find_ofd() -> Path:
 
 
 def run_ofd(elf: Path, ofd: Path) -> tuple[ET.Element, str]:
-    with tempfile.NamedTemporaryFile(suffix=".xml") as output:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        output = Path(temp_dir) / "ofd2000.xml"
         result = subprocess.run(
-            [str(ofd), "--xml", "--dwarf", f"--output={output.name}", str(elf)],
+            [str(ofd), "--xml", "--dwarf", f"--output={output}", str(elf)],
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -131,7 +137,7 @@ def run_ofd(elf: Path, ofd: Path) -> tuple[ET.Element, str]:
             message = result.stderr.decode("utf-8", errors="replace").strip()
             raise BakeError(f"ofd2000 failed for {elf}: {message}")
         try:
-            root = ET.parse(output.name).getroot()
+            root = ET.parse(output).getroot()
         except (OSError, ET.ParseError) as exc:
             raise BakeError(f"invalid ofd2000 DWARF XML for {elf}: {exc}") from exc
     banner = child_text(root, "banner") or "ofd2000"

@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -60,13 +61,21 @@ def child_text(node: ET.Element, name: str) -> str | None:
 def find_ofd() -> Path:
     cg_root = os.environ.get("CG_TOOL_ROOT")
     candidates: list[Path] = []
+    executable_names = ("ofd2000.exe", "ofd2000")
     if cg_root:
-        candidates.append(Path(cg_root) / "bin" / "ofd2000")
-    candidates.extend(
-        Path("/Applications/ti/ccs2100/ccs/tools/compiler").glob(
-            "ti-cgt-c2000_*/bin/ofd2000"
-        )
-    )
+        candidates.extend(Path(cg_root) / "bin" / name for name in executable_names)
+    compiler_roots = [
+        Path("C:/ti/ccs2100/ccs/tools/compiler"),
+        Path("/Applications/ti/ccs2100/ccs/tools/compiler"),
+    ]
+    ccs_install_dir = os.environ.get("CCS_INSTALL_DIR")
+    if ccs_install_dir:
+        compiler_roots.insert(0, Path(ccs_install_dir) / "ccs" / "tools" / "compiler")
+    for compiler_root in compiler_roots:
+        for compiler_dir in sorted(
+            compiler_root.glob("ti-cgt-c2000_*"), reverse=True
+        ):
+            candidates.extend(compiler_dir / "bin" / name for name in executable_names)
     for candidate in candidates:
         if candidate.is_file():
             return candidate
@@ -600,6 +609,19 @@ def command_verify(args: argparse.Namespace) -> None:
     )
 
 
+def command_normalize_codestart(args: argparse.Namespace) -> None:
+    source = args.source
+    output = args.output
+    if source.is_file() and (
+        not output.is_file() or source.read_bytes() != output.read_bytes()
+    ):
+        shutil.copy2(source, output)
+    if not output.is_file():
+        raise BoundaryError(
+            f"code-start object is missing from both {source} and {output}"
+        )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -612,6 +634,11 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument("--output", type=Path, required=True)
     generate.add_argument("--manifest", type=Path, required=True)
     generate.set_defaults(func=command_generate)
+
+    normalize_codestart = subparsers.add_parser("normalize-codestart")
+    normalize_codestart.add_argument("--source", type=Path, required=True)
+    normalize_codestart.add_argument("--output", type=Path, required=True)
+    normalize_codestart.set_defaults(func=command_normalize_codestart)
 
     verify = subparsers.add_parser("verify")
     verify.add_argument("--manifest", type=Path, required=True)

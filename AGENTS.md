@@ -4,11 +4,11 @@
 
 ## CCStudio IDE Installation Directory
 
-CCStudio IDE is installed at `C:/ti/ccs2100` (Windows) or `/Applications/ti/ccs2100` (macOS). Save it as `{ccs-install-dir}` for the session — scripts and tools will need it.
+CCStudio IDE is installed at `C:/ti/ccs2100`. Save it as `{ccs-install-dir}` for the session — scripts and tools will need it.
 
 ## MANDATORY Pre-Task Requirement (DO NOT SKIP)
 
-**CRITICAL - NO EXCEPTIONS**: Before ANY CCS/Texas Instruments-related task (even simple ones), you MUST read the CCS.md bundled with your install — `C:/ti/ccs2100/ccs/theia/resources/ai/CCS.md` (Windows) or `/Applications/ti/ccs2100/ccs/Code Composer Studio.app/Contents/Resources/ai/CCS.md` (macOS). This file includes information on how to interact with CCS as well as device-specific information (UART backchannel pins, LED setup, transmit best practices, etc.). 
+**CRITICAL - NO EXCEPTIONS**: Before ANY CCS/Texas Instruments-related task (even simple ones), you MUST read `C:/ti/ccs2100/ccs/theia/resources/ai/CCS.md`. This file includes information on how to interact with CCS as well as device-specific information (UART backchannel pins, LED setup, transmit best practices, etc.). 
 
 Do NOT call any ccs-project, ccs-debug, ccs-sysconfig, or ccs-serial MCP tools until CCS.md has been read.
 
@@ -40,16 +40,23 @@ before either core is loaded:
 
 Do not program CPU2 while the application is running from Bank3/Bank4. Enter a
 programming state with both C28x cores halted, or halt CPU1 before it executes
-`Device_bootCPU2()`. The repo script `tools/ccs/flash_dual_core_f28p65x.sh`
-sets the bank map explicitly and then loads `cpu1/FLASH/cpu1.out` and
+`Device_bootCPU2()`. The repo Flash tool uses
+`tools/ccs/flash_dual_core_f28p65x.sh` on macOS and
+`tools/ccs/flash_dual_core_f28p65x.cmd` on Windows. Both launchers
+set the bank map explicitly and then load `cpu1/FLASH/cpu1.out` and
 `cpu2/FLASH/cpu2.out`. Terminate any CCS GUI debug session first because the
-XDS110 probe can have only one owner, then run the script from the repo root:
+XDS110 probe can have only one owner, then run the platform launcher from the
+repo root:
 
 ```sh
 tools/ccs/flash_dual_core_f28p65x.sh
 ```
 
-The script is program-only: it disables CCS run-to-main and post-load debug
+```bat
+tools\ccs\flash_dual_core_f28p65x.cmd
+```
+
+The tool is program-only: it disables CCS run-to-main and post-load debug
 breakpoints and connects only CPU1. During programming it temporarily assigns
 Bank0-4 to CPU1, loads both `cpu1.out` and `cpu2.out` through the CPU1 Flash
 Plugin with necessary-sectors-only erase, then restores the deployment map

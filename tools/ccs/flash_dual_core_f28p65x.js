@@ -3,7 +3,8 @@
  *
  * Run through DSS from the repository root, preferably via:
  *
- *   tools/ccs/flash_dual_core_f28p65x.sh
+ *   macOS:  tools/ccs/flash_dual_core_f28p65x.sh
+ *   Windows: tools\ccs\flash_dual_core_f28p65x.cmd
  *
  * The programming transaction uses CPU1 only. It temporarily maps Bank0-4 to
  * CPU1, loads both CPU1 and CPU2 Flash ELFs through the CPU1 Flash Plugin, then
@@ -19,15 +20,17 @@ importPackage(Packages.java.lang);
 function usage() {
     print([
         "Usage:",
-        "  dss.sh tools/ccs/flash_dual_core_f28p65x.js [options]",
+        "  macOS:  tools/ccs/flash_dual_core_f28p65x.sh [options]",
+        "  Windows: tools\\ccs\\flash_dual_core_f28p65x.cmd [options]",
         "",
         "Options:",
         "  --repo DIR       Repository root. Default: current directory.",
         "  --ccxml FILE     Target configuration. Default: cpu1/targetConfigs/TMS320F28P650DK9.ccxml.",
         "  --cpu1 FILE      CPU1 .out. Default: cpu1/FLASH/cpu1.out.",
         "  --cpu2 FILE      CPU2 .out. Default: cpu2/FLASH/cpu2.out.",
-        "  --log FILE       DSS XML trace log. Default: /tmp/viewer2000_flash_dual_core.xml.",
+        "  --log FILE       DSS XML trace log. Default: the OS temporary directory.",
         "  --help           Print this help and exit.",
+        "  CCS_ROOT         Overrides the default CCS installation directory.",
         "",
         "Safety notes:",
         "  - An active CCS GUI debug session will make probe acquisition fail before Flash operations.",
@@ -39,6 +42,19 @@ function usage() {
 
 function fail(message) {
     throw new Error(message);
+}
+
+function writeExitStatus(code) {
+    var path = java.lang.System.getenv("V2K_FLASH_STATUS_FILE");
+    if (path == null || String(path).length == 0) {
+        return;
+    }
+    var writer = new FileWriter(String(path));
+    try {
+        writer.write(String(code));
+    } finally {
+        writer.close();
+    }
 }
 
 function canonical(path) {
@@ -62,12 +78,16 @@ function parseArgs() {
     var cfg = null;
     var cpu1 = null;
     var cpu2 = null;
-    var log = "/tmp/viewer2000_flash_dual_core.xml";
+    var log = canonical(new File(
+        java.lang.System.getProperty("java.io.tmpdir"),
+        "viewer2000_flash_dual_core.xml"
+    ).getPath());
 
     for (var i = 0; i < args.length; ++i) {
         var arg = String(args[i]);
         if (arg == "--help" || arg == "-h") {
             usage();
+            writeExitStatus(0);
             java.lang.System.exit(0);
         } else if (arg == "--repo") {
             if (++i >= args.length) {
@@ -231,14 +251,25 @@ var exitCode = 0;
 
 try {
     var opts = parseArgs();
+    var ccsRoot = java.lang.System.getenv("CCS_ROOT");
+    if (ccsRoot == null || String(ccsRoot).length == 0) {
+        var osName = String(java.lang.System.getProperty("os.name")).toLowerCase();
+        ccsRoot = osName.indexOf("win") >= 0 ? "C:/ti/ccs2100" : "/Applications/ti/ccs2100";
+    }
+    ccsRoot = canonical(String(ccsRoot));
+    var traceStylesheet = join(
+        ccsRoot,
+        "ccs/ccs_base/scripting/examples/DebugServerExamples/DefaultStylesheet.xsl"
+    );
     requireFile(opts.cfg, "Target configuration");
     requireFile(opts.cpu1, "CPU1 output");
     requireFile(opts.cpu2, "CPU2 output");
+    requireFile(traceStylesheet, "DSS trace stylesheet");
 
     env = ScriptingEnvironment.instance();
     env.setScriptTimeout(600000);
     env.traceSetConsoleLevel(TraceLevel.INFO);
-    env.traceBegin(opts.log, "/Applications/ti/ccs2100/ccs/ccs_base/scripting/examples/DebugServerExamples/DefaultStylesheet.xsl");
+    env.traceBegin(opts.log, traceStylesheet);
     env.traceSetFileLevel(TraceLevel.ALL);
 
     log("Viewer2000 CPU1-only dual-image Flash programming");
@@ -328,6 +359,7 @@ try {
     }
 }
 
+writeExitStatus(exitCode);
 if (exitCode != 0) {
     java.lang.System.exit(exitCode);
 }
