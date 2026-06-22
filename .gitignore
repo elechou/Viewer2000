@@ -50,3 +50,10 @@ Desktop.ini
 
 # Scope Reference Project
 V2KScope.reference/
+
+# CCS-generated agent tooling (machine-specific absolute paths; CCS regenerates
+# these locally on each machine, so tracking them churns across Mac/Windows)
+.agents/
+.codex/config.toml
+.claude/skills/ti-ccstudio-clang-code-coverage/
+.codex/skills/ti-ccstudio-clang-code-coverage/
