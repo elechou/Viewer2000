@@ -179,6 +179,23 @@ while CPU2 serialized STATUS; the regular status fields remain valid, but that
 profiler sample is discarded. Runtime cycles are host-derived as
 `load_peak - lat_at_peak - ctrl_at_peak - scope_at_peak`.
 
+System-command codes are append-only for platform commands:
+`0=NOP`, `1=APP_START`, `2=APP_STOP`, and `3=CLEAR_FAULT`.
+
+System-command results are append-only: `0=OK`, `1=BAD_CMD`,
+`2=BAD_STATE`, `3=NOT_READY` (power-stage readiness failed), and
+`4=START_FAILED` (user-state restore or setup preparation failed). Detailed
+diagnostics are enumerated Variables: `start_block` for power-stage/DRV
+readiness and `user_reset_err` for user-state restoration.
+
+Fault codes are append-only: `0=NONE`, `1=TZ1_EXT` (DRV8323RS nFAULT in the
+Phase 5 power-stage configuration), and `2=OVERCURRENT` (CMPSS or ADC PPB
+current-window hardware trip). `start_block` bit `0x0020` means the current
+protection route failed register read-back, a current sample was outside its
+startup window, or DCAEVT1 asserted while START attempted to release OST.
+Detailed current-source bits are available through the enumerated
+`curr_trip_last` Variable.
+
 ### 4.3 ENUM (0x03 / 0x83)
 
 The enumeration object = the descriptor table = the platform quantities L1/L0 register (physical quantities/duty/state/platform parameters) plus the user's application variables baked in at build time from the firmware DWARF (Phase 4.5, §2 convention) — so a host with no `.out` still enumerates everything by name.
@@ -300,6 +317,10 @@ Bandwidth reference (ISR period 20–100 kHz TBD): 20kHz×8ch×f32 = 640 KB/s; 1
 
 Request (8 octets): `{0:2 cmd_code(V2K_CMD_*), 2:2 arg0, 4:4 arg1}`
 CPU2 checks the mailbox is free (`cmd_seq == ack_seq`) → writes the command mailbox, returns ACK(OK, data=cmd_seq); mailbox busy → ACK(BUSY), host retries later. The execution result is confirmed via STATUS's `cmd_ack_seq/cmd_result/sys_state`.
+
+`APP_START` is asynchronous from CPU1's point of view. CPU2 ACKs only mailbox
+acceptance immediately; the command result becomes final only when STATUS
+reports the matching `cmd_ack_seq`.
 
 ## 5. Service semantics
 
