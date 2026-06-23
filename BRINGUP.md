@@ -557,3 +557,64 @@ previously unused RAMLS4 while keeping the writable `.bss`/`.data` ranges
 contiguous in RAMLS5. The 26 host unit tests, golden-vector check, PC C99
 contract compile with `-Werror`, removed-symbol audit, and platform descriptor
 name-uniqueness audit all pass. No firmware was flashed for the cleanup build.
+
+2026-06-23 software build `0xAE55F283` implements the Phase 5.1 DCBEVT1
+symmetric-overcurrent follow-up in runtime DriverLib code. `wire_pwm.c` now
+routes TRIPIN7 to both DCAH and DCBH on ePWM1/2/8, derives DCAEVT1 and DCBEVT1
+as original async `DCxH high` events, keeps both disarmed actions at `DISABLE`,
+arms both actions as force-low, enables/disables both one-shot sources together,
+clears both event/OST flags, adds per-phase DCB read-back bits, and classifies
+either DCAEVT1 or DCBEVT1 OST latch as overcurrent while preserving
+`curr_trip_last` source capture. `run_pwm_runtime_probe.js` now reports the
+DCBEVT1 action, flag, OST latch, and TZSEL armed state; expected DRY_RUN RUNNING
+`TZCTL` is `0x033A` on EPWM1/2/8. Host verification passed: 26 Python unit tests,
+golden-vector `--check`, and the C99 contract compile with `-Werror`. CCS
+`buildProject` FLASH builds passed for CPU1 and CPU2; CPU1 linked and patched
+15/112 user descriptors with `build_time_utc=1782178654`, and CPU2 was already
+up to date. This was not flashed and no cold-boot/probe/scope evidence was
+collected in this step. DRY_RUN cold boot with all-six-output scope remains the
+next gate, and POWERED calibrated overcurrent injection with all-six-output
+shutdown latency remains required before updating `protection-architecture.md`
+to mark Chain ② symmetric.
+
+2026-06-23 software build `0x99FBBBD0` supersedes the unflashed
+`0xAE55F283` implementation above and restores the project's SysConfig-first
+ownership rule. `cpu1/sysconfig_cpu1.syscfg` now owns the complete static
+current-trip topology on EPWM1/2/8: DCAH/DCBH select TRIP7,
+DCAEVT1/DCBEVT1 select original asynchronous DCxH-high events, and both
+disarmed actions are `DISABLE`. SysConfig also owns and locks
+GPIO82 -> INPUTXBAR1. Runtime C now changes only the DCA/DCB arm state, clears
+or reads flags, and fails closed under OST if arm/disarm read-back does not
+match; `curr_trip_cfg` bit `0x2000` reports that runtime-state mismatch. The
+disarm path no longer toggles the SysConfig-owned EPWM X-BAR topology. DRV SPID
+mode, bit rate, word width, FIFO, emulation, and module enable are likewise
+left to generated code; runtime retains only transient status clearing and the
+SysConfig 1.28 gap for `FFCT.TXDLY=0x10`. SysConfig MCP reported zero errors or
+warnings, and generated code was inspected to confirm DCA/DCB `DISABLE` actions
+are written before the TRIP7 digital-compare routes, INPUT1 selects GPIO82 and
+is locked, and DCA/DCB are not statically selected in TZSEL. Verification
+passed 26 host unit tests, golden-vector `--check`, the C99 contract compile
+with `-Werror`, and CCS `buildProject` FLASH builds for CPU1 and CPU2; CPU1
+patched 15/112 user descriptors with `build_time_utc=1782180294`. This image
+has not been flashed. The dual-core flash launcher was attempted after
+confirming no CCS debug session was active, but XDS110 acquisition failed with
+`-260` before any erase/program operation; macOS USB enumeration showed no
+XDS110 device. DRY_RUN cold-boot probe and all-six-output scope evidence remain
+open, followed by the separate calibrated POWERED overcurrent gate.
+
+2026-06-23 CCS/MCP DRY_RUN register acceptance used the user-built FLASH image
+`0x1F3FA8C8`. CPU1 was left running and APP_START was issued through the normal
+CPU2-to-CPU1 command mailbox. The command acknowledged with result 0 and the
+platform entered RUNNING with `fault_code=0`, `curr_trip_cfg=0`,
+`curr_trip_arm=0`, and `pwr_mode=DRY_RUN`. EPWM1/2/8 all read
+`TZSEL=0x0120`, `TZCTL=0x033A`, `DCTRIPSEL=0x0606`, `TZDCSEL=0x0082`, and
+`TZOSTFLG=0`; therefore DCAEVT1/DCBEVT1 are configured from TRIP7, both
+disarmed actions are `DISABLE`, and neither current event is selected into OST
+in DRY_RUN. INPUTXBAR1 selected GPIO82 (`0x0052`) and its lock bit was set.
+The CPU1 tick and EPWM1 TBCTR advanced during real-time reads. The existing
+`g_v2k_isr_ovf_cnt=1` remained stable over the observation interval and is
+consistent with the debugger launch/halt interval, so this is not a clean
+cold-boot zero-overflow result. MCP reads of GPIO data latches cannot prove the
+physical peripheral-driven PWM pin waveforms; all-six-output scope evidence
+remains a separate DRY_RUN observation, and calibrated POWERED shutdown remains
+the final protection gate.

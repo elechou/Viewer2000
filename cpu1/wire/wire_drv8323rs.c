@@ -71,18 +71,10 @@ static void wire_drv8323rs_prepare_spi(void)
 
     if (s_spi_configured == 0u)
     {
-        SPI_disableModule(DRV_SPI_BASE);
-        SPI_setConfig(DRV_SPI_BASE, DEVICE_LSPCLK_FREQ, SPI_PROT_POL0PHA0,
-                      SPI_MODE_CONTROLLER, DRV_SPI_BITRATE,
-                      DRV_SPI_DATAWIDTH);
-        SPI_setPTESignalPolarity(DRV_SPI_BASE, SPI_PTE_ACTIVE_LOW);
-        SPI_disableLoopback(DRV_SPI_BASE);
-        SPI_setEmulationMode(DRV_SPI_BASE, SPI_EMULATION_FREE_RUN);
-        SPI_enableFIFO(DRV_SPI_BASE);
-        SPI_setFIFOInterruptLevel(DRV_SPI_BASE, SPI_FIFO_TX0, SPI_FIFO_RX0);
+        // SysConfig owns SPID mode, bit rate, word width, FIFO, emulation,
+        // pinmux, and module enable. SysConfig 1.28 does not expose FFCT.TXDLY.
         SPI_setTxFifoTransmitDelay(DRV_SPI_BASE, WIRE_DRV_TX_FIFO_DELAY);
         SPI_clearInterruptStatus(DRV_SPI_BASE, SPI_INT_TXFF);
-        SPI_enableModule(DRV_SPI_BASE);
         s_spi_configured = 1u;
     }
 }

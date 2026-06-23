@@ -32,6 +32,17 @@
 #define WIRE_CURRENT_CONFIG_ERR_PHASE_A_DCA 0x0080u
 #define WIRE_CURRENT_CONFIG_ERR_PHASE_B_DCA 0x0100u
 #define WIRE_CURRENT_CONFIG_ERR_PHASE_C_DCA 0x0200u
+#define WIRE_CURRENT_CONFIG_ERR_PHASE_A_DCB 0x0400u
+#define WIRE_CURRENT_CONFIG_ERR_PHASE_B_DCB 0x0800u
+#define WIRE_CURRENT_CONFIG_ERR_PHASE_C_DCB 0x1000u
+#define WIRE_CURRENT_CONFIG_ERR_RUNTIME_STATE 0x2000u
+
+#define WIRE_CURRENT_TRIP_TZ_SIGNAL \
+    (EPWM_TZ_SIGNAL_DCAEVT1 | EPWM_TZ_SIGNAL_DCBEVT1)
+#define WIRE_CURRENT_TRIP_TZ_FLAG \
+    (EPWM_TZ_FLAG_DCAEVT1 | EPWM_TZ_FLAG_DCBEVT1)
+#define WIRE_CURRENT_TRIP_OST_FLAG \
+    (EPWM_TZ_OST_FLAG_DCAEVT1 | EPWM_TZ_OST_FLAG_DCBEVT1)
 
 #define WIRE_POWER_TRIP_MUX_CONFIG_MASK 0xFF00000CuL
 #define WIRE_POWER_TRIP_MUX_CONFIG_VALUE 0x0000000CuL
@@ -68,57 +79,26 @@ static void wire_pwm_clear_tz_all(uint16_t flags)
     EPWM_clearTripZoneFlag(WIRE_PWM_PHASE_C_BASE, flags);
 }
 
-static void wire_pwm_clear_dcaevt1_all(void)
+static void wire_pwm_clear_current_trip_events_all(void)
 {
     EPWM_clearTripZoneFlag(WIRE_PWM_PHASE_A_BASE,
-                           EPWM_TZ_FLAG_DCAEVT1);
+                           WIRE_CURRENT_TRIP_TZ_FLAG);
     EPWM_clearTripZoneFlag(WIRE_PWM_PHASE_B_BASE,
-                           EPWM_TZ_FLAG_DCAEVT1);
+                           WIRE_CURRENT_TRIP_TZ_FLAG);
     EPWM_clearTripZoneFlag(WIRE_PWM_PHASE_C_BASE,
-                           EPWM_TZ_FLAG_DCAEVT1);
+                           WIRE_CURRENT_TRIP_TZ_FLAG);
     EPWM_clearOneShotTripZoneFlag(WIRE_PWM_PHASE_A_BASE,
-                                  EPWM_TZ_OST_FLAG_DCAEVT1);
+                                  WIRE_CURRENT_TRIP_OST_FLAG);
     EPWM_clearOneShotTripZoneFlag(WIRE_PWM_PHASE_B_BASE,
-                                  EPWM_TZ_OST_FLAG_DCAEVT1);
+                                  WIRE_CURRENT_TRIP_OST_FLAG);
     EPWM_clearOneShotTripZoneFlag(WIRE_PWM_PHASE_C_BASE,
-                                  EPWM_TZ_OST_FLAG_DCAEVT1);
+                                  WIRE_CURRENT_TRIP_OST_FLAG);
 }
 
-static void wire_pwm_configure_current_trip_base(uint32_t base)
-{
-    EPWM_disableTripZoneSignals(base, EPWM_TZ_SIGNAL_DCAEVT1);
-    EPWM_selectDigitalCompareTripInput(base,
-                                       EPWM_DC_TRIP_TRIPIN7,
-                                       EPWM_DC_TYPE_DCAH);
-    EPWM_setTripZoneDigitalCompareEventCondition(
-        base,
-        EPWM_TZ_DC_OUTPUT_A1,
-        EPWM_TZ_EVENT_DCXH_HIGH);
-    EPWM_setDigitalCompareEventSource(base,
-                                      EPWM_DC_MODULE_A,
-                                      EPWM_DC_EVENT_1,
-                                      EPWM_DC_EVENT_SOURCE_ORIG_SIGNAL);
-    EPWM_setDigitalCompareEventSyncMode(base,
-                                        EPWM_DC_MODULE_A,
-                                        EPWM_DC_EVENT_1,
-                                        EPWM_DC_EVENT_INPUT_NOT_SYNCED);
-    // The TZCTL.DCAEVT1 per-event action drives EPWMxA whenever the DCAEVT1
-    // digital-compare condition is asserted. That force is applied independently
-    // of whether DCAEVT1 is selected as an OST source in TZSEL, so "disarmed"
-    // (TZSEL cleared) does NOT make DCAEVT1 harmless. Its reset value is
-    // High-Impedance (0), which floats EPWMxA only (DCBEVT1 is unused), and in
-    // DRY_RUN the gate driver sleeps so the CSA outputs sit near 0 V and the
-    // CMPSS low comparator asserts TRIPIN7 with no real current. That idle
-    // DCAEVT1 floated all three high-side outputs (Phase 5.1). Default the action
-    // to DISABLE here; the real force-low is installed only while armed.
-    EPWM_setTripZoneAction(base, EPWM_TZ_ACTION_EVENT_DCAEVT1,
-                           EPWM_TZ_ACTION_DISABLE);
-}
-
-// Install (armed) or remove (disarmed) the DCAEVT1 output force on all phases.
-// Armed = force EPWMxA low on a current trip (safe state, replacing the unsafe
-// reset High-Impedance); disarmed = no action, so the level-sensitive DCAEVT1
-// condition can never drive the high-side pins outside an armed POWERED run.
+// Install (armed) or remove (disarmed) the DCAEVT1/DCBEVT1 output force on all
+// phases. Armed = force both EPWMxA and EPWMxB low on a current trip; disarmed =
+// no action, so the level-sensitive DC events cannot drive pins outside an armed
+// POWERED run.
 static void wire_pwm_set_current_trip_output_action(uint16_t armed)
 {
     EPWM_TripZoneAction action =
@@ -130,9 +110,83 @@ static void wire_pwm_set_current_trip_output_action(uint16_t armed)
                            EPWM_TZ_ACTION_EVENT_DCAEVT1, action);
     EPWM_setTripZoneAction(WIRE_PWM_PHASE_C_BASE,
                            EPWM_TZ_ACTION_EVENT_DCAEVT1, action);
+    EPWM_setTripZoneAction(WIRE_PWM_PHASE_A_BASE,
+                           EPWM_TZ_ACTION_EVENT_DCBEVT1, action);
+    EPWM_setTripZoneAction(WIRE_PWM_PHASE_B_BASE,
+                           EPWM_TZ_ACTION_EVENT_DCBEVT1, action);
+    EPWM_setTripZoneAction(WIRE_PWM_PHASE_C_BASE,
+                           EPWM_TZ_ACTION_EVENT_DCBEVT1, action);
 }
 
-static uint16_t wire_pwm_current_trip_base_is_valid(uint32_t base)
+static uint16_t wire_pwm_current_trip_state_base_is_valid(uint32_t base,
+                                                           uint16_t armed)
+{
+    uint16_t tzsel = HWREGH(base + EPWM_O_TZSEL);
+    uint16_t tzctl = HWREGH(base + EPWM_O_TZCTL);
+    uint16_t expected_signal = (armed != 0u) ? WIRE_CURRENT_TRIP_TZ_SIGNAL : 0u;
+    uint16_t expected_action = (armed != 0u) ?
+        (uint16_t)EPWM_TZ_ACTION_LOW : (uint16_t)EPWM_TZ_ACTION_DISABLE;
+
+    return
+        ((tzsel & WIRE_CURRENT_TRIP_TZ_SIGNAL) == expected_signal) &&
+        (((tzctl & EPWM_TZCTL_DCAEVT1_M) >> EPWM_TZCTL_DCAEVT1_S) ==
+         expected_action) &&
+        (((tzctl & EPWM_TZCTL_DCBEVT1_M) >> EPWM_TZCTL_DCBEVT1_S) ==
+         expected_action);
+}
+
+static uint16_t wire_pwm_current_trip_state_is_valid(uint16_t armed)
+{
+    return
+        wire_pwm_current_trip_state_base_is_valid(WIRE_PWM_PHASE_A_BASE,
+                                                   armed) &&
+        wire_pwm_current_trip_state_base_is_valid(WIRE_PWM_PHASE_B_BASE,
+                                                   armed) &&
+        wire_pwm_current_trip_state_base_is_valid(WIRE_PWM_PHASE_C_BASE,
+                                                   armed);
+}
+
+static void wire_pwm_set_current_trip_signals(uint16_t armed)
+{
+    if (armed != 0u)
+    {
+        EPWM_enableTripZoneSignals(WIRE_PWM_PHASE_A_BASE,
+                                   WIRE_CURRENT_TRIP_TZ_SIGNAL);
+        EPWM_enableTripZoneSignals(WIRE_PWM_PHASE_B_BASE,
+                                   WIRE_CURRENT_TRIP_TZ_SIGNAL);
+        EPWM_enableTripZoneSignals(WIRE_PWM_PHASE_C_BASE,
+                                   WIRE_CURRENT_TRIP_TZ_SIGNAL);
+    }
+    else
+    {
+        EPWM_disableTripZoneSignals(WIRE_PWM_PHASE_A_BASE,
+                                    WIRE_CURRENT_TRIP_TZ_SIGNAL);
+        EPWM_disableTripZoneSignals(WIRE_PWM_PHASE_B_BASE,
+                                    WIRE_CURRENT_TRIP_TZ_SIGNAL);
+        EPWM_disableTripZoneSignals(WIRE_PWM_PHASE_C_BASE,
+                                    WIRE_CURRENT_TRIP_TZ_SIGNAL);
+    }
+}
+
+static uint16_t wire_pwm_apply_current_trip_state(uint16_t armed)
+{
+    if (armed != 0u)
+    {
+        wire_pwm_set_current_trip_output_action(1u);
+        wire_pwm_set_current_trip_signals(1u);
+        s_current_trip_armed = 1u;
+    }
+    else
+    {
+        wire_pwm_set_current_trip_signals(0u);
+        wire_pwm_set_current_trip_output_action(0u);
+        s_current_trip_armed = 0u;
+    }
+
+    return wire_pwm_current_trip_state_is_valid(armed);
+}
+
+static uint16_t wire_pwm_current_trip_dca_is_valid(uint32_t base)
 {
     uint16_t dctripsel = HWREGH(base + EPWM_O_DCTRIPSEL);
     uint16_t tzdcsel = HWREGH(base + EPWM_O_TZDCSEL);
@@ -146,6 +200,23 @@ static uint16_t wire_pwm_current_trip_base_is_valid(uint32_t base)
          (uint16_t)EPWM_TZ_EVENT_DCXH_HIGH) &&
         ((dcactl & EPWM_DCACTL_EVT1SRCSEL) == 0u) &&
         ((dcactl & EPWM_DCACTL_EVT1FRCSYNCSEL) != 0u);
+}
+
+static uint16_t wire_pwm_current_trip_dcb_is_valid(uint32_t base)
+{
+    uint16_t dctripsel = HWREGH(base + EPWM_O_DCTRIPSEL);
+    uint16_t tzdcsel = HWREGH(base + EPWM_O_TZDCSEL);
+    uint16_t dcbctl = HWREGH(base + EPWM_O_DCBCTL);
+
+    return
+        (((dctripsel & EPWM_DCTRIPSEL_DCBHCOMPSEL_M) >>
+          EPWM_DCTRIPSEL_DCBHCOMPSEL_S) ==
+         (uint16_t)EPWM_DC_TRIP_TRIPIN7) &&
+        (((tzdcsel & EPWM_TZDCSEL_DCBEVT1_M) >>
+          EPWM_TZDCSEL_DCBEVT1_S) ==
+         (uint16_t)EPWM_TZ_EVENT_DCXH_HIGH) &&
+        ((dcbctl & EPWM_DCBCTL_EVT1SRCSEL) == 0u) &&
+        ((dcbctl & EPWM_DCBCTL_EVT1FRCSYNCSEL) != 0u);
 }
 
 static uint16_t wire_pwm_current_trip_config_errors(void)
@@ -190,17 +261,29 @@ static uint16_t wire_pwm_current_trip_config_errors(void)
     {
         errors |= WIRE_CURRENT_CONFIG_ERR_PHASE_C_PPB;
     }
-    if (wire_pwm_current_trip_base_is_valid(WIRE_PWM_PHASE_A_BASE) == 0u)
+    if (wire_pwm_current_trip_dca_is_valid(WIRE_PWM_PHASE_A_BASE) == 0u)
     {
         errors |= WIRE_CURRENT_CONFIG_ERR_PHASE_A_DCA;
     }
-    if (wire_pwm_current_trip_base_is_valid(WIRE_PWM_PHASE_B_BASE) == 0u)
+    if (wire_pwm_current_trip_dca_is_valid(WIRE_PWM_PHASE_B_BASE) == 0u)
     {
         errors |= WIRE_CURRENT_CONFIG_ERR_PHASE_B_DCA;
     }
-    if (wire_pwm_current_trip_base_is_valid(WIRE_PWM_PHASE_C_BASE) == 0u)
+    if (wire_pwm_current_trip_dca_is_valid(WIRE_PWM_PHASE_C_BASE) == 0u)
     {
         errors |= WIRE_CURRENT_CONFIG_ERR_PHASE_C_DCA;
+    }
+    if (wire_pwm_current_trip_dcb_is_valid(WIRE_PWM_PHASE_A_BASE) == 0u)
+    {
+        errors |= WIRE_CURRENT_CONFIG_ERR_PHASE_A_DCB;
+    }
+    if (wire_pwm_current_trip_dcb_is_valid(WIRE_PWM_PHASE_B_BASE) == 0u)
+    {
+        errors |= WIRE_CURRENT_CONFIG_ERR_PHASE_B_DCB;
+    }
+    if (wire_pwm_current_trip_dcb_is_valid(WIRE_PWM_PHASE_C_BASE) == 0u)
+    {
+        errors |= WIRE_CURRENT_CONFIG_ERR_PHASE_C_DCB;
     }
     return errors;
 }
@@ -208,6 +291,10 @@ static uint16_t wire_pwm_current_trip_config_errors(void)
 static uint16_t wire_pwm_current_trip_config_is_valid(void)
 {
     s_current_trip_config_error = wire_pwm_current_trip_config_errors();
+    if (wire_pwm_current_trip_state_is_valid(s_current_trip_armed) == 0u)
+    {
+        s_current_trip_config_error |= WIRE_CURRENT_CONFIG_ERR_RUNTIME_STATE;
+    }
     return s_current_trip_config_error == 0u;
 }
 
@@ -329,9 +416,14 @@ static uint16_t wire_pwm_config_is_valid(void)
     uint16_t syncouten = HWREGH(WIRE_PWM_MASTER_BASE + EPWM_O_SYNCOUTEN);
     uint16_t ediv = HWREGH(CLKCFG_BASE + SYSCTL_O_PERCLKDIVSEL) &
                     SYSCTL_PERCLKDIVSEL_EPWMCLKDIV_M;
+    uint16_t input = (uint16_t)TZ_EXT_INPUT_XBAR_INPUT;
+    uint32_t input_lock = 1UL << input;
 
     return
         (ediv == 0u) &&
+        (HWREGH(INPUTXBAR_BASE + XBAR_O_INPUT1SELECT + input) ==
+         (uint16_t)TZ_EXT_INPUT_XBAR_SOURCE) &&
+        ((HWREG(INPUTXBAR_BASE + XBAR_O_INPUTSELECTLOCK) & input_lock) != 0u) &&
         wire_pwm_check_common(WIRE_PWM_PHASE_A_BASE, 1u) &&
         wire_pwm_check_common(WIRE_PWM_PHASE_B_BASE, 0u) &&
         wire_pwm_check_common(WIRE_PWM_PHASE_C_BASE, 1u) &&
@@ -401,17 +493,14 @@ void wire_pwm_pre_board_lock(void)
 
 void wire_pwm_init_trip_isr(void (*tz_isr)(void))
 {
-    XBAR_setInputPin(INPUTXBAR_BASE, XBAR_INPUT1, TZ_EXT);
-    wire_pwm_configure_current_trip_base(WIRE_PWM_PHASE_A_BASE);
-    wire_pwm_configure_current_trip_base(WIRE_PWM_PHASE_B_BASE);
-    wire_pwm_configure_current_trip_base(WIRE_PWM_PHASE_C_BASE);
-    (void)wire_pwm_current_trip_config_is_valid();
     s_current_trip_armed = 0u;
     s_current_trip_last = 0u;
     wire_pwm_apply_neutral();
     wire_pwm_force_ost_all();
+    (void)wire_pwm_apply_current_trip_state(0u);
+    (void)wire_pwm_current_trip_config_is_valid();
     wire_pwm_clear_current_source_flags();
-    wire_pwm_clear_dcaevt1_all();
+    wire_pwm_clear_current_trip_events_all();
     wire_pwm_clear_tz_all(EPWM_TZ_INTERRUPT);
     Interrupt_register(INT_EPWM1_TZ, tz_isr);
     Interrupt_disable(INT_EPWM1_TZ);
@@ -491,17 +580,18 @@ uint16_t wire_pwm_arm_current_trip(void)
     }
 
     wire_pwm_clear_current_source_flags();
-    wire_pwm_clear_dcaevt1_all();
+    wire_pwm_clear_current_trip_events_all();
     s_current_trip_last = 0u;
 
-    EPWM_enableTripZoneSignals(WIRE_PWM_PHASE_A_BASE,
-                               EPWM_TZ_SIGNAL_DCAEVT1);
-    EPWM_enableTripZoneSignals(WIRE_PWM_PHASE_B_BASE,
-                               EPWM_TZ_SIGNAL_DCAEVT1);
-    EPWM_enableTripZoneSignals(WIRE_PWM_PHASE_C_BASE,
-                               EPWM_TZ_SIGNAL_DCAEVT1);
-    wire_pwm_set_current_trip_output_action(1u);
-    s_current_trip_armed = 1u;
+    if (wire_pwm_apply_current_trip_state(1u) == 0u)
+    {
+        wire_pwm_force_ost_all();
+        (void)wire_pwm_apply_current_trip_state(0u);
+        s_current_trip_config_error = wire_pwm_current_trip_config_errors() |
+            WIRE_CURRENT_CONFIG_ERR_RUNTIME_STATE;
+        return 0u;
+    }
+    s_current_trip_config_error = wire_pwm_current_trip_config_errors();
 
     if (wire_pwm_capture_current_sources() != 0u)
     {
@@ -513,19 +603,13 @@ uint16_t wire_pwm_arm_current_trip(void)
 
 void wire_pwm_disarm_current_trip(void)
 {
-    EPWM_disableTripZoneSignals(WIRE_PWM_PHASE_A_BASE,
-                                EPWM_TZ_SIGNAL_DCAEVT1);
-    EPWM_disableTripZoneSignals(WIRE_PWM_PHASE_B_BASE,
-                                EPWM_TZ_SIGNAL_DCAEVT1);
-    EPWM_disableTripZoneSignals(WIRE_PWM_PHASE_C_BASE,
-                                EPWM_TZ_SIGNAL_DCAEVT1);
-    wire_pwm_set_current_trip_output_action(0u);
-    s_current_trip_armed = 0u;
-    XBAR_disableEPWMMux(POWER_TRIP_XBAR,
-                        POWER_TRIP_XBAR_ENABLED_MUXES);
-    XBAR_enableEPWMMux(POWER_TRIP_XBAR,
-                       POWER_TRIP_XBAR_ENABLED_MUXES);
-    wire_pwm_clear_dcaevt1_all();
+    uint16_t state_valid = wire_pwm_apply_current_trip_state(0u);
+
+    if (state_valid == 0u)
+    {
+        wire_pwm_force_ost_all();
+    }
+    wire_pwm_clear_current_trip_events_all();
     wire_pwm_clear_current_source_flags();
     (void)wire_pwm_current_trip_config_is_valid();
 }
@@ -536,7 +620,7 @@ uint16_t wire_pwm_current_trip_was_active(void)
         EPWM_getOneShotTripZoneFlagStatus(WIRE_PWM_MASTER_BASE);
     uint16_t sources;
 
-    if ((ost_sources & EPWM_TZ_OST_FLAG_DCAEVT1) == 0u)
+    if ((ost_sources & WIRE_CURRENT_TRIP_OST_FLAG) == 0u)
     {
         return 0u;
     }

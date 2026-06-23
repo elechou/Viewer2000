@@ -191,8 +191,12 @@ The Source column distinguishes:
 | RED/FED shadow modes | Both enabled | User |
 | RED/FED counts | 200 / 200 | User |
 | TZA / TZB actions | Force low / force low | User |
+| DCAEVT1 / DCBEVT1 actions | Disable / disable baseline | User |
 | One-shot trip source | TZ1 | User |
 | Cycle-by-cycle trip source | TZ6 | User |
+| DCAH / DCBH input | TRIP7 / TRIP7 | User |
+| DCAEVT1 / DCBEVT1 condition | DCxH high / DCxH high | User |
+| DCAEVT1 / DCBEVT1 mode | Original unfiltered signal, asynchronous | User plus module default |
 | SOCA | Enabled, every first event | User |
 
 #### ePWM: PWM_PHASE_A / EPWM2
@@ -212,7 +216,11 @@ The Source column distinguishes:
 | Dead-band RED/FED and shadow modes | Both enabled | User |
 | RED/FED counts | 200 / 200 | User |
 | TZA / TZB actions | Force low / force low | User |
+| DCAEVT1 / DCBEVT1 actions | Disable / disable baseline | User |
 | One-shot / CBC trip sources | TZ1 / TZ6 | User |
+| DCAH / DCBH input | TRIP7 / TRIP7 | User |
+| DCAEVT1 / DCBEVT1 condition | DCxH high / DCxH high | User |
+| DCAEVT1 / DCBEVT1 mode | Original unfiltered signal, asynchronous | User plus module default |
 
 #### ePWM: PWM_PHASE_C / EPWM8
 
@@ -231,9 +239,18 @@ The Source column distinguishes:
 | Dead-band RED/FED and shadow modes | Both enabled | User |
 | RED/FED counts | 200 / 200 | User |
 | TZA / TZB actions | Force low / force low | User |
+| DCAEVT1 / DCBEVT1 actions | Disable / disable baseline | User |
 | One-shot / CBC trip sources | TZ1 / TZ6 | User |
+| DCAH / DCBH input | TRIP7 / TRIP7 | User |
+| DCAEVT1 / DCBEVT1 condition | DCxH high / DCxH high | User |
+| DCAEVT1 / DCBEVT1 mode | Original unfiltered signal, asynchronous | User plus module default |
 
 EPWM2 and EPWM8 sync-in selection from EPWM1 is applied and read back by the wire runtime because SysConfig exposes phase loading but does not emit the required explicit slave sync-in selection for this configuration.
+
+SysConfig owns the complete static digital-compare topology. It intentionally
+does not select DCAEVT1 or DCBEVT1 as one-shot sources: runtime arms those two
+sources only for an approved POWERED START and restores both event actions to
+`DISABLE` when disarmed.
 
 #### GPIO
 
@@ -247,6 +264,17 @@ EPWM2 and EPWM8 sync-in selection from EPWM1 is applied and read back by the wir
 | LED_CPU2_GPIO | CPU2 controller; output; write initial high/off | User plus LED5-derived GPIO |
 
 SysConfig reports GPIO38 as shared with the alternate SCIB XDS TX route. Phase 5.0 keeps the active XDS110/Scope2000 link on SCIA GPIO42/GPIO43, so the alternate SCIB route must not be selected. GPIO103 is also connected to the eQEP2 header path; the board routing switch must leave that path available to Site 2 when DRV SPI CS is used.
+
+#### Input X-BAR: TZ_EXT_INPUT_XBAR
+
+| Configurable | Non-default value | Source |
+|---|---|---|
+| Input | INPUT1 | User |
+| Source | GPIO82 (`TZ_EXT`) | User |
+| Input lock | Enabled | User |
+
+The generated Input X-BAR configuration is read back before TBCLKSYNC is
+released. Production C does not remap INPUT1.
 
 #### I2C: AS5600_I2C
 
@@ -287,6 +315,10 @@ The SPI mode, 400 kHz initial bit rate, 16-bit word width, and FIFO usage now
 match the TI MotorControl SDK DRV8323 examples for F28P65x bring-up. The
 platform still owns manual chip select on GPIO103 through the `DRV_CS_GPIO`
 compile symbol.
+
+SysConfig-generated code is the sole owner of those static SPID settings.
+Runtime applies only `FFCT.TXDLY=0x10`, which SysConfig 1.28 does not expose,
+and clears transient FIFO status before the first transaction.
 
 The checked-in DRV register image is now derived through TI's
 `DRV8323_VARS_t` bitfields instead of project-local raw hex constants. The
@@ -435,7 +467,7 @@ Hardware trip inputs for Phase 5.0:
 | DRV nFAULT | GPIO82 -> INPUT X-BAR 1 -> ePWM TZ1 OST | Pulling low inhibits all three phases and latches FAULT without CPU2 or host participation |
 | Debug halt trip | ePWM CBC6 | Halt-safe behavior verified on all three ePWM modules |
 | Software force | EPWM_forceTripZoneEvent(OST) on all three modules | STOP and initial lockout inhibit all phases |
-| Current threshold | B6 -> CMPSS7 H/L, A10 -> CMPSS8 H/L, and C5 -> ADCC PPB1; all five events OR into XBAR TRIP7 -> asynchronous DCAEVT1 OST on ePWM1/2/8 | Software route and boot-time register read-back implemented; physical source injection remains required before powered approval |
+| Current threshold | B6 -> CMPSS7 H/L, A10 -> CMPSS8 H/L, and C5 -> ADCC PPB1; all five events OR into XBAR TRIP7 -> asynchronous DCAEVT1/DCBEVT1 OST on ePWM1/2/8 | SysConfig route and boot-time register read-back implemented; symmetric all-six-output effect remains a POWERED acceptance gate |
 
 The F28P65x C2000Ware 26.01 SysConfig input map confirms that B6 and A10 can
 feed both comparator halves of CMPSS7 and CMPSS8 respectively, while C5 can
@@ -449,8 +481,8 @@ fixed BoosterPack route. The implemented layered protection is:
 - phase C uses ADCC PPB1 high/low limit events as a conversion-synchronous
   hardware backup;
 - the two A events, two B events, and the combined ADCCEVT1 source are ORed in
-  ePWM X-BAR TRIP7, which drives asynchronous DCAEVT1 one-shot trips on all
-  three ePWM modules.
+  ePWM X-BAR TRIP7, which drives mirrored asynchronous DCAEVT1/DCBEVT1
+  one-shot trips on all three ePWM modules.
 
 The provisional raw windows are 512 through 3584 counts, matching the TI
 MotorControl SDK bring-up baseline. These are not yet calibrated ampere limits.
@@ -463,8 +495,8 @@ The CMPSS filter adds bounded rejection latency, and phase C is bounded by the
 The current route is disarmed in IDLE, FAULT, and checked-in DRY_RUN operation.
 Powered START arms it only after DRV configuration/status checks and
 only when all three current ADC results are already within the provisional
-window. START then checks the DCAEVT1 source both before and after clearing the
-existing output-lock OST, so a trip during release fails closed.
+window. START then checks the current-trip source both before and after clearing
+the existing output-lock OST, so a trip during release fails closed.
 
 Runtime may observe these events afterward, but no CPU decision is in the
 shutdown path. First-power safety must never depend on CPU polling an ADC
@@ -477,10 +509,10 @@ APP_START is asynchronous. The command remains unacknowledged while the foregrou
 1. Keep OST asserted, force neutral duty, disable DRV, and wait at least 1 ms for tSLEEP when powered mode is selected.
 2. In powered mode, require an explicitly approved register configuration, enable DRV, and wait at least 1 ms for tWAKE while OST remains asserted.
 3. Require nFAULT high, write the baseline DRV configuration, read every written register back, and capture both full 11-bit status registers.
-4. Arm the current-window DCAEVT1 route only if its register read-back passes and all three current samples are inside the provisional window.
+4. Arm the current-window DCAEVT1/DCBEVT1 route only if its static and runtime-state register read-back passes and all three current samples are inside the provisional window.
 5. Only after hardware readiness succeeds, reset all user-owned mutable state from the Phase 4.1 golden image and run `setup()`.
 6. Force user output back to three-phase neutral and apply neutral duty to all three ePWM modules.
-7. Clear TZ flags and release OST only if every precondition still passes; recheck DCAEVT1 before and after release.
+7. Clear TZ flags and release OST only if every precondition still passes; recheck the current-trip source before and after release.
 8. Set state to RUNNING, enable TZ interrupts, and acknowledge APP_START.
 
 The checked-in default is `WIRE_POWERSTAGE_MODE_DRY_RUN`. It leaves DRV ENABLE low but permits the state machine and MCU PWM pins to be tested with the inverter bus disconnected. Powered operation requires both `WIRE_POWERSTAGE_MODE=0` and `WIRE_POWERSTAGE_POWERED_CONFIG_APPROVED=1` as CPU1 compiler predefines. Approval must not be enabled until the register image, current-limit behavior, pin mapping, and bench-supply procedure have been physically verified.
@@ -499,7 +531,9 @@ diagnostics `curr_trip_arm`, `curr_limit_lo`, `curr_limit_hi`, and
 `curr_trip_last` are enumerable. `curr_trip_cfg` is zero when every
 startup read-back passes; its bits are `0x0001/0x0002=A DAC high/low`,
 `0x0004/0x0008=B DAC high/low`, `0x0010=XBAR enable`, `0x0020=XBAR mux`,
-`0x0040=phase-C PPB`, and `0x0080/0x0100/0x0200=A/B/C ePWM DCA`.
+`0x0040=phase-C PPB`, `0x0080/0x0100/0x0200=A/B/C ePWM DCA`,
+`0x0400/0x0800/0x1000=A/B/C ePWM DCB`, and
+`0x2000=runtime arm/disarm state read-back`.
 An error leaves the route disarmed and causes powered START to fail closed; it
 does not halt the complete DRY_RUN platform. `curr_trip_last` uses bits
 `0x0001/0x0002=A high/low`, `0x0004/0x0008=B high/low`,
@@ -713,8 +747,10 @@ Record every Phase 5.0 hardware session with:
   hardware route tests.
 - [x] Measure the A5 VBUS resistor-divider scale and add the user-owned conversion.
 - [x] Add B6/CMPSS7 and A10/CMPSS8 windows plus the C5/ADCC PPB1 window, OR all
-  five sources through XBAR TRIP7, and route asynchronous DCAEVT1 OST to all
-  three ePWMs.
+  five sources through XBAR TRIP7, and route the original asynchronous
+  DCAEVT1 OST path to all three ePWMs.
+- [x] Move the static digital-compare topology into SysConfig and mirror TRIP7
+  through DCBEVT1 with a DRY_RUN-safe `DISABLE` baseline on both sides.
 - [x] Independently validate A-low CMPSS7, B-low CMPSS8, and C-low ADCC PPB1
   through XBAR TRIP7 and DCAEVT1 in DRY_RUN.
 - [x] Inject the A/B high-window sources (DRY_RUN, build `0xC141DF35`): the

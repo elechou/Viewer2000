@@ -109,6 +109,7 @@ try {
     p("s_powered_config_approved=" + expr("s_powered_config_approved"));
     p("s_start_phase=" + expr("s_start_phase"));
     p("s_start_block_reason=" + expr("s_start_block_reason"));
+    p("current_trip_cfg_err=" + expr("s_current_trip_config_error"));
 
     function inject(code) {
         var seq = rd(cpu2, CMD_SEQ, 32);
@@ -162,7 +163,9 @@ try {
         var tzctl = rd(cpu1, b + O.TZCTL, 16);
         var tzctl2 = rd(cpu1, b + O.TZCTL2, 16);
         var dcaAct = (tzctl2 & 0x8000) ? ("TZCTLDCA=" + hex(rd(cpu1, b + O.TZCTLDCA, 16),4)) : (((tzctl >> 4) & 0x3) + "(0=HiZ,1=hi,2=lo,3=no)");
+        var dcbAct = (tzctl2 & 0x8000) ? ("TZCTLDCB=" + hex(rd(cpu1, b + O.TZCTLDCB, 16),4)) : (((tzctl >> 8) & 0x3) + "(0=HiZ,1=hi,2=lo,3=no)");
         p("  " + nm + ".DCAEVT1_action(A-only)=" + dcaAct);
+        p("  " + nm + ".DCBEVT1_action(B-only)=" + dcbAct);
     }
 
     for (var c = 0; c < CMPSS.length; c++) {
@@ -177,6 +180,13 @@ try {
     p("[EPWMXBAR_TRIP7]");
     p("  TRIP7_CFG0TO15=" + hex(rd(cpu1, 0x7A30, 32), 8));
     p("  TRIP7_ENABLE=" + hex(rd(cpu1, 0x7A58, 32), 8));
+
+    p("[INPUTXBAR1_NFAULT]");
+    var input1Select = rd(cpu1, 0x7900, 16);
+    var inputSelectLock = rd(cpu1, 0x791E, 32);
+    p("  INPUT1SELECT=" + input1Select + " (expected GPIO82)");
+    p("  INPUTSELECTLOCK=" + hex(inputSelectLock, 8) +
+      " INPUT1_locked=" + ((inputSelectLock & 0x1) ? 1 : 0));
 
     // ---- live pin sampling (GPyDAT_R read regs at 0x7F80) ----
     var aOr=0,aAnd=0xffffffff, cOr=0,cAnd=0xffffffff, dOr=0,dAnd=0xffffffff;
@@ -199,6 +209,9 @@ try {
 
     p("[VERDICT]");
     p("  running=" + (stateF == S_RUNNING) + " fault_code=" + faultF);
+    p("  current_trip_cfg_err=" + expr("s_current_trip_config_error") +
+      " input1_gpio82=" + ((input1Select == 82) ? 1 : 0) +
+      " input1_locked=" + ((inputSelectLock & 0x1) ? 1 : 0));
     for (var e2 = 0; e2 < EPWM.length; e2++) {
         var nm2 = EPWM[e2][0], b2 = EPWM[e2][1];
         var fl = rd(cpu1, b2 + O.TZFLG, 16);
@@ -206,8 +219,11 @@ try {
         var sel = rd(cpu1, b2 + O.TZSEL, 16);
         p("  " + nm2 + ": TZFLG=" + hex(fl,4) +
           " DCAEVT1_flag=" + ((fl & 0x8)?1:0) +
+          " DCBEVT1_flag=" + ((fl & 0x20)?1:0) +
           " DCAEVT1_ostLatch=" + ((ost & 0x40)?1:0) +
+          " DCBEVT1_ostLatch=" + ((ost & 0x80)?1:0) +
           " DCAEVT1_armed(TZSEL.4000)=" + ((sel & 0x4000)?1:0) +
+          " DCBEVT1_armed(TZSEL.8000)=" + ((sel & 0x8000)?1:0) +
           " OST_flag=" + ((fl & 0x4)?1:0) +
           " CBC_flag=" + ((fl & 0x2)?1:0));
     }
