@@ -1,5 +1,5 @@
 //=============================================================================
-// user.c - Phase 5.0 neutral motor-interface smoke application
+// user.c - Phase 5.2 powered-neutral commissioning application
 //=============================================================================
 
 #include "board.h"
@@ -25,8 +25,6 @@ uint16_t enc_status;
 float enc_angle;
 uint32_t enc_seq;
 uint16_t enc_ok;
-
-float PWM_duty = 0.5;
 
 void setup(void)
 {
@@ -54,8 +52,11 @@ void control(void)
     enc_angle = encoder.angle_rad;
     enc_seq = encoder.sequence;
 
-    v2k_io.out.duty_a = PWM_duty;
-    v2k_io.out.duty_b = PWM_duty;
-    v2k_io.out.duty_c = PWM_duty;
+    // Phase 5.2 intentionally has no tunable actuation command. POWERED mode
+    // may wake and verify the driver, but this application can only request the
+    // three-phase neutral vector.
+    v2k_io.out.duty_a = V2K_DUTY_NEUTRAL;
+    v2k_io.out.duty_b = V2K_DUTY_NEUTRAL;
+    v2k_io.out.duty_c = V2K_DUTY_NEUTRAL;
     control_ticks++;
 }

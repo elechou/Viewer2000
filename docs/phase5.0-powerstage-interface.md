@@ -515,7 +515,7 @@ APP_START is asynchronous. The command remains unacknowledged while the foregrou
 7. Clear TZ flags and release OST only if every precondition still passes; recheck the current-trip source before and after release.
 8. Set state to RUNNING, enable TZ interrupts, and acknowledge APP_START.
 
-The checked-in default is `WIRE_POWERSTAGE_MODE_DRY_RUN`. It leaves DRV ENABLE low but permits the state machine and MCU PWM pins to be tested with the inverter bus disconnected. Powered operation requires both `WIRE_POWERSTAGE_MODE=0` and `WIRE_POWERSTAGE_POWERED_CONFIG_APPROVED=1` as CPU1 compiler predefines. Approval must not be enabled until the register image, current-limit behavior, pin mapping, and bench-supply procedure have been physically verified.
+The checked-in default is `WIRE_POWERSTAGE_MODE_DRY_RUN`. It leaves DRV ENABLE low but permits the state machine and MCU PWM pins to be tested with the inverter bus disconnected. Powered operation requires both `WIRE_POWERSTAGE_MODE=0` and `WIRE_POWERSTAGE_POWERED_CONFIG_APPROVED=1` as CPU1 compiler predefines. Approval must not become the checked-in motor-motion baseline until the register image, current-limit behavior, pin mapping, and bench-supply procedure have been physically verified. [Phase 5.2](phase5.2-minimum-powered-commissioning.md) defines the one supervised commissioning-build exception needed to collect the energized evidence itself.
 
 Visible START diagnostics decode as follows: `start_state` is `0=IDLE`,
 `1=SLEEP_WAIT`, `2=WAKE_WAIT`, `3=READY`, or `4=FAILED`.
@@ -763,7 +763,9 @@ Record every Phase 5.0 hardware session with:
 - [x] Keep the checked-in firmware in DRY_RUN with powered approval disabled.
 
 The following are Phase 5 motor-bring-up responsibilities and mandatory gates
-before sustained powered operation, not unfinished Phase 5.0 interface work:
+before sustained powered operation, not unfinished Phase 5.0 interface work.
+Their bounded execution plan is
+[Phase 5.2](phase5.2-minimum-powered-commissioning.md):
 
 - Measure current-sense gain/offset and replace the provisional 512/3584-count
   windows with calibrated limits.

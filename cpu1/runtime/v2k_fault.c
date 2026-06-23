@@ -244,6 +244,11 @@ void v2k_fault_poll(volatile v2k_cpu1_status_t *st)
                     if (g_v2k_sm_state == V2K_STATE_RUNNING)
                     {
                         g_v2k_sm_state = V2K_STATE_IDLE;
+                        // OST is already asserted, so it is now safe to disarm
+                        // the current route and put the powered gate driver back
+                        // to sleep. DRY_RUN masked this requirement because its
+                        // driver never wakes.
+                        wire_powerstage_cancel_start();
                     }
                 }
                 else { result = V2K_CMDR_BAD_STATE; }

@@ -314,7 +314,15 @@ scope) aligned, and the high-side float fell straight through.
 
 ## 10. Invariants and POWERED gates
 
-Hard requirements before any move from DRY_RUN to POWERED:
+The bounded procedure that closes these remaining items is
+[Phase 5.2](phase5.2-minimum-powered-commissioning.md). It intentionally reuses
+the accepted Phase 5.0/5.1 evidence and adds only the physical measurements that
+cannot be established in DRY_RUN.
+
+Hard requirements before accepting a higher-energy, sustained, loaded, or
+closed-loop POWERED baseline are below. Phase 5.2 permits POWERED neutral
+commissioning, and Phase 5.5 permits a tightly supply-limited first rotation,
+without claiming these oscilloscope-only items have passed:
 
 - [ ] **All-six-output scope/edge capture is a mandatory gate, not a deferral.**
   A register-level OST/DCAEVT1 flag is *not* a substitute for observing that all
@@ -324,9 +332,10 @@ Hard requirements before any move from DRY_RUN to POWERED:
   and all-six-output capture.
 - [ ] **Calibrated ampere limits** replace the provisional `512/3584` raw counts.
 - [ ] **nFAULT-edge → all-six-PWM shutdown-latency** capture.
-- [ ] `WIRE_POWERSTAGE_POWERED_CONFIG_APPROVED=1` only after the DRV register
-  image, current-limit behavior, pin mapping, and bench-supply procedure are
-  physically verified.
+- [x] The tracked Phase 5.2 neutral-only commissioning build uses
+  `WIRE_POWERSTAGE_POWERED_CONFIG_APPROVED=1` after the DRV image, pin mapping,
+  startup read-back, and current-limited supply procedure were reviewed. This
+  approval does not mark the deferred captures above as passed.
 
 Standing invariants (already enforced, do not regress):
 

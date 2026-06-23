@@ -55,6 +55,8 @@
                                     <listOptionValue value="_FLASH"/>
                                     <listOptionValue value="CPU1"/>
                                     <listOptionValue value="DRV_CS_GPIO"/>
+                                    <listOptionValue value="WIRE_POWERSTAGE_MODE=0"/>
+                                    <listOptionValue value="WIRE_POWERSTAGE_POWERED_CONFIG_APPROVED=1"/>
                                 </option>
                                 <option id="com.ti.ccstudio.buildDefinitions.C2000_25.11.compilerID.DIAG_SUPPRESS.813228146" superClass="com.ti.ccstudio.buildDefinitions.C2000_25.11.compilerID.DIAG_SUPPRESS" valueType="stringList">
                                     <listOptionValue value="10063"/>
@@ -157,6 +159,8 @@
                                     <listOptionValue value="${COM_TI_C2000WARE_SYMBOLS}"/>
                                     <listOptionValue value="CPU1"/>
                                     <listOptionValue value="DRV_CS_GPIO"/>
+                                    <listOptionValue value="WIRE_POWERSTAGE_MODE=0"/>
+                                    <listOptionValue value="WIRE_POWERSTAGE_POWERED_CONFIG_APPROVED=1"/>
                                 </option>
                                 <option id="com.ti.ccstudio.buildDefinitions.C2000_25.11.compilerID.DIAG_SUPPRESS.924099525" superClass="com.ti.ccstudio.buildDefinitions.C2000_25.11.compilerID.DIAG_SUPPRESS" valueType="stringList">
                                     <listOptionValue value="10063"/>

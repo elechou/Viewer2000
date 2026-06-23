@@ -618,3 +618,43 @@ cold-boot zero-overflow result. MCP reads of GPIO data latches cannot prove the
 physical peripheral-driven PWM pin waveforms; all-six-output scope evidence
 remains a separate DRY_RUN observation, and calibrated POWERED shutdown remains
 the final protection gate.
+
+## Phase 5.2 - POWERED neutral commissioning
+
+2026-06-23 software baseline: CPU1 RAM and FLASH project configurations now
+define `WIRE_POWERSTAGE_MODE=0` and
+`WIRE_POWERSTAGE_POWERED_CONFIG_APPROVED=1`. The source fallback remains
+DRY_RUN/approval-off when those project settings are absent. The Phase 5.0
+`PWM_duty` user parameter was removed; `control()` now hard-codes all three
+outputs to `V2K_DUTY_NEUTRAL`, so this image contains no user actuation command.
+
+CCS full builds passed for CPU1 FLASH and RAM with zero errors and the same five
+previously audited SysConfig hardware-route warnings. The compiler and linker
+commands contain both POWERED predefines. User-boundary verification passed and
+the baker patched 15/112 descriptors with no skips. FLASH build hash is
+`0xCB2C96A6`; RAM build hash is `0xE757B88E`. No image was flashed and no
+energized claim is made yet. The next hardware action is the motor-disconnected,
+current-limited POWERED neutral START/STOP procedure in
+`docs/phase5.2-minimum-powered-commissioning.md`.
+
+2026-06-23 powered neutral START/STOP acceptance used the flashed FLASH image
+`0x4EE46EA6`. The bench state was the isolated XDS topology with VM applied,
+J5 disconnected, CCS/debug detached, and both CPU heartbeats visually normal
+after a cold restart. Before the powered command, an SCI-only read probe over
+`/dev/cu.usbmodemCL6500011` reported `state=IDLE`, `fault_code=0`,
+`cpu1_hb=308435`, `cpu2_hb=303256`, `tick=6168700`, contract 13, and 66
+descriptors; no process owned the serial device before or after the probe.
+
+The Phase 5.2 powered action then used only the SCI command path, with no JTAG
+attachment. `APP_START` was accepted from IDLE with `cmd_seq=1`, completed with
+`cmd_result=0`, and reported `state=RUNNING`, `fault_code=0`, `flags=0x0000`,
+`tick=7889618`, `cpu1_hb=394480`, and `cpu2_hb=387857`. `APP_STOP` was then
+accepted with `cmd_seq=2`, completed with `cmd_result=0`, and returned the
+platform to `state=IDLE`, `fault_code=0`, `flags=0x0000`, `tick=8050138`,
+`cpu1_hb=402506`, and `cpu2_hb=395748`. The serial port was closed after each
+short command transaction, and a final `lsof` check showed no stale owner.
+
+This verifies the first motor-disconnected POWERED neutral lifecycle for this
+image. It does not claim motor-connected current offset/noise, a physical
+nFAULT lifecycle, gate-source/switch-node timing, or calibrated-current
+shutdown evidence.
