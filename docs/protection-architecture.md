@@ -125,8 +125,15 @@ These are not competing protections — they are stages of one C2000 pipeline.
  ★ side path (NOT through TZSEL/OST): DCAEVT1 ─► TZCTL.DCAEVT1 action ─► EPWMxA only
 ```
 
-**Convergence point = the OST latch + TZA/TZB.** Every source enabled into OST
-collapses into one `TZFLG.OST`, one TZ interrupt, one both-sides-low action.
+**Convergence point = the OST latch (shared) + a *per-side* output action.**
+Every source enabled into OST collapses into one `TZFLG.OST` and one TZ
+interrupt — but the output force is **not** unconditionally both-sides. Per
+driverlib (`epwm.h`): the `TZA` action (output A) responds to
+`{TZ1..TZ6, DCAEVT1, DCAEVT2}`, the `TZB` action (output B) responds to
+`{TZ1..TZ6, DCBEVT1, DCBEVT2}`. So **only a `TZ1..TZ6` source forces both sides**
+(it is in both lists); a digital-compare-only source forces just its own side —
+`DCAEVT1`→A, `DCBEVT1`→B. This is exactly why nFAULT (TZ1) is symmetric and the
+CMPSS overcurrent (DCAEVT1, no DCBEVT1) is not — even when armed.
 
 This platform's actual OST membership: `TZSEL=0x0120` = `OSHT1 | CBC6`, plus
 `DCAEVT1` (bit `0x4000`) added only when the current trip is armed in POWERED.
@@ -156,8 +163,12 @@ phase A current → CMPSS7 (high+low window)  ┐
 phase B current → CMPSS8 (high+low window)  ├─ OR → EPWM X-BAR TRIP7 → TRIPIN7
 phase C current → ADCC PPB1 (low only)      ┘
   → DCTRIPSEL DCAH=TRIPIN7 ; TZDCSEL DCAEVT1=DCAH-high → DCAEVT1 asserted
-  → when armed (TZSEL.DCAEVT1): OST latch → TZA/TZB → A+B off  ✔ symmetric path
-  → always (per-event): TZCTL.DCAEVT1 action → EPWMxA only      ⚠ see §6
+  → armed (TZSEL.DCAEVT1): latches OST, but TZA responds to DCAEVT1 and TZB does
+    NOT (TZB = TZ1..6/DCBEVT1/2) → still EPWMxA only, EPWMxB keeps switching ⚠
+  → per-event TZCTL.DCAEVT1 action → also EPWMxA only
+  → ⚠ NO DCBEVT1 is configured, so NOTHING forces EPWMxB on a CMPSS overcurrent.
+    This layer is single-sided even when armed (see §6/§8). Both-side cutoff on
+    overcurrent comes only from the DRV internal OCP and nFAULT→TZ1→OST.
 ```
 
 Provisional window `DACL=512 / DACH=3584` raw counts (`wire_adc.h`,
@@ -216,10 +227,15 @@ Consequences that actually bit us:
   and the TZ interrupt is wired to OST only — so the high side was forced with
   zero interrupt, zero `fault_code`, zero report. A protection-style output
   action with no observability is the worst possible combination.
-- **Armed-transient asymmetry (open, §8).** Because the overcurrent uses DCAEVT1
-  (EPWMxA) with no matching DCBEVT1, the symmetry of a real armed trip relies on
-  the OST→TZA/TZB path; the per-event side covers only the high side. Needs
-  POWERED hardware verification before sustained runs.
+- **Single-sided even when armed (open, §8).** This is the key correction:
+  arming DCAEVT1 into OST does **not** make the trip both-sided, because `TZB`
+  (output B) does not respond to DCAEVT1 — only to `TZ1..TZ6`/`DCBEVT1`/`DCBEVT2`
+  (`epwm.h` `EPWM_TZ_ACTION_EVENT_TZB`). With no `DCBEVT1` configured, a real
+  armed CMPSS overcurrent forces only EPWMxA; EPWMxB keeps switching until the
+  DRV OCP or the OST→TZ-ISR→driver-disable path intervenes. The CMPSS layer is
+  therefore single-sided *by configuration*, not by hardware limitation —
+  `DCBEVT1` exists and is fully usable (`EPWM_DC_MODULE_B`,
+  `EPWM_TZ_ACTION_EVENT_DCBEVT1`); it is simply unconfigured. See §8.
 
 **Rule going forward:** never assume "DCAEVT1 is gated by arming." Its A-only
 action must be explicitly set (`DISABLE`/`LOW`) for every arm state.
@@ -266,9 +282,16 @@ The danger of the A-only state is not "failed to dissipate current" — it is th
 state, but a half-driven, undefined bridge. The authoritative both-off state is
 delivered by Chain ① (nFAULT → TZ1 → OST → TZA/TZB) and the DRV's own OCP.
 
-**Open item:** make Chain ② symmetric before sustained POWERED runs — add a
-`DCBEVT1` force-low, or route the current trip through a TZ1..6 digital input so
-it uses TZA/TZB. (Tracked from `phase5.1-epwm-debug.md` §11.7.)
+**Open item:** make Chain ② symmetric — add a `DCBEVT1` force-low mirroring the
+existing `DCAEVT1` handling (DCBH=TRIPIN7, DCBEVT1=DCBH-high, `TZCTL.DCBEVT1` =
+`DISABLE` disarmed / `LOW` armed), or route the current trip through a TZ1..6
+digital input so it uses TZA/TZB. `DCBEVT1` is **available, not a hardware
+limit** — the asymmetry is a configuration gap. The structural mirror is
+**DRY_RUN-safe and can be configured now** (disarmed = DISABLE does nothing on
+the bench, exactly like the DCAEVT1 fix); only the *proof* that it actually cuts
+both sides on a real overcurrent awaits calibrated current injection + all-six-
+output scope in POWERED. Do not conflate "cannot verify the effect yet" with
+"cannot configure it yet." (Tracked from `phase5.1-epwm-debug.md` §11.7.)
 
 ---
 
