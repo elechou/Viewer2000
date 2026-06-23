@@ -557,3 +557,93 @@ low, both outputs) path remain the authoritative cutoffs, but the CMPSS path
 should be made symmetric (add `DCBEVT1` force-low, or route the trip through a
 TZ1-6 digital input that uses TZA/TZB) before sustained POWERED runs. This needs
 POWERED-mode hardware verification and is intentionally out of scope here.
+
+## 12. Follow-up plan — DCBEVT1 symmetric overcurrent shutdown
+
+This section is the actionable plan for the §11.7 follow-up. It is **not done**;
+it captures the refined finding, the code/SysConfig TODO, and the verification
+that gates it. See also `docs/protection-architecture.md` §6/§8.
+
+### 12.1 Refined finding (corrects the §11.7 wording)
+
+§11.7 read as if the low side only lags transiently. It does not: the asymmetry
+is **structural and permanent for this configuration**, not a transient. Per
+driverlib (`cpu1/device/driverlib/epwm.h`):
+
+- `EPWM_TZ_ACTION_EVENT_TZA` (output A) responds to `{TZ1..TZ6, DCAEVT1, DCAEVT2}`
+- `EPWM_TZ_ACTION_EVENT_TZB` (output B) responds to `{TZ1..TZ6, DCBEVT1, DCBEVT2}`
+
+`TZB` does **not** respond to `DCAEVT1`. So even when the current trip is armed
+and `DCAEVT1` latches `OST`, only `EPWMxA` is forced; `EPWMxB` keeps switching
+until the DRV OCP or the `OST -> TZ ISR -> driver-disable` path intervenes. Only
+a `TZ1..TZ6` source forces both sides (it is in both action lists), which is why
+nFAULT (TZ1) is symmetric and the CMPSS/DCAEVT1 path is not.
+
+Key consequence: `DCBEVT1` is **available and fully usable**
+(`EPWM_DC_MODULE_B`, `EPWM_TZ_SIGNAL_DCBEVT1`, `EPWM_TZ_ACTION_EVENT_DCBEVT1`);
+the single-sidedness is a **configuration gap, not a hardware limit**. The fix
+structure is DRY_RUN-safe and may be configured now; only its both-side *effect*
+on a real overcurrent awaits POWERED verification. Do not conflate "cannot verify
+the effect yet" with "cannot configure it yet."
+
+### 12.2 Fix options (pick one before implementing)
+
+- **Option A — mirror DCAEVT1 with DCBEVT1** (keeps the DC submodule's blanking
+  window capability; the per-event action becomes symmetric):
+  route `TRIPIN7 -> DCBH`, `DCBEVT1 = DCBH-high`, and manage
+  `TZCTL.DCBEVT1 = DISABLE` (disarmed) / `LOW` (armed), exactly mirroring the
+  current `DCAEVT1` handling.
+- **Option B — route TRIP7 through a TZ1..6 digital trip input** (simplest; OST
+  -> TZA/TZB is inherently both-sided; loses the DC blanking window): select the
+  power-trip X-BAR output into an unused `TZx` and enable it as an `OSHT` source.
+
+Option A matches "symmetric with DCAEVT1" and is the assumed default unless a DC
+blanking window is judged unnecessary for the current loop.
+
+### 12.3 TODO — SysConfig and code
+
+> ⚠ This likely needs **SysConfig** (`cpu1/sysconfig_cpu1.syscfg` -> generated
+> `board.c`) for the routing, which must be set in the SysConfig GUI by the user;
+> it cannot all be done as a direct code edit. The split below is the expected
+> shape; confirm against the actual generated symbols when implementing.
+
+SysConfig (user, GUI):
+
+- [ ] Option A: enable ePWM1/2/8 Digital Compare **B**, source `DCBH` from the
+  same `TRIPIN7` the DCA path uses; set `DCBEVT1 = DCBH high`, async (not synced),
+  matching the DCA settings. Or Option B: map the power-trip X-BAR output to an
+  unused `TZx` digital input and add it as a one-shot source on all three ePWMs.
+- [ ] Regenerate `board.c`; confirm the new `DCB*`/`TZ*` symbols and bases.
+
+Code (`cpu1/wire/wire_pwm.c`, mirror the existing DCAEVT1 paths — Option A):
+
+- [ ] `wire_pwm_configure_current_trip_base()`: add the DCB trip-input select,
+  `DCBEVT1 = DCBH-high` condition, event source/sync, and
+  `EPWM_setTripZoneAction(base, EPWM_TZ_ACTION_EVENT_DCBEVT1, EPWM_TZ_ACTION_DISABLE)`.
+- [ ] `wire_pwm_set_current_trip_output_action()`: also set `DCBEVT1` to
+  `LOW` (armed) / `DISABLE` (disarmed) on all three phases.
+- [ ] `wire_pwm_arm_current_trip()` / `wire_pwm_disarm_current_trip()`: also
+  enable/disable `EPWM_TZ_SIGNAL_DCBEVT1` in `TZSEL`.
+- [ ] config read-back / `s_current_trip_config_error`: add DCB config-error
+  bits, symmetric with the existing `PHASE_*_DCA` checks.
+- [ ] `wire_pwm_clear_dcaevt1_all()` and the wake-time clears: also clear the
+  `DCBEVT1` TZ flag and OST flag so a stale DCB latch cannot pollute START.
+- [ ] Keep the change DRY_RUN-safe: the disarmed action **must** be `DISABLE` so
+  an idle DCBEVT1 cannot float `EPWMxB` the way DCAEVT1 floated `EPWMxA`.
+
+### 12.4 Verification (POWERED gate — none of this is done)
+
+- [ ] **Bench (DRY_RUN, safe, do first):** cold-boot the new image, run
+  `run_pwm_runtime_probe.js`, confirm `TZCTL.DCBEVT1` reads `DISABLE` in RUNNING
+  and all six outputs are clean complementary PWM (no `EPWMxB` float — the
+  symmetric DCAEVT1 regression check applied to the B side).
+- [ ] **POWERED, calibrated:** with approved config, calibrated current limits,
+  and motor connected, inject a real overcurrent and scope **all six** gate
+  outputs with an edge-triggered capture; confirm `EPWMxA` **and** `EPWMxB` both
+  force low within spec on the same trip. A register-level `TZOSTFLG`/`DCBEVT1`
+  flag is **not** acceptable as a substitute (the Phase 5.0 verification-gap
+  lesson).
+- [ ] **Latency:** measure trip-edge -> all-six-output-low latency; record in
+  `BRINGUP.md` as a Phase 5 powered gate.
+- [ ] Only then update `protection-architecture.md` §6/§8 to mark Chain ②
+  symmetric and remove the single-sided caveat.
