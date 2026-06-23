@@ -18,6 +18,19 @@
 > one-second 2 Hz / 0.10-modulation V/f window, `motor_enable=0`, and APP_STOP
 > with no fault. With VM at 12 V and the supply current limit at 0.25 A, the
 > operator observed approximately one quarter of a mechanical revolution.
+>
+> **Post-acceptance refactor**: the current commissioning application keeps the
+> accepted V/f behavior but is intentionally written as a streaming embedded
+> control path inside `control()`: sample, offset, neutral-or-V/f, output. The
+> accepted first-rotation evidence remains the tagged image above.
+>
+> **Post-acceptance commissioning baseline**: the current FLASH source builds
+> as image `0xF0E2A1E2` and uses `freq_cmd_hz=2.0`, `freq_slew=5.0`,
+> `vf_v_per_hz=0.20`, `vf_boost_V=0.40`, `mod_max=0.15`, and
+> `offset_ticks=4000`. The operator reported an unloaded 12 V run for about
+> 20 minutes with normal user disable, APP stop/restart behavior, and a
+> functional nFAULT emergency stop. This is still not loaded operation,
+> calibrated current, gate timing, or measured shutdown latency.
 
 ## 0. Continuation Checkpoint
 
@@ -29,23 +42,31 @@ Current implementation facts:
 - `APP_START` alone still commands neutral. Motion requires a parameter write
   setting `motor_enable=1` after the application reaches `app_state=READY`.
 - Startup offset averaging uses `offset_ticks=4000` by default.
-- Accepted first-rotation settings were `freq_cmd_hz=2.0`, `freq_slew=5.0`,
-  `vf_v_per_hz=0.15`, `vf_boost_V=0.30`, `mod_max=0.10`,
+- The current user layer has no app-level fault latch, reason-code gate, VBUS
+  gate, or current-deviation gate. VBUS and current deviation are observables;
+  platform hardware protection remains the safety boundary.
+- The current commissioning defaults are `freq_cmd_hz=2.0`, `freq_slew=5.0`,
+  `vf_v_per_hz=0.20`, `vf_boost_V=0.40`, `mod_max=0.15`, and
+  `offset_ticks=4000`.
+- The historical accepted first-rotation image used `freq_cmd_hz=2.0`,
+  `freq_slew=5.0`, `vf_v_per_hz=0.15`, `vf_boost_V=0.30`, `mod_max=0.10`,
   `i_dev_limit=320.0`, `vbus_min_V=8.0`, and `vbus_max_V=18.0`.
 - The largest sampled CPU-side raw current deviation in the accepted run was
   `i_dev_abs=29.1616`, far below the configured 320-count application limit.
-- The test ended in platform `IDLE`, `fault_code=0`, app `READY`,
-  `app_fault=0`, all duties neutral, and the SCI port released.
+- The historical accepted first-rotation test ended in platform `IDLE`,
+  `fault_code=0`, app `READY`, `app_fault=0`, all duties neutral, and the SCI
+  port released.
 
 Recommended next-session starting point:
 
-1. Repeat the accepted run only if a baseline check is needed: 12 V, 0.25 A,
-   `freq_cmd_hz=2.0`, `mod_max=0.10`, one second, unloaded.
-2. For the next motion increment, change only one variable at a time. The
-   conservative first candidates are supply limit `0.25 A -> 0.5 A` or
-   `mod_max=0.10 -> 0.15`, still with a one-second unloaded run.
-3. Record `app_state`, `app_fault`, `freq_run_hz`, `mod_cmd`, duty commands,
-   `i_dev_abs`, platform state/fault, and the observed mechanical motion.
+1. Repeat the accepted endurance baseline only if a baseline check is needed:
+   12 V, unloaded, `freq_cmd_hz=2.0`, `vf_v_per_hz=0.20`,
+   `vf_boost_V=0.40`, `mod_max=0.15`.
+2. For the next motion increment, change only one variable at a time. Keep
+   later increases short and unloaded until current calibration and gate timing
+   are captured.
+3. Record `app_state`, `freq_run_hz`, `mod_cmd`, duty commands, `i_dev_abs`,
+   platform state/fault, and the observed mechanical motion.
 4. Do not claim loaded operation, calibrated ampere current, gate timing, or
    shutdown latency from these low-energy runs.
 
@@ -60,7 +81,7 @@ Goals:
 - require an explicit user `motor_enable` after readiness checks;
 - ramp frequency and voltage with bounded slew and modulation;
 - produce balanced three-phase sinusoidal PWM for first-motion V/f;
-- return to neutral on user disable or any application-level interlock;
+- return to neutral on user disable;
 - retain hardware Trip Zone/CMPSS/DRV protection as the safety authority.
 
 Non-goals:
@@ -69,7 +90,8 @@ Non-goals:
 - no motor-parameter identification beyond what the V/f demo needs;
 - no field weakening, regenerative-braking strategy, or direction reversal
   while spinning;
-- no rated-speed, rated-current, loaded, endurance, or unattended run;
+- no rated-speed, rated-current, loaded, or unattended run;
+- no broad endurance claim beyond the recorded unloaded low-energy baseline;
 - no platform API expansion unless implementation proves the user boundary is
   insufficient.
 
@@ -104,32 +126,27 @@ Minimum tunables:
 | Name | Meaning | Reset value |
 |---|---|---:|
 | `motor_enable` | Explicit run request inside platform RUNNING | `0` |
-| `app_clear` | Clear the app-only FAULT latch when `motor_enable=0` | `0` |
 | `freq_cmd_hz` | Signed electrical-frequency request | `2.0f` |
 | `freq_slew` | Frequency slew limit in Hz/s | `5.0f` |
-| `vf_v_per_hz` | Phase-peak V/Hz slope | `0.15f` |
-| `vf_boost_V` | Low-speed voltage boost | `0.30f` |
-| `mod_max` | Maximum sinusoidal modulation index | `0.10f` |
-| `vbus_min_V` | Application undervoltage interlock | `8.0f` |
-| `vbus_max_V` | Application overvoltage interlock | `18.0f` |
-| `i_dev_limit` | CPU-side early-neutral limit on absolute raw-count deviation from the Phase 5.2 offset | above measured neutral noise and below the provisional hardware window |
+| `vf_v_per_hz` | Phase-peak V/Hz slope | `0.20f` |
+| `vf_boost_V` | Low-speed voltage boost | `0.40f` |
+| `mod_max` | Maximum sinusoidal modulation index | `0.15f` |
 | `offset_ticks` | Zero-current averaging window | `4000` |
 
 Minimum observables:
 
 ```text
-app_state, app_fault, freq_run_hz, elec_phase, mod_cmd
+app_state, freq_run_hz, elec_phase, mod_cmd
 app_duty_a, app_duty_b, app_duty_c
 adc_ia_raw, adc_ib_raw, adc_ic_raw, ia_offset, ib_offset, ic_offset
 ia_dev, ib_dev, ic_dev, i_dev_abs
 adc_vbus_raw, vbus_V, enc_raw, enc_angle, enc_seq, enc_ok
 ```
 
-`i_dev_limit` is a user-code commissioning interlock, not an ampere limit and
-not protection. It may command neutral on the next ISR application point, but
-the asynchronous hardware trip and supply current limit remain independently
-authoritative. Ampere conversion waits for proper current-calibration
-equipment.
+`i_dev_abs` is only an observable raw-count deviation from the acquired offset;
+it is not an ampere limit and not protection. The asynchronous hardware trip
+and supply current limit remain independently authoritative. Ampere conversion
+waits for proper current-calibration equipment.
 
 ## 4. Application State Machine
 
@@ -137,8 +154,6 @@ Use an explicit application state published as `app_state`:
 
 ```text
 OFFSET -> READY -> RUN
-   |        |       |
-   +------> FAULT
 ```
 
 ### OFFSET
@@ -146,7 +161,6 @@ OFFSET -> READY -> RUN
 - `setup()` initializes the V/f instance and leaves all duties neutral.
 - `control()` reads the completed current frame every tick.
 - Accumulate A/B/C zero-current offsets while all three duties remain 0.5.
-- Reject the window if the ADC range or noise violates the Phase 5.2 bounds.
 - Publish the latest `wire_as5600_get_latest()` sample before READY. The
   encoder is observed but is not yet used as a first-rotation interlock or for
   commutation.
@@ -155,8 +169,7 @@ OFFSET -> READY -> RUN
 
 - Continue publishing ADC, VBUS, and encoder data with neutral output.
 - Ignore `freq_cmd_hz` until `motor_enable != 0`.
-- Enter RUN only when VBUS is in range, current is near the offset point, and
-  no application latch is active.
+- Enter RUN when `motor_enable != 0`.
 
 ### RUN
 
@@ -171,7 +184,7 @@ modulation = clamp(2 * vphase_cmd / vbus_V, 0, mod_max)
 
 The accepted implementation computes `mod_cmd` from
 `vf_boost_V + vf_v_per_hz * abs(freq_run_hz)` and clamps it with `mod_max`
-and a hard 0.20 ceiling.
+before writing the duty commands.
 
 - Advance electrical phase from the CPU1 control rate only:
 
@@ -197,18 +210,12 @@ duty_c = 0.5 + 0.5*modulation*sin(phase + 2*pi/3)
 The first implementation uses a small deterministic sine approximation over a
 unit phase range instead of pulling in a math-library `sinf()` dependency.
 
-### FAULT
+### No App-Level Fault Latch
 
-Latch `app_fault` and command neutral when any of these occurs:
-
-- VBUS outside the configured range;
-- absolute raw-count deviation from the Phase 5.2 zero offset above
-  `i_dev_limit`;
-- invalid parameter set.
-
-`app_clear` may clear only the application latch when `motor_enable=0`; it does
-not clear or mask platform hardware faults. APP_STOP followed by APP_START
-remains the full reset-and-restart path.
+The current user application has no app-level FAULT latch and no reason-code
+gate. It stays neutral during offset acquisition or when `motor_enable=0`, then
+runs the V/f calculation when enabled. VBUS and current deviation are observed
+but not adjudicated by user code.
 
 A platform hardware fault may preempt any state above. User code does not
 clear, reconfigure, or mask that fault.
@@ -233,7 +240,7 @@ negative frequency. No dynamic allocation and no blocking call is permitted.
 
 - refactor the existing Phase 5.0 ADC/VBUS/AS5600 reads into small user helpers;
 - add Phase 5.2 zero-offset subtraction and raw-count deviation observables;
-- publish application state and all interlock inputs;
+- publish application state and measured inputs;
 - keep `motor_enable=0` and all duties neutral.
 
 Done when a POWERED START reaches READY without rotor motion and Scope2000
@@ -252,11 +259,12 @@ This is a code check, not a new hardware-verification campaign.
 
 1. Secure and unload the motor; use the Phase 5.2 bus voltage and supply limit.
 2. APP_START and wait for `app_state=READY`; `motor_enable` remains zero.
-3. Set a small electrical-frequency request and low V/f magnitude.
-4. Set `motor_enable=1` for a short run.
-5. Confirm rotor movement, encoder direction/progress, balanced raw-current
-   shape, and deviations below `i_dev_limit` without a hardware trip.
-6. Set `motor_enable=0`, confirm neutral output, then APP_STOP.
+3. Confirm all duties are neutral.
+4. Set a small electrical-frequency request and low V/f magnitude.
+5. Set `motor_enable=1` for a short run.
+6. Confirm rotor movement, encoder direction/progress, and raw-current shape
+   without a hardware trip.
+7. Set `motor_enable=0`, confirm neutral output, then APP_STOP.
 
 If direction is wrong, power down before changing phase order, encoder sign, or
 command sign. Do not correct wiring/mapping while the bridge is enabled.
@@ -292,11 +300,25 @@ Not claimed by this node:
 - [ ] CPU1/CPU2 RAM-build acceptance for this application.
 - [ ] Encoder sequence/angle consistency with the observed rotor movement.
 - [ ] ISR overflow/budget counters sampled before and after the V/f window.
-- [ ] Loaded operation, current calibration in amperes, physical nFAULT
-  lifecycle, gate-source/switch-node timing, or calibrated-current shutdown.
+- [ ] Loaded operation, current calibration in amperes, gate-source/switch-node
+  timing, measured nFAULT-to-PWM shutdown latency, or calibrated-current
+  shutdown.
 
 No repeated endurance run is required for this Phase 5.5 first-rotation
 acceptance.
+
+Post-acceptance streaming commissioning baseline:
+
+- [x] CPU1 FLASH build `0x0506B814` passes with the streaming user application
+  baked into the user descriptor table: 37 user descriptors, skipped 0.
+- [x] CPU1 FLASH build `0xF0E2A1E2` passes with the current `0.20/0.40/0.15`
+  commissioning defaults baked into the user descriptor table: 37 user
+  descriptors, skipped 0.
+- [x] Motor-connected, unloaded, 12 V operation ran for about 20 minutes with
+  normal user disable and APP stop/restart behavior.
+- [x] A functional nFAULT emergency-stop check was exercised successfully.
+- [ ] Loaded operation, calibrated current in amperes, oscilloscope
+  gate/switch-node timing, and measured shutdown latency remain open.
 
 ## 8. Handoff to Later Phase 5 Work
 

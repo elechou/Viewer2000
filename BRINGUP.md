@@ -700,3 +700,35 @@ one-second window, so this is also the first observed motor rotation. It does
 not prove torque margin, loaded operation, current calibration in amperes,
 nFAULT lifecycle, gate-source/switch-node timing, or calibrated-current
 shutdown evidence.
+
+2026-06-23 post-acceptance streaming user-app refactor software/build
+verification:
+`python3 -m unittest discover cpu1/tools` passed 26 tests. A CPU1 FLASH full
+build then passed with 0 errors and the existing 5 SysConfig LaunchPad pin
+warnings. User-boundary verification reported one user object and ownership
+`61bb2e1ebb1b`; descriptor baking patched build hash `0x0506B814` with 37/112
+user descriptors and skipped 0. The streaming user app keeps `control()` as a
+single sample-offset-neutral-or-V/f-output path and removes the old app-level
+`app_fault`/`app_clear` latch interface plus the later discarded
+`run_allowed`/`block_reason`/`i_warn` reason-code surface. This was not flashed
+and does not claim motor-disconnected smoke, motor-connected motion, or any
+powered hardware acceptance for the refactored image.
+
+2026-06-23 streaming V/f commissioning endurance run:
+The current `cpu1/app/user.c` commissioning defaults are `motor_enable=0`,
+`freq_cmd_hz=2.0`, `freq_slew=5.0`, `vf_v_per_hz=0.20`,
+`vf_boost_V=0.40`, `mod_max=0.15`, and `offset_ticks=4000`. A CPU1 FLASH full
+build of this source passed with 0 errors and the existing 5 SysConfig
+LaunchPad pin warnings. User-boundary verification again reported one user
+object and ownership `61bb2e1ebb1b`; descriptor baking patched build hash
+`0xF0E2A1E2` with 37/112 user descriptors and skipped 0.
+
+The operator reported a motor-connected, unloaded, low-energy 12 V run for
+approximately 20 minutes with no abnormal behavior. User disable, application
+stop/restart, and repeated shutdown/restart behavior were checked successfully.
+A functional nFAULT emergency-stop test was also exercised successfully. This
+extends the Phase 5.5 commissioning confidence from first observed rotation to
+an unloaded sustained low-energy baseline for this V/f client. It still does
+not claim loaded operation, calibrated current in amperes, rated-speed/rated-
+current behavior, oscilloscope gate/switch-node timing, or measured nFAULT-to-
+PWM shutdown latency.
