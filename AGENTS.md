@@ -1,3 +1,22 @@
+<!-- DO NOT EDIT - This part is automatically generated. -->
+
+# Agent Guidelines
+
+## CCStudio IDE Installation Directory
+
+CCStudio IDE is installed at `/Applications/ti/ccs2100`. Save it as `{ccs-install-dir}` for the session — scripts and tools will need it.
+
+## MANDATORY Pre-Task Requirement (DO NOT SKIP)
+
+**CRITICAL - NO EXCEPTIONS**: Before ANY CCS/Texas Instruments-related task (even simple ones), you MUST read `/Applications/ti/ccs2100/ccs/Code Composer Studio.app/Contents/Resources/ai/CCS.md`. This file includes information on how to interact with CCS as well as device-specific information (UART backchannel pins, LED setup, transmit best practices, etc.). 
+
+Do NOT call any ccs-project, ccs-debug, ccs-sysconfig, or ccs-serial MCP tools until CCS.md has been read.
+
+
+<!-- DO NOT EDIT - This part is automatically generated. -->
+
+<!-- User instructions should be added below this line -->
+
 # Commit & Language Rule
 
 Going forward, write **code comments in English**. Existing Chinese comments are kept as-is and translated opportunistically when a file is next edited. **Commit messages and documentation (`.md`) are English.** (History: the repo was bilingual — Chinese comments/docs, English identifiers — until the 2026-06-19 switch that makes the whole repo referenceable by non-native-Chinese readers.)
@@ -171,9 +190,11 @@ float ia_A;
 void setup(void);
 void control(void)
 {
-    ia_raw = ADC_readResult(myADC1_RESULT_BASE, myADC1_SOC1);
+    ia_raw = v2k_io.adc.ia_raw;
     ia_A = user_current_convert(ia_raw);
-    v2k_io.out.duty_a = user_control_step(ia_A);
+    v2k_pwm_apply(user_control_step_a(ia_A),
+                  user_control_step_b(ia_A),
+                  user_control_step_c(ia_A));
 }
 ```
 
@@ -236,7 +257,7 @@ void control(void)
 - **Phase 2 — Time-base proof + protection**: the EPWM → ADC SOC → EOC ISR chain is up, GPIO toggle + scope-measured interrupt latency and jitter; configure FREE_SOFT; CMPSS hardware trip + fault-latch state machine.
 - **Phase 3 — Executor + observability**: the ISR multi-rate scheduling framework (software division + **phase staggering** — slow loops don't all bunch onto the same `k%N==0` tick, flattening WCET; whether slow loops run inline or are handed to a low-priority soft interrupt is decided here), the dual-mode RAM scope (snapshot first, consumed by CCS Graph), the parameter double-buffer, the descriptor table.
 - **Phase 3.5 — SCI dumb data pump**: CPU2 runs a minimal protocol subset over the XDS110 VCP (enumerate the descriptor table + Live small-N blocks + snapshot drain). **Significance: the first real consumer of the descriptor table, scope plane, and command plane** — CCS Graph reads memory directly over JTAG, bypassing CPU2 / the SPSC consumer side / IPC, so it doesn't count; the biggest architectural risk point, the dual-core split, is validated early here rather than left to Phase 6. Scope2000 lands the first cut of `V2kSource` in parallel; the compatibility bridge only reserves the transport/capability boundary.
-- **Phase 4 — User-interface boundary (L1↔L3)** ([plan](docs/phase4-user-interface.md)): firmware boundary work — the user surface becomes Arduino-style **`setup()` / `control()`** (`void`) over a global `v2k_io.in/.out`; the physical package becomes `runtime/`, `wire/`, and `app/`; remove the boot default binding. Its single-channel `wire_acquire` + platform count→physical path was a deliberate demo boundary and was superseded for motor acquisition by Phase 5.0. Phase 4's lasting contracts are ISR ownership, safe output application, reset lifecycle, and package separation.
+- **Phase 4 — User-interface boundary (L1↔L3)** ([plan](docs/phase4-user-interface.md)): firmware boundary work — the user surface becomes Arduino-style **`setup()` / `control()`** (`void`) over a global `v2k_io`; the physical package becomes `runtime/`, `wire/`, and `app/`; remove the boot default binding. Its single-channel `wire_acquire` + platform count→physical path was a deliberate demo boundary and was superseded for motor acquisition by Phase 5.0 and the 2026-06-24 grouped interface (`v2k_io.sys`, `v2k_io.adc`, explicit `v2k_pwm_apply()`). Phase 4's lasting contracts are ISR ownership, safe output submission, reset lifecycle, and package separation.
 - **Phase 4.1 — User-code ownership and reset boundary** ([plan](docs/phase4.1-user-code-boundary.md)): turn the Phase 4 reset prototype into a general build/linker contract. All writable state owned by plain-C user objects is collected automatically, restored from linker-owned RAM/FLASH golden images on every START, and audited post-link; user pragmas and the fixed RAM snapshot disappear; overflow or escaped state fails the build. This phase defines the single user-object scope later consumed by Phase 4.5.
 - **Phase 4.5 — Build-time symbol baking** ([plan](docs/phase4.5-symbol-baking.md)): a build tool reads the firmware `.out` DWARF and bakes user plain-C variable `name→addr→type` into the descriptor table, so the names travel with the device and Scope2000 shows them by name on any PC with no `.out` present (no host DWARF parser, registration macro, or mandated declaration style). Baked entries carry the USER kind bit so Scope2000 can separate them from platform/system diagnostics. It consumes Phase 4.1's user-object scope but does not participate in runtime reset correctness.
 - **Phase 4.6 — Runtime load observability** ([plan](docs/phase4.6-runtime-load-observability.md)): aggregate one-second CPU1 ISR load windows with coherent peak-tick ADC/Control/Scope/Runtime breakdown, expose the values as system Variables and in STATUS diagnostics, and render the control-cycle budget in Scope2000. The current firmware acceptance baseline is 20 kHz; 100 kHz is deferred until the platform hot path is optimized. GPIO timing remains the authority for profiler overhead.
@@ -262,10 +283,10 @@ void control(void)
 - [x] Host-link physical layer: **SCI dumb-pump (3.5) → EtherCAT (6)**, decided by elimination from the 100 kHz × 8ch requirement; CAN-FD/W5500 do not meet it
 - [x] CLA ownership: one per core; **whether to use it** is still open (keeping control code in plain C preserves the option)
 - [x] **L2 Control-code ownership: the platform ships no control-math library; control math is user-supplied inside app-owned modules** (C2000Ware MOTORCONTROL-SDK / DCL / hand-written / Simulink-generated C). The platform only defines the `setup()`/`control()` boundary plus safe output and cache APIs. Rationale: duplicating a documented vendor SDK is a maintenance/pedagogical liability, and PC-SIL is low-value for this single-developer + strong on-target-observability context. (Revised 2026-06-21.)
-- [x] **User API = Arduino-style `setup()` / `control()` (`void`) plus safe `v2k_io.out` commands**. `v2k_io.in` carries platform state/schedule, while motor acquisition may directly read platform-configured, completed ADC results through DriverLib. `loop()` remains rejected because it hides deterministic ISR identity; `on_start()` remains unnecessary because automatic reset precedes `setup()`. (Revised 2026-06-21.)
+- [x] **User API = Arduino-style `setup()` / `control()` (`void`) plus grouped `v2k_io` and explicit PWM submission**. `v2k_io.sys` carries platform state/schedule, `v2k_io.adc` carries the completed semantic raw ADC frame, and `v2k_pwm_apply(a,b,c)` submits the recommended duty command path. Advanced users may directly call native TI read/write APIs; runtime does not implicitly apply PWM after `control()` returns. `loop()` remains rejected because it hides deterministic ISR identity; `on_start()` remains unnecessary because automatic reset precedes `setup()`. (Revised 2026-06-24.)
 - [x] **Stop/start = unconditional full reset of all user state**: on every IDLE→RUNNING the platform restores user-owned mutable storage to declared initial values before output is enabled — a safety guarantee (a wound-up integrator/PLL can never restart from its FAULT value) that does not depend on the user writing a reset hook. Tuned parameters reset too; each run starts reproducibly from the source-declared values. Phase 4 proved the lifecycle on explicitly sectioned demo state; Phase 4.1 completes automatic object ownership, linker-owned RAM/FLASH golden images, and build-time escape detection. (Decided 2026-06-19.)
-- [x] **L0↔L1 portability seam**: L1 (v2k runtime) calls a small compile-time substrate for safe output application, timing, interrupt acknowledgement, foreground device service, and protection. It does not duplicate documented DriverLib result APIs or own user count→physical conversion. Transactional devices without a suitable vendor driver may still have project drivers, but their control-facing API is cache-only and non-blocking. Safe read-only L0 APIs may be public when they preserve physical semantics and do not change timing/safety configuration. (Revised 2026-06-21.)
-- [x] **ADC acquisition boundary**: the platform owns pinmux, SOC trigger schedule, EOC validity, and protection; the user owns result reads and physical conversion. At the current 20 kHz motor baseline all seven configured motor analog SOCs form one ePWM-triggered frame. A slow control loop consumes this frame less often; it does not manually trigger a "slow ADC." (Decided 2026-06-21.)
+- [x] **L0↔L1 portability seam**: L1 (v2k runtime) calls a small compile-time substrate for ADC frame acquisition, explicit PWM command application, timing, interrupt acknowledgement, foreground device service, and protection. It keeps the recommended app path readable without hiding native TI APIs. Transactional devices without a suitable vendor driver may still have project drivers, but their control-facing API is cache-only and non-blocking. Safe read-only L0 APIs may be public when they preserve physical semantics and do not change timing/safety configuration. (Revised 2026-06-24.)
+- [x] **ADC acquisition boundary**: the platform owns pinmux, SOC trigger schedule, EOC validity, and protection; the default app reads semantic raw counts from `v2k_io.adc` and owns physical conversion. Advanced users may directly read platform-configured, completed ADC results through DriverLib. At the current 20 kHz motor baseline all seven configured motor analog SOCs form one ePWM-triggered frame. A slow control loop consumes this frame less often; it does not manually trigger a "slow ADC." (Revised 2026-06-24.)
 - [x] **Observability of user variables = build-time symbol baking (Phase 4.5)**, not host `.out` parsing (would tie Scope2000 to the project + risk a stale/wrong ELF) and not a registration macro (mandated declaration style). The student writes plain C; names are baked into the descriptor table from DWARF at build time and travel with the device; the host is unchanged. (Decided 2026-06-19.)
 - [x] **Control-math sourcing**: generic primitives (PID/LPF/ramp) from C2000Ware DCL; PMSM transforms from MOTORCONTROL-SDK; SRM-specific control hand-written (the standard FOC SDK has no SRM equivalent — not wheel-reinvention). The platform ships none; demos/examples reach these via the include path. (Decided 2026-06-19.)
 - [x] **Current control-rate acceptance baseline = 20 kHz**. The already-recorded 100 kHz experiments remain useful evidence, and the communication architecture retains 100 kHz transport headroom, but 100 kHz is not a Phase 4.x acceptance gate. It may be reconsidered after profiling-driven platform optimization and/or CLA partitioning. (Decided 2026-06-20.)

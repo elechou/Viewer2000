@@ -16,22 +16,35 @@
 typedef struct {
     v2k_tick_t tick;
     uint16_t due_mask;
-    uint16_t sys_state;
+    uint16_t state;
     uint16_t fault_code;
-} v2k_io_in_t;
+} v2k_sys_t;
+
+typedef struct {
+    uint16_t va_raw;
+    uint16_t vb_raw;
+    uint16_t vc_raw;
+    uint16_t vbus_raw;
+    uint16_t ia_raw;
+    uint16_t ib_raw;
+    uint16_t ic_raw;
+} v2k_adc_t;
 
 typedef struct {
     float duty_a;
     float duty_b;
     float duty_c;
-} v2k_io_out_t;
+} v2k_pwm_t;
 
 typedef struct {
-    v2k_io_in_t in;
-    v2k_io_out_t out;
+    v2k_sys_t sys;
+    v2k_adc_t adc;
+    v2k_pwm_t pwm;
 } v2k_io_t;
 
 extern volatile v2k_io_t v2k_io;
+
+void v2k_pwm_apply(float duty_a, float duty_b, float duty_c);
 
 void setup(void);
 void control(void);

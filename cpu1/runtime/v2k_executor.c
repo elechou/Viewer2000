@@ -89,22 +89,24 @@ __interrupt void v2k_executor_isr(void)
     cycle_start = wire_cycle_count();
     latency = wire_pwm_counter();
 
-    v2k_io.in.tick = g_v2k_tick;
-    v2k_io.in.sys_state = g_v2k_sm_state;
-    v2k_io.in.fault_code = g_v2k_fault_code;
-    v2k_io.in.due_mask = v2k_schedule(&param_due);
+    v2k_io.sys.tick = g_v2k_tick;
+    v2k_io.sys.state = g_v2k_sm_state;
+    v2k_io.sys.fault_code = g_v2k_fault_code;
+    wire_acquire_adc(&v2k_io.adc);
+    v2k_io.sys.due_mask = v2k_schedule(&param_due);
     if ((param_due != 0u) && (v2k_user_reset_is_active() == 0u))
     {
         v2k_param_apply_ready();
     }
-    g_v2k_due_mask = v2k_io.in.due_mask;
+    g_v2k_due_mask = v2k_io.sys.due_mask;
 
     control_enabled = (g_v2k_sm_state == V2K_STATE_RUNNING) ? 1u : 0u;
     if (control_enabled != 0u)
     {
-        // Time only the user control() body. CPUTIMER1 counts down, so the
-        // elapsed cycles are (earlier reading - later reading). wire_apply and
-        // the rest of the ISR are accounted to the Runtime segment, not here.
+        // Time the whole user control() body. If the user calls v2k_pwm_apply()
+        // or native TI EPWM write APIs, that explicit output work is charged to
+        // the user Control segment. Runtime no longer applies PWM implicitly
+        // after control() returns.
         control_start = wire_cycle_count();
         v2k_user_control_tick();
         control_done = wire_cycle_count();
@@ -114,8 +116,6 @@ __interrupt void v2k_executor_isr(void)
     {
         elapsed = 0u;
     }
-    wire_apply(&v2k_io.out);
-
     control_end = wire_cycle_count();
     g_v2k_control_cycles = elapsed;
     if (elapsed > g_v2k_control_cycles_max)
@@ -123,7 +123,7 @@ __interrupt void v2k_executor_isr(void)
         g_v2k_control_cycles_max = elapsed;
     }
 
-    v2k_scope_sample_all(v2k_io.in.tick);
+    v2k_scope_sample_all(v2k_io.sys.tick);
     scope_end = wire_cycle_count();
     elapsed = control_end - scope_end;
     g_v2k_scope_cycles = elapsed;
@@ -169,7 +169,7 @@ __interrupt void v2k_executor_isr(void)
     s_profile_prev_control = g_v2k_control_cycles;
     s_profile_prev_scope = g_v2k_scope_cycles;
     s_profile_prev_latency = latency;
-    s_profile_prev_tick = v2k_io.in.tick;
+    s_profile_prev_tick = v2k_io.sys.tick;
     s_profile_prev_valid = 1u;
     wire_gpio_probe_set(0u);
 }

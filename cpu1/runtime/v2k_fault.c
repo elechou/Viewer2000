@@ -141,7 +141,7 @@ void v2k_fault_poll(volatile v2k_cpu1_status_t *st)
         if (start_result == WIRE_START_FAILED)
         {
             v2k_user_disable();
-            wire_apply(&v2k_io.out);
+            wire_pwm_apply_command(&v2k_io.pwm);
             s_start_pending = 0u;
             s_cmd_handled = s_start_seq;
             st->ack_seq = s_start_seq;
@@ -160,7 +160,7 @@ void v2k_fault_poll(volatile v2k_cpu1_status_t *st)
             {
                 uint16_t release_ok;
 
-                wire_apply(&v2k_io.out);
+                wire_pwm_apply_command(&v2k_io.pwm);
                 // The driver is awake and nFAULT is released in powered mode;
                 // dry-run mode intentionally leaves the driver disabled. Clear
                 // wake-time TZ flags only now, then release the MCU PWM pins.
@@ -223,7 +223,7 @@ void v2k_fault_poll(volatile v2k_cpu1_status_t *st)
                 if (g_v2k_sm_state == V2K_STATE_RUNNING)
                 {
                     v2k_user_disable();
-                    wire_apply(&v2k_io.out);
+                    wire_pwm_apply_command(&v2k_io.pwm);
                     // Disable both TZ interrupt levels (PIE level + EPWM-level
                     // TZEINT.OST) first, then force OST to gate the output: force
                     // therefore does not trigger the ISR (no “expected trip” flag

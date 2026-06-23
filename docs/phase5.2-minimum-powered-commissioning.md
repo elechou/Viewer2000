@@ -27,12 +27,12 @@ The tracked CPU1 RAM and FLASH compiler predefines are in `cpu1/.cproject`.
 `cpu1/wire/wire_f28p65x.c` deliberately retains its fail-safe DRY_RUN/approval
 off fallback when those project settings are absent.
 
-`cpu1/app/user.c` has no tunable duty variable. Every control tick writes:
+`cpu1/app/user.c` has no tunable duty variable. Every control tick submits:
 
 ```c
-v2k_io.out.duty_a = V2K_DUTY_NEUTRAL;
-v2k_io.out.duty_b = V2K_DUTY_NEUTRAL;
-v2k_io.out.duty_c = V2K_DUTY_NEUTRAL;
+v2k_pwm_apply(V2K_DUTY_NEUTRAL,
+              V2K_DUTY_NEUTRAL,
+              V2K_DUTY_NEUTRAL);
 ```
 
 Therefore APP_START may wake/configure the DRV and release the protected PWM

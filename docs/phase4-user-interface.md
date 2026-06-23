@@ -10,6 +10,9 @@
 > is not the current motor-acquisition contract. Phase 5.0 keeps platform-owned
 > ADC timing/EOC validity and safe output application, but lets user code call
 > non-blocking DriverLib result APIs directly and own physical conversion.
+> The 2026-06-24 interface update supersedes the old `v2k_io.in/.out` naming:
+> current app code uses grouped `v2k_io.sys`, `v2k_io.adc`, and explicit
+> `v2k_pwm_apply(a, b, c)` PWM submission.
 >
 > **Scope**: Phase 4 is **firmware boundary work only**. It writes **no control math** (the platform ships none — control math is user-supplied; see [AGENTS.md](../AGENTS.md) Decisions). It turns the user surface into an **Arduino-style `setup()` / `control()`**, draws the **wire↔runtime portability seam**, and proves the reset lifecycle with a manually sectioned demo. [Phase 4.1](phase4.1-user-code-boundary.md) hardens that prototype into an automatic, linker-verified user-code/state boundary. The "user's variables visible by name on any PC" experience remains the separate build-tooling effort [Phase 4.5](phase4.5-symbol-baking.md).
 >

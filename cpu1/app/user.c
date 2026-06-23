@@ -2,8 +2,6 @@
 // user.c - Phase 5.5 low-energy open-loop V/f first-rotation application
 //=============================================================================
 
-#include "board.h"
-#include "driverlib.h"
 #include "v2k.h"
 #include "wire/wire_as5600.h"
 
@@ -95,9 +93,6 @@ void setup(void) {
   app_duty_a = V2K_DUTY_NEUTRAL;
   app_duty_b = V2K_DUTY_NEUTRAL;
   app_duty_c = V2K_DUTY_NEUTRAL;
-  v2k_io.out.duty_a = app_duty_a;
-  v2k_io.out.duty_b = app_duty_b;
-  v2k_io.out.duty_c = app_duty_c;
 }
 
 void control(void) {
@@ -115,14 +110,13 @@ void control(void) {
   float sin_b;
   float sin_c;
 
-  // EPWM1 SOCA has completed this seven-channel frame before ISR entry.
-  adc_va_raw = ADC_readResult(myADC0_RESULT_BASE, myADC0_SOC0);
-  adc_vb_raw = ADC_readResult(myADC0_RESULT_BASE, myADC0_SOC1);
-  adc_vc_raw = ADC_readResult(myADC1_RESULT_BASE, myADC1_SOC0);
-  adc_vbus_raw = ADC_readResult(myADC0_RESULT_BASE, myADC0_SOC3);
-  adc_ia_raw = ADC_readResult(myADC1_RESULT_BASE, myADC1_SOC1);
-  adc_ib_raw = ADC_readResult(myADC0_RESULT_BASE, myADC0_SOC2);
-  adc_ic_raw = ADC_readResult(myADC2_RESULT_BASE, myADC2_SOC0);
+  adc_va_raw = v2k_io.adc.va_raw;
+  adc_vb_raw = v2k_io.adc.vb_raw;
+  adc_vc_raw = v2k_io.adc.vc_raw;
+  adc_vbus_raw = v2k_io.adc.vbus_raw;
+  adc_ia_raw = v2k_io.adc.ia_raw;
+  adc_ib_raw = v2k_io.adc.ib_raw;
+  adc_ic_raw = v2k_io.adc.ic_raw;
 
   vbus_V = (float)adc_vbus_raw * USER_VBUS_VOLTS_PER_COUNT;
 
@@ -166,9 +160,7 @@ void control(void) {
     app_duty_a = V2K_DUTY_NEUTRAL;
     app_duty_b = V2K_DUTY_NEUTRAL;
     app_duty_c = V2K_DUTY_NEUTRAL;
-    v2k_io.out.duty_a = app_duty_a;
-    v2k_io.out.duty_b = app_duty_b;
-    v2k_io.out.duty_c = app_duty_c;
+    v2k_pwm_apply(app_duty_a, app_duty_b, app_duty_c);
     control_ticks++;
     return;
   }
@@ -195,9 +187,7 @@ void control(void) {
     app_duty_a = V2K_DUTY_NEUTRAL;
     app_duty_b = V2K_DUTY_NEUTRAL;
     app_duty_c = V2K_DUTY_NEUTRAL;
-    v2k_io.out.duty_a = app_duty_a;
-    v2k_io.out.duty_b = app_duty_b;
-    v2k_io.out.duty_c = app_duty_c;
+    v2k_pwm_apply(app_duty_a, app_duty_b, app_duty_c);
     control_ticks++;
     return;
   }
@@ -244,8 +234,6 @@ void control(void) {
   app_duty_a = V2K_DUTY_NEUTRAL + (0.5f * mod_cmd * sin_a);
   app_duty_b = V2K_DUTY_NEUTRAL + (0.5f * mod_cmd * sin_b);
   app_duty_c = V2K_DUTY_NEUTRAL + (0.5f * mod_cmd * sin_c);
-  v2k_io.out.duty_a = app_duty_a;
-  v2k_io.out.duty_b = app_duty_b;
-  v2k_io.out.duty_c = app_duty_c;
+  v2k_pwm_apply(app_duty_a, app_duty_b, app_duty_c);
   control_ticks++;
 }

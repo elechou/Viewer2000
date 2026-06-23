@@ -4,7 +4,8 @@
 //
 // Role (variable-discovery architecture; revised 2026-06-19, see Phase 4.5):
 // This table registers **platform quantities** (registered by wire/runtime:
-// v2k_io physical quantities, duty cycles, status words, platform parameters)
+// grouped v2k_io diagnostics, applied duty cycles, status words, platform
+// parameters)
 // **plus user application variables** — the latter baked in at compile time by
 // the build tool from the firmware .out DWARF (Phase 4.5). The student writes
 // plain C: no registration API call, no hand-typed name strings, no mandated

@@ -112,9 +112,12 @@ If the implementation remains short, `user.c` alone is acceptable. Do not put
 application state into `runtime/`, `wire/`, a header-level mutable singleton,
 or a vendor archive that is outside `cpu1/tools/user_boundary.json`.
 
-The platform remains responsible for ADC timing, ePWM application, DRV
-lifecycle, and all protection routing. User code only reads completed results,
-copies the AS5600 cache, performs math, and writes `v2k_io.out.duty_a/b/c`.
+The platform remains responsible for ADC timing, the recommended ePWM command
+path, DRV lifecycle, and all protection routing. User code reads the completed
+semantic raw frame from `v2k_io.adc`, copies the AS5600 cache, performs math,
+and submits duty commands with `v2k_pwm_apply(a, b, c)`. Advanced users may
+directly call native TI read/write APIs, but direct EPWM writes are intentionally
+outside the `duty_*_cmd` diagnostics path.
 
 ## 3. User Parameters and Observables
 

@@ -387,17 +387,28 @@ The package is organized for two reading depths:
 
 ### 4.2 Read Access Versus Configuration Ownership
 
-TI already provides a documented, unambiguous result API. Viewer2000 does not wrap it:
+The default user ADC surface is semantic raw counts in `v2k_io.adc`:
+
+```c
+uint16_t ia_raw = v2k_io.adc.ia_raw;
+```
+
+The wire layer owns the SOC-to-physical-channel mapping and fills this frame
+before `control()` starts. User code owns offsets, scaling, calibration,
+filtering, and the resulting physical variables. Those static variables are
+observed through Phase 4.5 symbol baking.
+
+Advanced users may still include `board.h` / `driverlib.h` and directly call
+documented non-blocking TI read/status APIs when they want the native surface:
 
 ```c
 uint16_t ia_raw = ADC_readResult(myADC1_RESULT_BASE, myADC1_SOC1);
 ```
 
-The platform guarantees that this configured frame is complete before `control()` starts. User code owns offsets, scaling, calibration, filtering, and the resulting physical variables. Those static variables are observed through Phase 4.5 symbol baking.
-
 Allowed in user `control()`:
 
-- documented non-blocking result/status reads such as `ADC_readResult()`;
+- `v2k_io.adc.*_raw` semantic ADC frame reads;
+- documented non-blocking native result/status reads such as `ADC_readResult()`;
 - count-to-A/V conversion and calibration state;
 - DCL/MotorControl SDK/user control math;
 - `wire_as5600_get_latest()`, which only copies a cache.
@@ -405,26 +416,43 @@ Allowed in user `control()`:
 Platform-only operations:
 
 - pinmux, peripheral clocks, ownership, ADC SOC triggers, and interrupt sources;
-- ePWM time base, synchronization, compare application, and gate release;
+- ePWM time base, synchronization, default command application, and gate release;
 - CMPSS, X-BAR, TZ routing, trip clearing, and DRV register writes;
 - any blocking peripheral transaction in the control ISR.
 
 ### 4.3 User-Supplied L2 Control Code
 
-The platform deliberately provides no ADC pass-through adapter and no FOC library. A wrapper around `ADC_readResult()` would create a second naming surface without hiding meaningful complexity.
+The platform deliberately provides no FOC library. C2000Ware MotorControl SDK
+transforms, SVGEN, estimators, or user control objects consume user-owned
+physical variables and submit duty commands explicitly:
 
-C2000Ware MotorControl SDK transforms, SVGEN, estimators, or user control objects consume user-owned physical variables and write `v2k_io.out` duty commands. DCL remains available for generic control blocks. The L2 term is a development map; the C API still uses physical names, not layer names.
+```c
+v2k_pwm_apply(app_duty_a, app_duty_b, app_duty_c);
+```
+
+`v2k_pwm_apply()` updates the `v2k_io.pwm` command diagnostics, then delegates to
+the wire layer for clamp, future dead-time compensation, and EPWM compare
+updates. DCL remains available for generic control blocks. The L2 term is a
+development map; the C API still uses physical names, not layer names.
 
 ## 5. User I/O Contract
 
-`v2k_io.in` contains only platform state and scheduling information:
+`v2k_io.sys` contains platform state and scheduling information:
 
 | Field | Unit / type | Source |
 |---|---|---|
 | tick | control ticks | CPU1 control-time owner |
 | due_mask | U16 | platform slow-rate schedule |
-| sys_state | U16 | IDLE/RUNNING/FAULT state |
+| state | U16 | IDLE/RUNNING/FAULT state |
 | fault_code | U16 | latched platform fault reason |
+
+`v2k_io.adc` contains the completed control ADC frame as raw counts:
+
+| Field | Meaning |
+|---|---|
+| va_raw / vb_raw / vc_raw | Phase voltage ADC counts |
+| vbus_raw | DC bus voltage ADC counts |
+| ia_raw / ib_raw / ic_raw | Phase current ADC counts |
 
 The AS5600 driver exposes:
 
@@ -440,13 +468,18 @@ weak), and `MH=bit3` (magnet too strong), per the AS5600 register map. The
 provided external LibDriver header has the correct bit values but incorrect
 comments for MD and MH; Viewer2000 follows the datasheet meanings.
 
-Outputs exposed through v2k_io.out:
+PWM command diagnostics exposed through `v2k_io.pwm`:
 
-| Field | Meaning | Safety behavior |
+| Field | Meaning | Apply path |
 |---|---|---|
-| duty_a | Logical phase A command | Clamped by wire_apply |
-| duty_b | Logical phase B command | Clamped by wire_apply |
-| duty_c | Logical phase C command | Clamped by wire_apply |
+| duty_a | Logical phase A command | Updated by `v2k_pwm_apply()` |
+| duty_b | Logical phase B command | Updated by `v2k_pwm_apply()` |
+| duty_c | Logical phase C command | Updated by `v2k_pwm_apply()` |
+
+The runtime does not implicitly apply PWM after `control()` returns. The
+recommended app path is `v2k_pwm_apply(a, b, c)`. Advanced users may directly
+write TI EPWM compare registers; if they do, `duty_*_cmd` only reflects the
+`v2k_pwm_apply()` path and the last hardware write wins.
 
 Neutral zero-vector duty is 0.5 on all three phases. IDLE keeps DRV ENABLE low and all three ePWM modules latched by OST. A hardware trip latches OST immediately; foreground fault service captures the DRV status registers and then drives ENABLE low.
 

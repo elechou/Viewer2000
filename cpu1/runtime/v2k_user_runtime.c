@@ -4,6 +4,7 @@
 
 #include "v2k_user_runtime.h"
 #include "v2k_crc32_prime.h"
+#include "../wire/wire.h"
 
 #include <crc_defines.h>
 #include <crc_tbl.h>
@@ -32,9 +33,17 @@ volatile uint32_t g_v2k_user_crc_actual;
 
 static void v2k_user_set_neutral_output(void)
 {
-    v2k_io.out.duty_a = V2K_DUTY_NEUTRAL;
-    v2k_io.out.duty_b = V2K_DUTY_NEUTRAL;
-    v2k_io.out.duty_c = V2K_DUTY_NEUTRAL;
+    v2k_io.pwm.duty_a = V2K_DUTY_NEUTRAL;
+    v2k_io.pwm.duty_b = V2K_DUTY_NEUTRAL;
+    v2k_io.pwm.duty_c = V2K_DUTY_NEUTRAL;
+}
+
+void v2k_pwm_apply(float duty_a, float duty_b, float duty_c)
+{
+    v2k_io.pwm.duty_a = duty_a;
+    v2k_io.pwm.duty_b = duty_b;
+    v2k_io.pwm.duty_c = duty_c;
+    wire_pwm_apply_command(&v2k_io.pwm);
 }
 
 #pragma WEAK(setup)

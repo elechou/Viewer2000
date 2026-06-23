@@ -38,7 +38,7 @@
 #define WIRE_START_PHASE_READY      3u
 #define WIRE_START_PHASE_FAILED     4u
 
-static volatile v2k_io_out_t s_applied = {
+static volatile v2k_pwm_t s_applied = {
     V2K_DUTY_NEUTRAL,
     V2K_DUTY_NEUTRAL,
     V2K_DUTY_NEUTRAL
@@ -109,11 +109,23 @@ void wire_timebase_start(void)
     wire_pwm_start_timebase();
 }
 
-void wire_apply(const volatile v2k_io_out_t *out)
+void wire_acquire_adc(volatile v2k_adc_t *adc)
 {
-    s_applied.duty_a = wire_clamp_duty(out->duty_a);
-    s_applied.duty_b = wire_clamp_duty(out->duty_b);
-    s_applied.duty_c = wire_clamp_duty(out->duty_c);
+    // EPWM1 SOCA has completed this seven-channel frame before ISR entry.
+    adc->va_raw = ADC_readResult(myADC0_RESULT_BASE, myADC0_SOC0);
+    adc->vb_raw = ADC_readResult(myADC0_RESULT_BASE, myADC0_SOC1);
+    adc->vc_raw = ADC_readResult(myADC1_RESULT_BASE, myADC1_SOC0);
+    adc->vbus_raw = ADC_readResult(myADC0_RESULT_BASE, myADC0_SOC3);
+    adc->ia_raw = ADC_readResult(myADC1_RESULT_BASE, myADC1_SOC1);
+    adc->ib_raw = ADC_readResult(myADC0_RESULT_BASE, myADC0_SOC2);
+    adc->ic_raw = ADC_readResult(myADC2_RESULT_BASE, myADC2_SOC0);
+}
+
+void wire_pwm_apply_command(const volatile v2k_pwm_t *pwm)
+{
+    s_applied.duty_a = wire_clamp_duty(pwm->duty_a);
+    s_applied.duty_b = wire_clamp_duty(pwm->duty_b);
+    s_applied.duty_c = wire_clamp_duty(pwm->duty_c);
     wire_pwm_apply(s_applied.duty_a,
                    s_applied.duty_b,
                    s_applied.duty_c);
@@ -274,11 +286,11 @@ void wire_powerstage_cancel_start(void)
 void wire_register_ports(uint16_t fast_prescaler)
 {
     v2k_registry_add("duty_a_cmd", V2K_TYPE_F32, V2K_KIND_SCOPE,
-                     (volatile void *)&v2k_io.out.duty_a, fast_prescaler);
+                     (volatile void *)&v2k_io.pwm.duty_a, fast_prescaler);
     v2k_registry_add("duty_b_cmd", V2K_TYPE_F32, V2K_KIND_SCOPE,
-                     (volatile void *)&v2k_io.out.duty_b, fast_prescaler);
+                     (volatile void *)&v2k_io.pwm.duty_b, fast_prescaler);
     v2k_registry_add("duty_c_cmd", V2K_TYPE_F32, V2K_KIND_SCOPE,
-                     (volatile void *)&v2k_io.out.duty_c, fast_prescaler);
+                     (volatile void *)&v2k_io.pwm.duty_c, fast_prescaler);
     v2k_registry_add("duty_a", V2K_TYPE_F32, V2K_KIND_SCOPE,
                      &s_applied.duty_a, fast_prescaler);
     v2k_registry_add("duty_b", V2K_TYPE_F32, V2K_KIND_SCOPE,

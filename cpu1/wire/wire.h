@@ -1,10 +1,11 @@
 //=============================================================================
 // wire.h - readable L0-to-L1 seam for the CPU1 runtime
 //
-// L1 runtime code calls this interface for timing, safe output application, background
-// device service, and protection. User code may directly read completed
-// peripheral results through TI DriverLib, but it does not configure timing,
-// output, interrupt, ownership, or protection resources.
+// L1 runtime code calls this interface for timing, ADC frame acquisition,
+// explicit PWM command application, background device service, and protection.
+// User code may directly read completed peripheral results through TI
+// DriverLib, but it does not configure timing, output, interrupt, ownership,
+// or protection resources.
 //=============================================================================
 #ifndef WIRE_H
 #define WIRE_H
@@ -31,7 +32,8 @@ typedef void (*wire_isr_handler_t)(void);
 // Control time base and fixed ISR fast path.
 void wire_timebase_init(wire_isr_handler_t adc_isr);
 void wire_timebase_start(void);
-void wire_apply(const volatile v2k_io_out_t *out);
+void wire_acquire_adc(volatile v2k_adc_t *adc);
+void wire_pwm_apply_command(const volatile v2k_pwm_t *pwm);
 uint32_t wire_cycle_count(void);
 uint16_t wire_pwm_counter(void);
 uint16_t wire_isr_ack(void);
