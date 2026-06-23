@@ -658,3 +658,45 @@ This verifies the first motor-disconnected POWERED neutral lifecycle for this
 image. It does not claim motor-connected current offset/noise, a physical
 nFAULT lifecycle, gate-source/switch-node timing, or calibrated-current
 shutdown evidence.
+
+## Phase 5.5 - Powered user application and first rotation
+
+2026-06-23 first low-energy V/f enable used the user-rebuilt and flashed FLASH
+image `0x2D869C78`, with VM at 12 V, the supply current limit at 0.25 A, the
+motor connected to J5, CCS/JTAG detached, and SCI as the only live interface.
+A read-only HELLO/STATUS/ENUM probe before motion reported wire 6, contract 13,
+93 descriptors, 42 user descriptors, `state=IDLE`, `fault_code=0`,
+`tick=4414640`, `cpu1_hb=220732`, `cpu2_hb=217031`, `overflow=0`, and no stale
+serial owner after the probe.
+
+The Phase 5.5 application then completed one short scripted lifecycle over SCI.
+`APP_START` was accepted from IDLE with `cmd_seq=1` and completed with
+`cmd_result=0`, entering `state=RUNNING`, `fault_code=0`, `tick=5192982`,
+`cpu1_hb=259648`, and `cpu2_hb=255277`. The application acquired current
+offsets while holding neutral: `offset_count` reached 4000, with
+`ia_offset=2217.676`, `ib_offset=2199.007`, `ic_offset=2225.838`, and
+pre-enable `i_dev_abs=1.993` raw counts. The script then committed
+`freq_cmd_hz=2.0`, `mod_max=0.10`, `i_dev_limit=320.0`, and `motor_enable=1`;
+the commit applied as parameter sequence 1 with `cal_result=0`.
+
+During the one-second V/f window, `app_state=RUN`, `app_fault=0`, and
+`freq_run_hz` ramped to 2.0 Hz. `mod_cmd` ramped to the configured 0.10 limit.
+The observed command duties stayed bounded, with samples including
+`app_duty_a/b/c=0.5010/0.4751/0.5239` at the start of the run and
+`0.4802/0.5497/0.4701` near the end. The largest sampled CPU-side raw current
+deviation was `i_dev_abs=29.1616`, well below the configured 320-count
+application limit. The script then committed `motor_enable=0` as parameter
+sequence 2; the app returned to `app_state=READY`, `app_fault=0`,
+`freq_run_hz=0.0`, `mod_cmd=0.0`, and all three duties returned to 0.5000.
+`APP_STOP` was accepted with `cmd_seq=2`, completed with `cmd_result=0`, and
+returned the platform to `state=IDLE`, `fault_code=0`, `tick=5222022`,
+`cpu1_hb=261100`, and `cpu2_hb=256692`. The script closed the serial port and
+the final `lsof` check showed no stale owner.
+
+This verifies the first motor-connected, low-energy POWERED V/f command
+lifecycle through the Phase 5.5 user application. The operator visually
+observed approximately one quarter of a mechanical revolution during the
+one-second window, so this is also the first observed motor rotation. It does
+not prove torque margin, loaded operation, current calibration in amperes,
+nFAULT lifecycle, gate-source/switch-node timing, or calibrated-current
+shutdown evidence.
