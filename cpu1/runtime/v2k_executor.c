@@ -4,7 +4,7 @@
 
 #include "v2k_executor.h"
 #include "../v2k.h"
-#include "../wire/wire.h"
+#include "../board/v2k_board.h"
 #include "v2k_timebase.h"
 #include "v2k_fault.h"
 #include "v2k_profile.h"
@@ -85,14 +85,14 @@ __interrupt void v2k_executor_isr(void)
     uint32_t scope_end;
     uint32_t elapsed;
 
-    wire_gpio_probe_set(1u);
-    cycle_start = wire_cycle_count();
-    latency = wire_pwm_counter();
+    v2k_board_gpio_probe_set(1u);
+    cycle_start = v2k_board_cycle_count();
+    latency = v2k_board_pwm_counter();
 
     v2k_io.sys.tick = g_v2k_tick;
     v2k_io.sys.state = g_v2k_sm_state;
     v2k_io.sys.fault_code = g_v2k_fault_code;
-    wire_acquire_adc(&v2k_io.adc);
+    v2k_board_acquire_adc(&v2k_io.adc);
     v2k_io.sys.due_mask = v2k_schedule(&param_due);
     if ((param_due != 0u) && (v2k_user_reset_is_active() == 0u))
     {
@@ -107,16 +107,16 @@ __interrupt void v2k_executor_isr(void)
         // or native TI EPWM write APIs, that explicit output work is charged to
         // the user Control segment. Runtime no longer applies PWM implicitly
         // after control() returns.
-        control_start = wire_cycle_count();
+        control_start = v2k_board_cycle_count();
         v2k_user_control_tick();
-        control_done = wire_cycle_count();
+        control_done = v2k_board_cycle_count();
         elapsed = control_start - control_done;
     }
     else
     {
         elapsed = 0u;
     }
-    control_end = wire_cycle_count();
+    control_end = v2k_board_cycle_count();
     g_v2k_control_cycles = elapsed;
     if (elapsed > g_v2k_control_cycles_max)
     {
@@ -124,7 +124,7 @@ __interrupt void v2k_executor_isr(void)
     }
 
     v2k_scope_sample_all(v2k_io.sys.tick);
-    scope_end = wire_cycle_count();
+    scope_end = v2k_board_cycle_count();
     elapsed = control_end - scope_end;
     g_v2k_scope_cycles = elapsed;
     if (elapsed > g_v2k_scope_cycles_max)
@@ -151,12 +151,12 @@ __interrupt void v2k_executor_isr(void)
                            s_profile_prev_tick);
     }
 
-    if (wire_isr_ack() != 0u)
+    if (v2k_board_isr_ack() != 0u)
     {
         g_v2k_isr_ovf_cnt++;
     }
 
-    elapsed = cycle_start - wire_cycle_count();
+    elapsed = cycle_start - v2k_board_cycle_count();
     g_v2k_isr_cycles = elapsed;
     if (elapsed > g_v2k_isr_cycles_max)
     {
@@ -171,5 +171,5 @@ __interrupt void v2k_executor_isr(void)
     s_profile_prev_latency = latency;
     s_profile_prev_tick = v2k_io.sys.tick;
     s_profile_prev_valid = 1u;
-    wire_gpio_probe_set(0u);
+    v2k_board_gpio_probe_set(0u);
 }

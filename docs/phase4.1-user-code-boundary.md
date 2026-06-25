@@ -28,7 +28,7 @@ Viewer2000 platform:
   resettable sections;
 - every START restores that state to its source-declared initial values before
   `setup()`, application execution, or output release;
-- runtime, wire, SysConfig, and platform-tool state are never reset by this
+- runtime, board, SysConfig, and platform-tool state are never reset by this
   operation;
 - section capacity and ownership mistakes fail the build instead of becoming
   delayed runtime surprises;
@@ -70,7 +70,7 @@ not a substitute for a complete build-time boundary.
 ### 1. Ownership is defined by build objects, not variable annotations
 
 The primary user domain is every translation unit built from `cpu1/app/`.
-Runtime, wire, SysConfig-generated files, startup code, contracts, and tools are
+Runtime, board, SysConfig-generated files, startup code, contracts, and tools are
 platform-owned.
 
 The canonical ownership specification is
@@ -342,7 +342,7 @@ The final demo must look like normal plain C.
 | A | plain-C initialized state | declare globals/statics with no pragmas; mutate in IDLE; START | all return to declared initial values before first `control()` |
 | B | plain-C zero state | mutate BSS globals, arrays, structs, and a function-static | all return to zero |
 | C | multi-file ownership | place state in two `cpu1/app/` translation units | both objects are classified and reset |
-| D | platform isolation | observe runtime tick, reset counters, wire diagnostics across START | platform state is not reset or placed in user sections |
+| D | platform isolation | observe runtime tick, reset counters, board diagnostics across START | platform state is not reset or placed in user sections |
 | E | repeated lifecycle | START/STOP and FAULT/CLEAR/START for at least 100 cycles | identical initialized state every run; no golden-image drift |
 | F | RAM golden source | inspect map and mutate RUN storage repeatedly | LOAD image is in `USER_GOLDEN_RAM`, remains unchanged, and restores RUN |
 | G | FLASH golden source | inspect map, flash, mutate RUN storage, restart | RUN restores directly from the FLASH LOAD image |
@@ -369,7 +369,7 @@ Phase 4.1 is complete only when:
 - both builds validate their golden source against a linker-generated CRC;
 - the fixed runtime snapshot and its size cap are gone;
 - static capacity overflow and ownership escape fail the build;
-- runtime/wire/platform state is proven outside the reset boundary;
+- runtime/board/platform state is proven outside the reset boundary;
 - Phase 4.5 consumes the same user-object ownership definition;
 - RAM/FLASH builds and on-target lifecycle regressions pass;
 - memory usage and hardware results are recorded in `BRINGUP.md`.

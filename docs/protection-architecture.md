@@ -11,9 +11,9 @@ Authoritative source files:
 
 - `cpu1/sysconfig_cpu1.syscfg` — static CMPSS/ADC/X-BAR/ePWM trip topology.
 - `cpu1/runtime/v2k_fault.c` — state machine, TZ ISR, fault latch.
-- `cpu1/wire/wire_pwm.c` — runtime trip arm/disarm, status, and config read-back.
-- `cpu1/wire/wire_f28p65x.c` — power-stage START sequence, DRY_RUN/POWERED mode.
-- `cpu1/wire/wire_drv8323rs.c` — gate-driver wake/config/status, nFAULT.
+- `cpu1/board/v2k_board_pwm.c` — runtime trip arm/disarm, status, and config read-back.
+- `cpu1/board/v2k_board_f28p65x.c` — power-stage START sequence, DRY_RUN/POWERED mode.
+- `cpu1/board/v2k_board_drv8323rs.c` — gate-driver wake/config/status, nFAULT.
 - `contracts/v2k_command.h` — `V2K_STATE_*`, `V2K_FAULT_*` numeric contract.
 
 ---
@@ -26,7 +26,7 @@ Authoritative source files:
    CPU death does not disable protection (rule 1, rule 2).
 2. **Protection must be in place before power is applied**, and proven by
    register read-back, not by assumption (`v2k_fault_init` reads `TZFLG.OST`
-   back and `wire_panic_halt()`s if the output is not actually gated).
+   back and `v2k_board_panic_halt()`s if the output is not actually gated).
 3. **The debugger is not an e-stop.** A halt can interact with CBC6; an e-stop
    trusts the hardware trip only.
 
@@ -73,15 +73,15 @@ the control domain, not inside it.
   │  v2k_fault_init()  (after Board_init — authoritative)
   │    TZSEL=OSHT1|CBC6, TZA/TZB=force-low configured → force OST latches
   │    install TZ ISR, both interrupt levels DISABLED
-  │    read back: output NOT locked → wire_panic_halt()   ← invariant, not trust
+  │    read back: output NOT locked → v2k_board_panic_halt()   ← invariant, not trust
   ▼ IDLE   (ready, outputs gated by OST, TZ interrupts disabled)
-  │  ── APP_START ──► wire_powerstage_start_begin/poll  (see §5 DRY_RUN/POWERED)
+  │  ── APP_START ──► v2k_board_powerstage_start_begin/poll  (see §5 DRY_RUN/POWERED)
   ▼ RUNNING
   │    control ISR runs; OST interrupt enabled; (POWERED) DCAEVT1/DCBEVT1 armed
   │  ── APP_STOP ──► disable both TZ int levels, force OST → IDLE
   │  ── hardware trip ──► v2k_tz_isr → FAULT
   ▼ FAULT  (outputs OST-locked; waits for CLEAR_FAULT)
-  │    CLEAR_FAULT only succeeds if wire_fault_source_is_released():
+  │    CLEAR_FAULT only succeeds if v2k_board_fault_source_is_released():
   │    trip source still asserted → stay FAULT (accepted, not released)
   ▼ IDLE
 ```
@@ -173,8 +173,8 @@ phase C current → ADCC PPB1 (low only)      ┘
   → structural A/B mirror implemented; POWERED all-six-output proof still open
 ```
 
-Provisional window `DACL=512 / DACH=3584` raw counts (`wire_adc.h`,
-`WIRE_CURRENT_LIMIT_LOW/HIGH_COUNTS`) — TI bring-up values, **not** calibrated
+Provisional window `DACL=512 / DACH=3584` raw counts (`v2k_board_adc.h`,
+`V2K_BOARD_CURRENT_LIMIT_LOW/HIGH_COUNTS`) — TI bring-up values, **not** calibrated
 amperes. Note "asymmetric" in the Phase 5.0 docs refers to **this window**:
 phase C can only trip on the low side (C5 feeds only the CMPSS2 low comparator).
 That is a *different axis* from the high-side/low-side gate question in §6.
@@ -189,9 +189,9 @@ judged with the CPU *running*, never at a breakpoint.
 
 ## 5. DRY_RUN vs POWERED
 
-Mode is a compile-time predefine (`wire_f28p65x.c`); checked-in default is
-`WIRE_POWERSTAGE_MODE_DRY_RUN`. POWERED requires **both**
-`WIRE_POWERSTAGE_MODE=0` **and** `WIRE_POWERSTAGE_POWERED_CONFIG_APPROVED=1`.
+Mode is a compile-time predefine (`v2k_board_f28p65x.c`); checked-in default is
+`V2K_BOARD_POWERSTAGE_MODE_DRY_RUN`. POWERED requires **both**
+`V2K_BOARD_POWERSTAGE_MODE=0` **and** `V2K_BOARD_POWERSTAGE_POWERED_CONFIG_APPROVED=1`.
 
 | | DRY_RUN (default) | POWERED |
 |---|---|---|
@@ -200,7 +200,7 @@ Mode is a compile-time predefine (`wire_f28p65x.c`); checked-in default is
 | Current trip | **disarmed** (DCAEVT1/DCBEVT1 not in TZSEL) | armed after readiness |
 | Purpose | scope MCU PWM logic with FETs unpowered | real energized operation |
 
-POWERED START (`wire_powerstage_start_poll`, see also phase5.0 §7) fails closed:
+POWERED START (`v2k_board_powerstage_start_poll`, see also phase5.0 §7) fails closed:
 nFAULT must be released, DRV config must read back, all three current samples
 must be in-window, and the current trip is armed only if its register read-back
 passes — with a re-check of the current source *across* the OST-release boundary.
@@ -249,11 +249,11 @@ per-event actions must be explicitly set (`DISABLE`/`LOW`) for every arm state.
 OST is an OR of several sources, but hardware preserves per-source identity:
 
 - **Which class →** `fault_code`: the ISR reads `TZOSTFLG`
-  (`EPWM_getOneShotTripZoneFlagStatus`, `wire_pwm_current_trip_was_active`). If
+  (`EPWM_getOneShotTripZoneFlagStatus`, `v2k_board_pwm_current_trip_was_active`). If
   either DCAEVT1 or DCBEVT1 one-shot bit is set → `V2K_FAULT_OVERCURRENT (2)`, else
   `V2K_FAULT_TZ1_EXT (1)`.
 - **Which phase / side →** `s_current_trip_last`: read back the CMPSS `COMPSTS`
-  filter-latch bits (`wire_pwm_capture_current_sources`) into the
+  filter-latch bits (`v2k_board_pwm_capture_current_sources`) into the
   `PHASE_A_HIGH/_A_LOW/_B_HIGH/_B_LOW` bitfield, exposed as the `curr_trip_last`
   scope variable.
 
@@ -333,14 +333,14 @@ without claiming these oscilloscope-only items have passed:
 - [ ] **Calibrated ampere limits** replace the provisional `512/3584` raw counts.
 - [ ] **nFAULT-edge → all-six-PWM shutdown-latency** capture.
 - [x] The tracked Phase 5.2 neutral-only commissioning build uses
-  `WIRE_POWERSTAGE_POWERED_CONFIG_APPROVED=1` after the DRV image, pin mapping,
+  `V2K_BOARD_POWERSTAGE_POWERED_CONFIG_APPROVED=1` after the DRV image, pin mapping,
   startup read-back, and current-limited supply procedure were reviewed. This
   approval does not mark the deferred captures above as passed.
 
 Standing invariants (already enforced, do not regress):
 
 - Protection state is verified by register read-back (`v2k_fault_init` →
-  `wire_panic_halt` on failure), never assumed.
+  `v2k_board_panic_halt` on failure), never assumed.
 - TZ interrupt levels enabled only in RUNNING.
 - The control ISR never blocks on the comms core or on protection bookkeeping.
 - Every current-trip arm state explicitly sets and reads back both per-event actions.

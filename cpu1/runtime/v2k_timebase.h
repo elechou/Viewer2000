@@ -48,7 +48,7 @@
 // The frequency must divide evenly, otherwise PRD truncation makes the actual ISR frequency deviate from nominal
 V2K_STATIC_ASSERT((V2K_EPWMCLK_HZ % (2u * V2K_ISR_HZ)) == 0u);
 
-// CPUTIMER1 (wire_cycle_count) runs at SYSCLKOUT; this mirror exists only to pin
+// CPUTIMER1 (v2k_board_cycle_count) runs at SYSCLKOUT; this mirror exists only to pin
 // the load profiler's cross-counter assumption. The profiler adds the ISR-entry
 // TBCTR latency (ePWM TBCLK ticks) to the ISR duration (CPUTIMER1/SYSCLK ticks),
 // which is meaningful only while one TBCLK tick == one CPUTIMER1 tick, i.e.

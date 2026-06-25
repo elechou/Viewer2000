@@ -5,7 +5,7 @@
 > protection, Scope2000, and load-budget regression; measured results are in
 > [BRINGUP.md](../BRINGUP.md). Further 100 kHz optimization is deferred.
 >
-> **Phase 5.0 supersession**: the `wire_acquire()` + platform count-to-physical
+> **Phase 5.0 supersession**: the `v2k_board_acquire_adc()` + platform count-to-physical
 > input model below records the Phase 4 single-channel proof as implemented. It
 > is not the current motor-acquisition contract. Phase 5.0 keeps platform-owned
 > ADC timing/EOC validity and safe output application, but lets user code call
@@ -14,9 +14,9 @@
 > current app code uses grouped `v2k_io.sys`, `v2k_io.adc`, and explicit
 > `v2k_pwm_apply(a, b, c)` PWM submission.
 >
-> **Scope**: Phase 4 is **firmware boundary work only**. It writes **no control math** (the platform ships none — control math is user-supplied; see [AGENTS.md](../AGENTS.md) Decisions). It turns the user surface into an **Arduino-style `setup()` / `control()`**, draws the **wire↔runtime portability seam**, and proves the reset lifecycle with a manually sectioned demo. [Phase 4.1](phase4.1-user-code-boundary.md) hardens that prototype into an automatic, linker-verified user-code/state boundary. The "user's variables visible by name on any PC" experience remains the separate build-tooling effort [Phase 4.5](phase4.5-symbol-baking.md).
+> **Scope**: Phase 4 is **firmware boundary work only**. It writes **no control math** (the platform ships none — control math is user-supplied; see [AGENTS.md](../AGENTS.md) Decisions). It turns the user surface into an **Arduino-style `setup()` / `control()`**, draws the **board↔runtime portability seam**, and proves the reset lifecycle with a manually sectioned demo. [Phase 4.1](phase4.1-user-code-boundary.md) hardens that prototype into an automatic, linker-verified user-code/state boundary. The "user's variables visible by name on any PC" experience remains the separate build-tooling effort [Phase 4.5](phase4.5-symbol-baking.md).
 >
-> **Constraint**: do **not** disturb verified Phase 1/2/3/3.5 work. Phase 4 includes the guarded physical repackage into `runtime/`, `wire/`, and `app/`.
+> **Constraint**: do **not** disturb verified Phase 1/2/3/3.5 work. Phase 4 includes the guarded physical repackage into `runtime/`, `board/`, and `app/`.
 
 Phase 3/3.5 proved the platform can schedule, observe, tune, and stream — but every one of those was exercised by a debug sine that ignores its input and writes one duty, and the executor still bakes chip-specific driverlib into the hot path. Phase 4 fixes both **before** Phase 5 applies power, so the *platform-plumbing* failure mode is removed before the *motor* failure mode is introduced.
 
@@ -37,55 +37,55 @@ Grounded in the pre-Phase-4 code (`cpu1/app/v2k_platform.h`, a historical compat
 
 ## Decisions (ratified)
 
-1. **User surface = Arduino-style `setup()` / `control()`**, `void`, accessing I/O through a named global `v2k_io.in / v2k_io.out` (not passed params — matches the C2000/DCL/SDK idiom and is simpler for non-programmers). `loop()` is rejected (it implies a free-running loop and hides the platform's deterministic-ISR identity); `on_start()` is eliminated (the auto-reset replaces it). Names are bare (no `v2k_` prefix) — sketch-level, like Arduino; platform internals keep `v2k_*`, and board/chip wiring uses `wire_*`.
+1. **User surface = Arduino-style `setup()` / `control()`**, `void`, accessing I/O through a named global `v2k_io.in / v2k_io.out` (not passed params — matches the C2000/DCL/SDK idiom and is simpler for non-programmers). `loop()` is rejected (it implies a free-running loop and hides the platform's deterministic-ISR identity); `on_start()` is eliminated (the auto-reset replaces it). Names are bare (no `v2k_` prefix) — sketch-level, like Arduino; platform internals and board/chip wiring use `v2k_*`.
 2. **Stop/start = unconditional full reset of all user state.** On every IDLE→RUNNING the platform re-copies the entire user data section to its declared initial values. This is a **safety guarantee** (the wound-up-integrator restart is structurally impossible), not opt-in convenience. Tuned parameters reset too (they need not persist — each run starts reproducibly from the source-declared values). Phase 4 proves the sequence on explicitly sectioned state; Phase 4.1 completes automatic coverage.
-3. **wire↔runtime compile-time seam**: count→physical + the port table + all driverlib-facing hot-path access live in `wire/`, behind a zero-cost inline seam (`wire_acquire/apply/cycle_count/...`, FreeRTOS-port-layer style). The executor runtime becomes chip-agnostic.
-4. **Port table is wire/board-owned** (routing an input to an ADC SOC / output to an EPWM is hardware; rule 4 keeps runtime/user code off registers).
+3. **board↔runtime compile-time seam**: count→physical + the port table + all driverlib-facing hot-path access live in `board/`, behind a zero-cost inline seam (`v2k_board_acquire_adc` / `v2k_board_pwm_apply_command` / `v2k_board_cycle_count` / ...), FreeRTOS-port-layer style. The executor runtime becomes chip-agnostic.
+4. **Port table is board-owned** (routing an input to an ADC SOC / output to an EPWM is hardware; rule 4 keeps runtime/user code off registers).
 5. **First client = a C2000Ware DCL control block** (float PI), loopback-fed, no motor.
 6. **Remove the boot default binding** — on-demand only.
 
 ## Division of labor
 
-Phase 4 is **mostly C**. **SysConfig** adds no new static hardware for the minimal cut (reuse Phase 2/3). **C** does the global I/O surface, the wire seam, the reset lifecycle, and the demo. The baseline uses dedicated user data/BSS sections plus a boot-time RAM snapshot. Automatic object-based section ownership, linker-owned RAM/FLASH golden images, and build-time escape detection are the Phase 4.1 closure.
+Phase 4 is **mostly C**. **SysConfig** adds no new static hardware for the minimal cut (reuse Phase 2/3). **C** does the global I/O surface, the board seam, the reset lifecycle, and the demo. The baseline uses dedicated user data/BSS sections plus a boot-time RAM snapshot. Automatic object-based section ownership, linker-owned RAM/FLASH golden images, and build-time escape detection are the Phase 4.1 closure.
 
 ---
 
-## 1. The wire↔runtime seam (the portability cut)
+## 1. The board↔runtime seam (the portability cut)
 
-The runtime executor stops calling driverlib directly; it calls a small **compile-time** seam that `wire/` implements per chip/board, the hot ones `inline` where needed so the generated ISR code stays equivalent to today's — zero added cycles, **not** a runtime function-pointer HAL (the FreeRTOS port-layer model).
+The runtime executor stops calling driverlib directly; it calls a small **compile-time** seam that `board/` implements per chip/board, the hot ones `inline` where needed so the generated ISR code stays equivalent to today's — zero added cycles, **not** a runtime function-pointer HAL (the FreeRTOS port-layer model).
 
 ```c
-// wire implements (chip/board), runtime calls — the only layer rewritten on a port.
-void     wire_acquire(v2k_io_in_t *in);    // read input ports → physical quantities
-void     wire_apply(const v2k_io_out_t *out); // physical commands → actuators
-uint32_t wire_cycle_count(void);            // free-running cycle counter
-uint16_t wire_isr_ack(void);                // clear ADC int / overflow / PIE ack
-void     wire_register_ports(uint16_t fast_prescaler); // register port names into the descriptor table
+// board implements (chip/board), runtime calls — the only layer rewritten on a port.
+void     v2k_board_acquire_adc(v2k_io_in_t *in);    // read input ports → physical quantities
+void     v2k_board_pwm_apply_command(const v2k_io_out_t *out); // physical commands → actuators
+uint32_t v2k_board_cycle_count(void);            // free-running cycle counter
+uint16_t v2k_board_isr_ack(void);                // clear ADC int / overflow / PIE ack
+void     v2k_board_register_ports(uint16_t fast_prescaler); // register port names into the descriptor table
 ```
 
-The runtime owns the `__interrupt` vector (off ADCA1 EOC) but delegates board/chip access to `wire`:
+The runtime owns the `__interrupt` vector (off ADCA1 EOC) but delegates board/chip access to `board/`:
 
 ```c
 void v2k_executor_tick(void)              // chip-agnostic core
 {
-    uint32_t t0 = wire_cycle_count();
-    wire_acquire(&v2k_io.in);             // wire: read ADCs + count→physical
+    uint32_t t0 = v2k_board_cycle_count();
+    v2k_board_acquire_adc(&v2k_io.in);             // board: read ADCs + count→physical
     v2k_io.in.due_mask = v2k_schedule(&param_due);
     if (param_due && !v2k_user_reset_is_active()) v2k_param_apply_ready();
     if (state == RUNNING) v2k_user_control_tick(); // L3 control() through lifecycle gate
-    wire_apply(&v2k_io.out);              // wire: route to PWM
+    v2k_board_pwm_apply_command(&v2k_io.out);              // board: route to PWM
     v2k_scope_sample_all(v2k_io.in.tick);
     g_v2k_tick++;
-    /* control/scope/isr cycles + budget via wire_cycle_count() diffs */
+    /* control/scope/isr cycles + budget via v2k_board_cycle_count() diffs */
 }
 ```
 
 ## 2. The user surface: `setup()` / `control()` + global `v2k_io`
 
-The I/O is a single named global the platform fills/applies; the user reads/writes it directly — no params, no pointers. Fields come from the wire/board port table (a motor build gets `.ia/.theta/.vbus` in, `.duty_a/b/c` out; the minimal demo gets `.vsense` in, `.duty_a` out).
+The I/O is a single named global the platform fills/applies; the user reads/writes it directly — no params, no pointers. Fields come from the board port table (a motor build gets `.ia/.theta/.vbus` in, `.duty_a/b/c` out; the minimal demo gets `.vsense` in, `.duty_a` out).
 
 ```c
-// the platform's global (filled by wire_acquire, applied by wire_apply)
+// the platform's global (filled by v2k_board_acquire_adc, applied by v2k_board_pwm_apply_command)
 extern v2k_io_t v2k_io;     // v2k_io.in.<port>, v2k_io.out.<port>
 
 // the user's whole file — declarations at top, then control()
@@ -100,7 +100,7 @@ void control(void)                    // every control tick (deterministic ISR r
 }
 ```
 
-The port table (wire-owned) is the single source for acquisition routing, scaling, naming, and descriptor registration; `wire_acquire`/`wire_apply` walk it. A motor thin-view header exposes named motor fields; **Simulink forward-compat**: each port = a root inport/outport (an adapter can map `v2k_io` ↔ `rtU/rtY` later).
+The port table (board-owned) is the single source for acquisition routing, scaling, naming, and descriptor registration; `v2k_board_acquire_adc`/`v2k_board_pwm_apply_command` walk it. A motor thin-view header exposes named motor fields; **Simulink forward-compat**: each port = a root inport/outport (an adapter can map `v2k_io` ↔ `rtU/rtY` later).
 
 ## 3. Lifecycle: automatic full reset on START (the safety core)
 
@@ -139,11 +139,11 @@ The only silent footgun (non-`static` local in `control()`) is the *safer* kind 
 
 | Arduino | Viewer2000 | user must understand? |
 |---|---|---|
-| core (`wiring.c`) | **`runtime/` + `wire/`** = platform runtime + board/chip wiring + four shared interfaces + scope/scheduler/protection | no — invisible |
+| core (`wiring.c`) | **`runtime/` + `board/`** = platform runtime + board/chip wiring + four shared interfaces + scope/scheduler/protection | no — invisible |
 | libraries | **`examples/`** = readable reference apps; control math from C2000Ware, wiring is ours and readable | optional |
 | sketch | **L3** = `setup()` / `control()`, accesses `v2k_io`, includes one header | Arduino-simple |
 
-Phase 4 draws the logical seam and performs the physical repackage (user faces one header + writes `setup`/`control`; executor calls `wire_*`). The runtime is invisible, yet the user keeps full observability of their own code (Phase 4.5 / CCS).
+Phase 4 draws the logical seam and performs the physical repackage (user faces one header + writes `setup`/`control`; executor calls `v2k_board_*`). The runtime is invisible, yet the user keeps full observability of their own code (Phase 4.5 / CCS).
 
 ## 5. First real client (no motor)
 
@@ -161,8 +161,8 @@ deferred until the platform hot path is optimized.
 
 | # | Verification | Method | Pass criterion |
 |---|---|---|---|
-| A | named I/O + count→physical | DACA → known codes; read `v2k_io.in.vsense` | tracks DACA with the wire port-table scale/offset (no raw-count leak) |
-| B | wire↔runtime seam zero-cost | `isr_cycles_max` before/after the seam refactor | within measurement noise of today's inline version |
+| A | named I/O + count→physical | DACA → known codes; read `v2k_io.in.vsense` | tracks DACA with the board port-table scale/offset (no raw-count leak) |
+| B | board↔runtime seam zero-cost | `isr_cycles_max` before/after the seam refactor | within measurement noise of today's inline version |
 | C | descriptor exposes ports | ENUM via Scope2000 | each in/out port enumerated by name/type |
 | D | **auto-reset safety** | START → run integrator up → soft TZ → FAULT → wind integrator to an extreme via CCS → CLEAR_FAULT → START | on the new START, `integrator` reads its declared initial value (0) **before** the first `control()` tick; output never commands the wound-up value; verified without any `on_start` code |
 | E | reset covers initialized + zero state | overwrite the explicitly sectioned demo data/BSS, STOP, START | initialized values return to declarations and BSS returns to zero |
@@ -174,9 +174,9 @@ deferred until the platform hot path is optimized.
 | Acceptance item | Pass condition |
 |---|---|
 | user surface | `setup()`/`control()` (`void`) + global `v2k_io.in/.out`; old callback hooks gone |
-| wire↔runtime seam | `v2k_executor.c` driverlib-free; wire implements `wire_*`; zero-cost confirmed (B) |
+| board↔runtime seam | `v2k_executor.c` driverlib-free; board implements `v2k_board_*`; zero-cost confirmed (B) |
 | reset lifecycle prototype | the explicitly sectioned Phase 4 demo state is reset to declared initials on every START, before output enable; the wind-up-restart test (D) passes |
-| port contract | generic named ports; count→physical in wire |
+| port contract | generic named ports; count→physical in board |
 | default bind removed | on-demand binding works |
 | first client | a DCL block runs in `control()`; no control math written by us |
 | four-config build | CPU1/CPU2 RAM/FLASH 0 errors; `v2k_tb_check`/layout assert clean |
@@ -184,7 +184,7 @@ deferred until the platform hot path is optimized.
 | regression | Phase 2/3/3.5 still pass |
 
 Record into BRINGUP.md Phase 4 area: date/board/CCS, RAM/FLASH,
-`V2K_ISR_HZ`, build hash; the wire port table; A–G results including the seam
+`V2K_ISR_HZ`, build hash; the board port table; A–G results including the seam
 before/after (B), the wind-up-restart trace (D), and the 20 kHz load snapshot.
 Tag `phase4-user-interface` after all of the above.
 

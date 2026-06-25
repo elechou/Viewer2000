@@ -1,7 +1,7 @@
 //=============================================================================
 // v2k_timebase.c — Phase 2 time-base proof (runtime part)
 //
-// Signal chain (static config in SysConfig, reconciled in wire_f28p65x.c):
+// Signal chain (static config in SysConfig, reconciled in v2k_board_f28p65x.c):
 // ePWM1 (up-down, FREE_SOFT=free-run, master sync) -> SOCA @ CTR=ZERO -> all
 // selected ADC SOCs -> ADCA EOC3 -> INT_ADCA1 into v2k_tb_isr. Phase 5.0 uses
 // ePWM1/ePWM2/ePWM8 as the three motor PWM modules, with ePWM1 kept as the
@@ -40,14 +40,14 @@
 
 #include "v2k_timebase.h"
 #include "v2k_executor.h"
-#include "../wire/wire.h"
+#include "../board/v2k_board.h"
 
 void v2k_tb_init(void)
 {
-    wire_timebase_init(&v2k_executor_isr);
+    v2k_board_timebase_init(&v2k_executor_isr);
 }
 
 void v2k_tb_start(void)
 {
-    wire_timebase_start();
+    v2k_board_timebase_start();
 }

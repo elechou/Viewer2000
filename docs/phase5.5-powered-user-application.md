@@ -109,7 +109,7 @@ cpu1/app/user_vf.h    user-owned V/f instance and operation API
 ```
 
 If the implementation remains short, `user.c` alone is acceptable. Do not put
-application state into `runtime/`, `wire/`, a header-level mutable singleton,
+application state into `runtime/`, `board/`, a header-level mutable singleton,
 or a vendor archive that is outside `cpu1/tools/user_boundary.json`.
 
 The platform remains responsible for ADC timing, the recommended ePWM command
@@ -164,7 +164,7 @@ OFFSET -> READY -> RUN
 - `setup()` initializes the V/f instance and leaves all duties neutral.
 - `control()` reads the completed current frame every tick.
 - Accumulate A/B/C zero-current offsets while all three duties remain 0.5.
-- Publish the latest `wire_as5600_get_latest()` sample before READY. The
+- Publish the latest `v2k_board_as5600_get_latest()` sample before READY. The
   encoder is observed but is not yet used as a first-rotation interlock or for
   commutation.
 

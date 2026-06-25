@@ -3,7 +3,7 @@
 //=============================================================================
 
 #include "v2k.h"
-#include "wire/wire_as5600.h"
+#include "board/v2k_board_as5600.h"
 
 #define USER_CONTROL_HZ 20000.0f
 #define USER_CONTROL_DT (1.0f / USER_CONTROL_HZ)
@@ -96,7 +96,7 @@ void setup(void) {
 }
 
 void control(void) {
-  wire_as5600_sample_t encoder;
+  v2k_board_as5600_sample_t encoder;
   uint16_t target_ticks;
   uint32_t next_count;
   float denom;
@@ -120,7 +120,7 @@ void control(void) {
 
   vbus_V = (float)adc_vbus_raw * USER_VBUS_VOLTS_PER_COUNT;
 
-  enc_ok = wire_as5600_get_latest(&encoder);
+  enc_ok = v2k_board_as5600_get_latest(&encoder);
   enc_raw = encoder.raw_angle;
   enc_status = encoder.status;
   enc_angle = encoder.angle_rad;

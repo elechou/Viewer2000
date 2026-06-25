@@ -36,7 +36,7 @@ measured Runtime segment and keeping it inside ADC overflow detection. A new
 peak copies that record's user `control()` body cycles, scope cycles, ADC/EOC
 entry latency, and tick. Outside RUNNING, `ctrl_at_peak` is zero so the UI does
 not label fixed platform ISR overhead as user control. The remaining ISR cost
-is still represented by Runtime. This adds two `wire_cycle_count()` reads only
+is still represented by Runtime. This adds two `v2k_board_cycle_count()` reads only
 on RUNNING ticks. The acceptance threshold remains that the GPIO ISR pulse
 growth stays below one percent of the control period. The window is exactly
 `V2K_ISR_HZ` samples and covers IDLE, RUNNING, and FAULT.
@@ -70,7 +70,7 @@ bound/plotted Variables and would otherwise spend scarce platform slots, so five
 slots stay free. Descriptor content changes the build hash. Note that the
 `Control` segment — and therefore the existing `ctrl_cycles_max` Variable — now
 times the user `control()` body alone; before Phase 4.6 it spanned acquire→apply,
-so historical `ctrl_cycles_max` readings are not directly comparable. `wire_apply`
+so historical `ctrl_cycles_max` readings are not directly comparable. `v2k_board_pwm_apply_command`
 and the remaining ISR work now fall into `Runtime`. Phase 4.6 also appends the profiler snapshot to `STATUS` and
 therefore bumps `V2K_CONTRACT_VER`; `V2K_WIRE_VER` is unchanged because the
 message is tail-extended.

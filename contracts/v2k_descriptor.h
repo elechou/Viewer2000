@@ -3,7 +3,7 @@
 //                    (platform-quantity enumeration + default sampling hints)
 //
 // Role (variable-discovery architecture; revised 2026-06-19, see Phase 4.5):
-// This table registers **platform quantities** (registered by wire/runtime:
+// This table registers **platform quantities** (registered by board/runtime:
 // grouped v2k_io diagnostics, applied duty cycles, status words, platform
 // parameters)
 // **plus user application variables** — the latter baked in at compile time by

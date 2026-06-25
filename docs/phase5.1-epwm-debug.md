@@ -314,12 +314,12 @@ only after `g_v2k_sm_state == V2K_STATE_RUNNING`.
 
 ## 6. Firmware Bug Found During Debug
 
-One real safety-path bug was found in `wire_pwm_output_is_locked()`:
+One real safety-path bug was found in `v2k_board_pwm_output_is_locked()`:
 
 ```c
-return wire_pwm_base_is_locked(WIRE_PWM_PHASE_A_BASE) &&
-       wire_pwm_base_is_locked(WIRE_PWM_PHASE_B_BASE) &&
-       wire_pwm_base_is_locked(WIRE_PWM_PHASE_C_BASE);
+return v2k_board_pwm_base_is_locked(V2K_BOARD_PWM_PHASE_A_BASE) &&
+       v2k_board_pwm_base_is_locked(V2K_BOARD_PWM_PHASE_B_BASE) &&
+       v2k_board_pwm_base_is_locked(V2K_BOARD_PWM_PHASE_C_BASE);
 ```
 
 This reported "unlocked" if any one phase had cleared OST, even if another
@@ -329,9 +329,9 @@ locked if any phase is locked.
 The local fix is:
 
 ```c
-return wire_pwm_base_is_locked(WIRE_PWM_PHASE_A_BASE) ||
-       wire_pwm_base_is_locked(WIRE_PWM_PHASE_B_BASE) ||
-       wire_pwm_base_is_locked(WIRE_PWM_PHASE_C_BASE);
+return v2k_board_pwm_base_is_locked(V2K_BOARD_PWM_PHASE_A_BASE) ||
+       v2k_board_pwm_base_is_locked(V2K_BOARD_PWM_PHASE_B_BASE) ||
+       v2k_board_pwm_base_is_locked(V2K_BOARD_PWM_PHASE_C_BASE);
 ```
 
 `cpu1` built successfully after this one-line change. This bug is worth fixing
@@ -523,14 +523,14 @@ Nothing else was touched, isolating `TZCTL.DCAEVT1` as the cause.
 ### 11.5 Firmware fix
 
 SysConfig now owns the static DCAEVT1/DCBEVT1 topology on EPWM1/2/8, and
-`cpu1/wire/wire_pwm.c` owns only its runtime arm state:
+`cpu1/board/v2k_board_pwm.c` owns only its runtime arm state:
 
 - `cpu1/sysconfig_cpu1.syscfg` routes `TRIPIN7` to `DCAH` and `DCBH`, sets
   `DCAEVT1/DCBEVT1 = DCxH high`, selects original async event mode, and sets
   both event actions to the DRY_RUN-safe `DISABLE` baseline.
-- `wire_pwm_arm_current_trip()` installs both event actions as `LOW` and enables
+- `v2k_board_pwm_arm_current_trip()` installs both event actions as `LOW` and enables
   both one-shot sources in `TZSEL`, then verifies the armed register state.
-- `wire_pwm_disarm_current_trip()` disables both one-shot sources, restores both
+- `v2k_board_pwm_disarm_current_trip()` disables both one-shot sources, restores both
   event actions to `DISABLE`, verifies the disarmed state, and clears both DC
   event and OST flags.
 
@@ -538,7 +538,7 @@ This fixes the DRY_RUN high-side float and implements the §12 Option A mirror s
 an armed CMPSS current trip has per-event force-low actions for both `EPWMxA` and
 `EPWMxB`. The B-side effect still needs POWERED all-six-output verification.
 
-The unrelated `wire_pwm_output_is_locked()` predicate fix from section 6
+The unrelated `v2k_board_pwm_output_is_locked()` predicate fix from section 6
 (`&&` -> `||`) is included in the same change.
 
 ### 11.6 Verification status
@@ -620,9 +620,9 @@ Implementation (Option A):
   original asynchronous signals, and both disarmed actions are `DISABLE`.
 - [x] SysConfig: GPIO82 maps to INPUTXBAR1 and the route is locked; generated
   code remains the only owner of the static Input X-BAR mapping.
-- [x] `wire_pwm_set_current_trip_output_action()`: sets both `DCAEVT1` and
+- [x] `v2k_board_pwm_set_current_trip_output_action()`: sets both `DCAEVT1` and
   `DCBEVT1` to `LOW` (armed) / `DISABLE` (disarmed) on all three phases.
-- [x] `wire_pwm_arm_current_trip()` / `wire_pwm_disarm_current_trip()`: enables
+- [x] `v2k_board_pwm_arm_current_trip()` / `v2k_board_pwm_disarm_current_trip()`: enables
   and disables `EPWM_TZ_SIGNAL_DCAEVT1 | EPWM_TZ_SIGNAL_DCBEVT1` together and
   verifies the resulting TZSEL/action state.
 - [x] Config read-back / `s_current_trip_config_error`: added per-phase DCB

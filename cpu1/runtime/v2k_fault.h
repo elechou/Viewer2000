@@ -5,7 +5,7 @@
 // shutoff, through no CPU at all; the software part of this module does only the
 // "after the fact" work — latch state, report fault_code, accept commands.
 // The TZ static config (action/pins) starts in SysConfig; the selected GPIO to
-// INPUT X-BAR binding and all read-back reconciliation live in wire_f28p65x.c.
+// INPUT X-BAR binding and all read-back reconciliation live in v2k_board_f28p65x.c.
 //
 // Phase 5.0 trip sources:
 //   TZ1  ← INPUT X-BAR INPUT1 ← DRV nFAULT on GPIO82: active-low gate-driver trip

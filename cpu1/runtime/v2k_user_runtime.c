@@ -4,7 +4,7 @@
 
 #include "v2k_user_runtime.h"
 #include "v2k_crc32_prime.h"
-#include "../wire/wire.h"
+#include "../board/v2k_board.h"
 
 #include <crc_defines.h>
 #include <crc_tbl.h>
@@ -43,7 +43,7 @@ void v2k_pwm_apply(float duty_a, float duty_b, float duty_c)
     v2k_io.pwm.duty_a = duty_a;
     v2k_io.pwm.duty_b = duty_b;
     v2k_io.pwm.duty_c = duty_c;
-    wire_pwm_apply_command(&v2k_io.pwm);
+    v2k_board_pwm_apply_command(&v2k_io.pwm);
 }
 
 #pragma WEAK(setup)

@@ -19,12 +19,12 @@
 Phase 5.2 makes two deliberate code changes:
 
 ```c
-#define WIRE_POWERSTAGE_MODE WIRE_POWERSTAGE_MODE_POWERED
-#define WIRE_POWERSTAGE_POWERED_CONFIG_APPROVED 1u
+#define V2K_BOARD_POWERSTAGE_MODE V2K_BOARD_POWERSTAGE_MODE_POWERED
+#define V2K_BOARD_POWERSTAGE_POWERED_CONFIG_APPROVED 1u
 ```
 
 The tracked CPU1 RAM and FLASH compiler predefines are in `cpu1/.cproject`.
-`cpu1/wire/wire_f28p65x.c` deliberately retains its fail-safe DRY_RUN/approval
+`cpu1/board/v2k_board_f28p65x.c` deliberately retains its fail-safe DRY_RUN/approval
 off fallback when those project settings are absent.
 
 `cpu1/app/user.c` has no tunable duty variable. Every control tick submits:

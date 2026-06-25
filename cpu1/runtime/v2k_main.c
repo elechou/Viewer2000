@@ -22,8 +22,6 @@
 #include <string.h>
 #include "driverlib.h"
 #include "device.h"
-#include "board.h"   // sysconfig-generated: LED_CPU1_GPIO / LED_CPU2_GPIO pin macros
-                     // (the board-components LED module appends a _GPIO suffix to the nested GPIO instance)
 #include "../../common/v2k_planes.h"
 #include "v2k_timebase.h"
 #include "v2k_fault.h"
@@ -31,7 +29,7 @@
 #include "v2k_registry.h"
 #include "v2k_scope_runtime.h"
 #include "v2k_user_runtime.h"
-#include "../wire/wire.h"
+#include "../board/v2k_board.h"
 
 extern void SetDBGIER(uint16_t dbgier);
 
@@ -127,12 +125,7 @@ void main(void)
     // this line before CPU2 is loaded (see the debug-session order in
     // docs/phase1-sysconfig.md).
     //
-    SysCtl_allocateFlashBank(SYSCTL_FLASH_BANK0, SYSCTL_CPUSEL_CPU1);
-    SysCtl_allocateFlashBank(SYSCTL_FLASH_BANK1, SYSCTL_CPUSEL_CPU1);
-    SysCtl_allocateFlashBank(SYSCTL_FLASH_BANK2, SYSCTL_CPUSEL_CPU1);
-    SysCtl_allocateFlashBank(SYSCTL_FLASH_BANK3, SYSCTL_CPUSEL_CPU2);
-    SysCtl_allocateFlashBank(SYSCTL_FLASH_BANK4, SYSCTL_CPUSEL_CPU2);
-    MemCfg_setGSRAMControllerSel(MEMCFG_SECT_GS4, MEMCFG_GSRAMCONTROLLER_CPU2);
+    v2k_board_assign_boot_resources();
 
     //
     // Shared-interface publish: zero the whole plane, fill the contents, then
@@ -158,7 +151,7 @@ void main(void)
     // the following Board_init landing of the syscfg config
     // (motor ePWM/ADC/X-BAR/probe and trip pins), PWM can never reach the pins.
     //
-    SysCtl_disablePeripheral(SYSCTL_PERIPH_CLK_TBCLKSYNC);
+    v2k_board_freeze_timebase_clock();
     v2k_fault_arm();
 
     //
@@ -167,9 +160,7 @@ void main(void)
     // backstop (setting it again is harmless). From Phase 2 on Board_init also
     // lands the motor ePWM/ADC/GPIO/I2C/SPI configuration.
     //
-    Device_initGPIO();
-    Board_init();
-    GPIO_setControllerCore(LED_CPU2_GPIO, GPIO_CORE_CPU2);
+    v2k_board_init_generated_peripherals();
 
     //
     // Phase 3.5 SCIA backchannel: the pinmux (GPIO42 TX / GPIO43 RX, PULLUP,
@@ -245,7 +236,7 @@ void main(void)
             v2k_param_read_service();
             v2k_profile_service();
             v2k_profile_publish_status(&g_v2k_msg_1to2.cpu1_status);
-            wire_background_service();
+            v2k_board_background_service();
             v2k_scope_service();
             v2k_scope_apply_ready();
             v2k_scope_ccs_view_service();
@@ -287,7 +278,7 @@ void main(void)
 
         if (v2k_tick_due(now, &led_tick, V2K_BG_LED_TICKS))
         {
-            GPIO_togglePin(LED_CPU1_GPIO);
+            v2k_board_status_led_toggle();
         }
     }
 }

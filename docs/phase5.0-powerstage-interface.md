@@ -245,7 +245,7 @@ The Source column distinguishes:
 | DCAEVT1 / DCBEVT1 condition | DCxH high / DCxH high | User |
 | DCAEVT1 / DCBEVT1 mode | Original unfiltered signal, asynchronous | User plus module default |
 
-EPWM2 and EPWM8 sync-in selection from EPWM1 is applied and read back by the wire runtime because SysConfig exposes phase loading but does not emit the required explicit slave sync-in selection for this configuration.
+EPWM2 and EPWM8 sync-in selection from EPWM1 is applied and read back by the board runtime because SysConfig exposes phase loading but does not emit the required explicit slave sync-in selection for this configuration.
 
 SysConfig owns the complete static digital-compare topology. It intentionally
 does not select DCAEVT1 or DCBEVT1 as one-shot sources: runtime arms those two
@@ -361,9 +361,9 @@ off until bench validation replaces or explicitly accepts this image.
 
 ## 4. Layer Boundary
 
-### 4.1 L0/L1 Wire Boundary
+### 4.1 L0/L1 Board Boundary
 
-cpu1/wire/ owns:
+`cpu1/board/` owns:
 
 - ePWM register configuration reconciliation.
 - ADC SOC/EOC schedule validation, ISR binding, and acknowledgement.
@@ -376,14 +376,14 @@ The package is organized for two reading depths:
 
 | File | Reader-facing role |
 |---|---|
-| wire.h | Small L0-to-L1 seam: apply, time base, background service, and protection lifecycle |
-| wire_f28p65x.c | Board composition: shows how runtime timing/output/protection sequence the drivers |
-| wire_adc.c/.h | Private ADC SOC/EOC validation, ISR binding, and acknowledgement |
-| wire_pwm.c/.h | Private three-phase ePWM synchronization, compare update, read-back checks, X-BAR, and trip-zone operations |
-| wire_as5600.h | Public L0 AS5600 cached-sample API; no I2C transaction work |
-| wire_as5600_internal.h | Private foreground service and diagnostic address hooks |
-| wire_as5600.c | Non-blocking I2C state machine |
-| wire_drv8323rs.c/.h | Private bounded adapter around TI's DRV8323 driver plus platform GPIO lifecycle |
+| v2k_board.h | Small L0-to-L1 seam: apply, time base, background service, and protection lifecycle |
+| v2k_board_f28p65x.c | Board composition: shows how runtime timing/output/protection sequence the drivers |
+| v2k_board_adc.c/.h | Private ADC SOC/EOC validation, ISR binding, and acknowledgement |
+| v2k_board_pwm.c/.h | Private three-phase ePWM synchronization, compare update, read-back checks, X-BAR, and trip-zone operations |
+| v2k_board_as5600.h | Public L0 AS5600 cached-sample API; no I2C transaction work |
+| v2k_board_as5600_internal.h | Private foreground service and diagnostic address hooks |
+| v2k_board_as5600.c | Non-blocking I2C state machine |
+| v2k_board_drv8323rs.c/.h | Private bounded adapter around TI's DRV8323 driver plus platform GPIO lifecycle |
 
 ### 4.2 Read Access Versus Configuration Ownership
 
@@ -393,7 +393,7 @@ The default user ADC surface is semantic raw counts in `v2k_io.adc`:
 uint16_t ia_raw = v2k_io.adc.ia_raw;
 ```
 
-The wire layer owns the SOC-to-physical-channel mapping and fills this frame
+The board layer owns the SOC-to-physical-channel mapping and fills this frame
 before `control()` starts. User code owns offsets, scaling, calibration,
 filtering, and the resulting physical variables. Those static variables are
 observed through Phase 4.5 symbol baking.
@@ -411,7 +411,7 @@ Allowed in user `control()`:
 - documented non-blocking native result/status reads such as `ADC_readResult()`;
 - count-to-A/V conversion and calibration state;
 - DCL/MotorControl SDK/user control math;
-- `wire_as5600_get_latest()`, which only copies a cache.
+- `v2k_board_as5600_get_latest()`, which only copies a cache.
 
 Platform-only operations:
 
@@ -431,7 +431,7 @@ v2k_pwm_apply(app_duty_a, app_duty_b, app_duty_c);
 ```
 
 `v2k_pwm_apply()` updates the `v2k_io.pwm` command diagnostics, then delegates to
-the wire layer for clamp, future dead-time compensation, and EPWM compare
+the board layer for clamp, future dead-time compensation, and EPWM compare
 updates. DCL remains available for generic control blocks. The L2 term is a
 development map; the C API still uses physical names, not layer names.
 
@@ -457,7 +457,7 @@ development map; the C API still uses physical names, not layer names.
 The AS5600 driver exposes:
 
 ```c
-uint16_t wire_as5600_get_latest(wire_as5600_sample_t *sample);
+uint16_t v2k_board_as5600_get_latest(v2k_board_as5600_sample_t *sample);
 ```
 
 This call performs no I2C work. The sample contains raw 12-bit angle, mechanical radians, AS5600 status, validity, and a publication sequence. Electrical angle and pole-pair handling belong to user L2 control code.
@@ -548,7 +548,7 @@ APP_START is asynchronous. The command remains unacknowledged while the foregrou
 7. Clear TZ flags and release OST only if every precondition still passes; recheck the current-trip source before and after release.
 8. Set state to RUNNING, enable TZ interrupts, and acknowledge APP_START.
 
-The checked-in default is `WIRE_POWERSTAGE_MODE_DRY_RUN`. It leaves DRV ENABLE low but permits the state machine and MCU PWM pins to be tested with the inverter bus disconnected. Powered operation requires both `WIRE_POWERSTAGE_MODE=0` and `WIRE_POWERSTAGE_POWERED_CONFIG_APPROVED=1` as CPU1 compiler predefines. Approval must not become the checked-in motor-motion baseline until the register image, current-limit behavior, pin mapping, and bench-supply procedure have been physically verified. [Phase 5.2](phase5.2-minimum-powered-commissioning.md) defines the one supervised commissioning-build exception needed to collect the energized evidence itself.
+The checked-in default is `V2K_BOARD_POWERSTAGE_MODE_DRY_RUN`. It leaves DRV ENABLE low but permits the state machine and MCU PWM pins to be tested with the inverter bus disconnected. Powered operation requires both `V2K_BOARD_POWERSTAGE_MODE=0` and `V2K_BOARD_POWERSTAGE_POWERED_CONFIG_APPROVED=1` as CPU1 compiler predefines. Approval must not become the checked-in motor-motion baseline until the register image, current-limit behavior, pin mapping, and bench-supply procedure have been physically verified. [Phase 5.2](phase5.2-minimum-powered-commissioning.md) defines the one supervised commissioning-build exception needed to collect the energized evidence itself.
 
 Visible START diagnostics decode as follows: `start_state` is `0=IDLE`,
 `1=SLEEP_WAIT`, `2=WAKE_WAIT`, `3=READY`, or `4=FAILED`.
@@ -716,7 +716,7 @@ restored publication with a stable error count and advancing sequence.
 - Verify magnet/status bits.
 - Rotate through wraparound and confirm mechanical-angle continuity.
 - Confirm the foreground service has no polling/wait loop and advances by bounded state-machine steps.
-- Confirm `wire_as5600_get_latest()` performs only a coherent cache copy in the 20 kHz ISR.
+- Confirm `v2k_board_as5600_get_latest()` performs only a coherent cache copy in the 20 kHz ISR.
 - Confirm the publication sequence advances only when a complete status+angle sample is committed and bus errors invalidate health until recovery.
 
 ### 10.7 DRV8323RS Tests

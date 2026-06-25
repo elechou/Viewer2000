@@ -6,8 +6,7 @@
 #include "v2k_registry.h"
 #include "v2k_shared.h"
 #include "../v2k.h"
-#include "../wire/wire.h"
-#include "../wire/wire_as5600_internal.h"
+#include "../board/v2k_board.h"
 #include "v2k_timebase.h"
 #include "v2k_fault.h"
 #include "v2k_profile.h"
@@ -321,7 +320,7 @@ void v2k_registry_init(void)
 
     v2k_registry_add("desc_error", V2K_TYPE_U16, V2K_KIND_SCOPE,
                      &g_v2k_desc_error, 1u);
-    wire_register_ports(1u);
+    v2k_board_register_ports(1u);
     v2k_registry_add("isr_cycles", V2K_TYPE_U32, V2K_KIND_SCOPE,
                      &g_v2k_isr_cycles, 1u);
     v2k_registry_add("isr_latency", V2K_TYPE_U16, V2K_KIND_SCOPE,
@@ -382,12 +381,7 @@ void v2k_registry_init(void)
                      &g_v2k_scope_overrun_total, slow_div);
     v2k_registry_add("tz_trip_cnt", V2K_TYPE_U32, V2K_KIND_SCOPE,
                      &g_v2k_tz_int_cnt, slow_div);
-    v2k_registry_add("as5600_errors", V2K_TYPE_U32, V2K_KIND_SCOPE,
-                     wire_as5600_error_count_address(), slow_div);
-    v2k_registry_add("as5600_seq", V2K_TYPE_U32, V2K_KIND_SCOPE,
-                     wire_as5600_sequence_address(), slow_div);
-    v2k_registry_add("as5600_status", V2K_TYPE_U16, V2K_KIND_SCOPE,
-                     wire_as5600_status_address(), slow_div);
+    v2k_board_register_diagnostics(slow_div);
     v2k_registry_add_baked_user();
 
     table->hdr.magic = V2K_DESC_MAGIC;

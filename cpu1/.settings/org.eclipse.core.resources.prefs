@@ -1,6 +1,8 @@
 eclipse.preferences.version=1
 encoding//FLASH/app/subdir_rules.mk=UTF-8
 encoding//FLASH/app/subdir_vars.mk=UTF-8
+encoding//FLASH/board/subdir_rules.mk=UTF-8
+encoding//FLASH/board/subdir_vars.mk=UTF-8
 encoding//FLASH/makefile=UTF-8
 encoding//FLASH/objects.mk=UTF-8
 encoding//FLASH/runtime/subdir_rules.mk=UTF-8
