@@ -15,7 +15,8 @@ MEMORY
    RAMGS1           : origin = 0x012000, length = 0x002000
    RAMGS2           : origin = 0x014000, length = 0x002000
    RAMGS3           : origin = 0x016000, length = 0x002000
-   /* GS4 头部 0x200 words = v2k GS4 平面（基准 contracts/v2k_memmap.h；与 RAM .cmd 同步） */
+   /* The first 0x200 words of GS4 are the Viewer2000 CPU2 plane. Keep this
+      split synchronized with contracts/v2k_memmap.h and the RAM linker file. */
    RAMGS4_V2K       : origin = 0x018000, length = 0x000200
    RAMGS4           : origin = 0x018200, length = 0x001E00
 
@@ -27,8 +28,9 @@ MEMORY
    FLASH_BANK4     : origin = 0x100000, length = 0x20000  // Can be mapped to either CPU1 or CPU2. User should comment/uncomment based on core selection
 
 
-   /* MSGRAM 区头 0x40 words 切给 v2k（基址=契约值,见 contracts/v2k_memmap.h）,
-      余量给 TI driverlib 的 IPC 消息队列缓冲（ipc.obj 钉死在 MSGRAM_* section 名上） */
+   /* The first 0x40 words of each MSGRAM direction are reserved for v2k
+      contracts. The remainder stays available to TI driverlib IPC queues,
+      whose ipc.obj is pinned to the MSGRAM_* section names. */
    CPU1TOCPU2RAM_V2K : origin = 0x03A000, length = 0x000040
    CPU1TOCPU2RAM     : origin = 0x03A040, length = 0x0003C0
    CPU2TOCPU1RAM_V2K : origin = 0x03B000, length = 0x000040
@@ -68,8 +70,9 @@ SECTIONS
    .esysmem         : > RAMGS4
 #endif
 
-   /* Viewer2000 GS4 平面（基准 contracts/v2k_memmap.h；与 RAM .cmd 同步） */
-   v2k_gs4_cpu2 : > RAMGS4_V2K, type=NOINIT
+   /* Viewer2000 CPU2 plane; keep synchronized with contracts/v2k_memmap.h and
+      the RAM linker file. */
+   v2k_cpu2_plane : > RAMGS4_V2K, type=NOINIT
 
    v2k_msg_1to2 : > CPU1TOCPU2RAM_V2K, type=NOINIT
    v2k_msg_2to1 : > CPU2TOCPU1RAM_V2K, type=NOINIT

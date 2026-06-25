@@ -15,9 +15,10 @@ MEMORY
    RAMGS1           : origin = 0x012000, length = 0x002000
    RAMGS2           : origin = 0x014000, length = 0x002000
    RAMGS3           : origin = 0x016000, length = 0x002000
-   /* GS4 归 CPU2（CPU1 启动时 MemCfg 划转，见 v2k_memmap.h）。头部 0x200 words
-      切给 v2k GS4 平面（参数 shadow + 示波 cfg/bind/cons），余量给 CPU2 代码/数据。
-      修改划分须与 contracts/v2k_memmap.h 及 FLASH .cmd 同步。 */
+   /* GS4 is assigned to CPU2 by CPU1 MemCfg setup at boot. The first
+      0x200 words are reserved for the Viewer2000 CPU2 plane; the remainder
+      is available for CPU2 code and data. Keep this split synchronized with
+      contracts/v2k_memmap.h and the FLASH linker command file. */
    RAMGS4_V2K       : origin = 0x018000, length = 0x000200
    RAMGS4           : origin = 0x018200, length = 0x001E00
 
@@ -30,8 +31,9 @@ MEMORY
 
 
 
-   /* MSGRAM 区头 0x40 words 切给 v2k（基址=契约值,见 contracts/v2k_memmap.h）,
-      余量给 TI driverlib 的 IPC 消息队列缓冲（ipc.obj 钉死在 MSGRAM_* section 名上） */
+   /* The first 0x40 words of each MSGRAM direction are reserved for v2k
+      contracts. The remainder stays available to TI driverlib IPC queues,
+      whose ipc.obj is pinned to the MSGRAM_* section names. */
    CPU1TOCPU2RAM_V2K : origin = 0x03A000, length = 0x000040
    CPU1TOCPU2RAM     : origin = 0x03A040, length = 0x0003C0
    CPU2TOCPU1RAM_V2K : origin = 0x03B000, length = 0x000040
@@ -71,9 +73,10 @@ SECTIONS
    .esysmem         : > RAMGS4
 #endif
 
-   /* Viewer2000 GS4 平面：section 内只有一个聚合对象（common/v2k_planes.h），
-      对象基址 == 0x018000 == V2K_GS4_BASE；运行期 v2k_assert_layout 自检兜底 */
-   v2k_gs4_cpu2 : > RAMGS4_V2K, type=NOINIT
+   /* Viewer2000 CPU2 plane. The section contains exactly one aggregate object
+      (common/v2k_planes.h), so object base == 0x018000 ==
+      V2K_CPU2_PLANE_BASE; runtime layout assertions backstop it. */
+   v2k_cpu2_plane : > RAMGS4_V2K, type=NOINIT
 
    v2k_msg_1to2 : > CPU1TOCPU2RAM_V2K, type=NOINIT
    v2k_msg_2to1 : > CPU2TOCPU1RAM_V2K, type=NOINIT

@@ -85,7 +85,7 @@ SECTIONS
 #endif
 
 /* Viewer2000 shared-memory planes (reference contracts/v2k_memmap.h, kept in sync with the RAM .cmd) */
-   v2k_gs0_cpu1   : > RAMGS0_PLANE, type=NOINIT /* descriptor table + param status + scope producer block */
+   v2k_cpu1_plane   : > RAMGS0_PLANE, type=NOINIT /* descriptor table + param status + scope producer block */
    v2k_scope_ring : > RAMGS_SCOPE, type=NOINIT  /* Stream/Capture shared scope ring */
    v2k_ccs_view    : > RAMD2, type=NOINIT        /* post-freeze float[2048] de-interleaved view */
    v2k_user_desc   : > FLASH_BANK1, ALIGN(8)     /* Phase 4.5 post-link baked user descriptor blob */

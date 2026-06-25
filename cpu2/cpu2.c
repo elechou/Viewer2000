@@ -4,7 +4,7 @@
 // Current responsibilities:
 //   1. Rendezvous with CPU1 through IPC_sync, wait for descriptor magic, then
 //      verify the contract version handshake (v2k_command.h).
-//   2. Own the GS4 plane and CPU2->CPU1 MSGRAM; service the parameter, scope,
+//   2. Own the CPU2 plane and CPU2->CPU1 MSGRAM; service the parameter, scope,
 //      and command planes.
 //   3. Let the SCIA ISR collect octets; run COBS/CRC/message services and TX in
 //      the super-loop.
@@ -27,10 +27,10 @@
 // Shared-memory entities. Section -> physical-region mapping is in the CPU2
 // 28p65x_generic_* linker command files.
 //-----------------------------------------------------------------------------
-#pragma DATA_SECTION(g_v2k_gs4, "v2k_gs4_cpu2")
-v2k_gs4_plane_t g_v2k_gs4;
+#pragma DATA_SECTION(g_v2k_cpu2_plane, V2K_SECT_CPU2_PLANE)
+v2k_cpu2_plane_t g_v2k_cpu2_plane;
 
-#pragma DATA_SECTION(g_v2k_msg_2to1, "v2k_msg_2to1")
+#pragma DATA_SECTION(g_v2k_msg_2to1, V2K_SECT_MSG_2TO1)
 v2k_msg_2to1_t g_v2k_msg_2to1;
 
 //-----------------------------------------------------------------------------
@@ -57,9 +57,9 @@ void main(void)
     uint16_t led_count = 0u;
 
     v2k_cpu2_board_init_device();
-    v2k_cpu2_board_assert_layout(&g_v2k_gs4, &g_v2k_msg_2to1);
+    v2k_cpu2_board_assert_layout(&g_v2k_cpu2_plane, &g_v2k_msg_2to1);
 
-    memset(&g_v2k_gs4, 0, sizeof(g_v2k_gs4));
+    memset(&g_v2k_cpu2_plane, 0, sizeof(g_v2k_cpu2_plane));
     memset(&g_v2k_msg_2to1, 0, sizeof(g_v2k_msg_2to1));
 
     //
@@ -74,7 +74,7 @@ void main(void)
     // deliberately bypasses that aggregate entry, so the board seam keeps the
     // minimum local clock gate needed before SCIA_BASE_init writes SCICCR/BAUD.
     // Do not call full SYSCTL_init() here: it pulls in boot-master-only access
-    // control/CPUSEL setup that is invalid on CPU2 and bloats RAMGS4.
+    // control/CPUSEL setup that is invalid on CPU2 and bloats the CPU2 RAM budget.
     //
     v2k_cpu2_board_init_sci_pipe();
 
@@ -101,7 +101,7 @@ void main(void)
     // table is readable only after magic appears.
     //
     g_handshake_state = 1u;
-    while (V2K_GS0_RO->desc_table.hdr.magic != V2K_DESC_MAGIC) { }
+    while (V2K_CPU1_PLANE_RO->desc_table.hdr.magic != V2K_DESC_MAGIC) { }
 
     //
     // Contract version handshake. A mismatch means CPU1/CPU2 were flashed from
@@ -109,7 +109,7 @@ void main(void)
     // diagnosable failure state.
     //
     if ((V2K_MSG_1TO2_RO->cpu1_status.contract_ver != V2K_CONTRACT_VER) ||
-        (V2K_GS0_RO->desc_table.hdr.contract_ver   != V2K_CONTRACT_VER))
+        (V2K_CPU1_PLANE_RO->desc_table.hdr.contract_ver   != V2K_CONTRACT_VER))
     {
         g_handshake_state = 2u;
         v2k_cpu2_board_panic_halt();

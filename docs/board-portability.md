@@ -41,11 +41,13 @@ sensor driver remains profile-bound at the wiring level because the pin
 assignment, interrupt routing, sampling cadence, and safety interactions differ
 by board.
 
-Public mainline may contain more than one public board profile. Private
-downstream profiles remain in the private downstream repository only. Public
-documentation, paths, commit messages, and source comments must not reveal
-private board names, device populations, component part numbers, pin maps, or
-equipment details; use generic capability descriptions instead.
+Public mainline currently carries only the public profile that builds this
+repository. Additional public profiles may be added only by an explicit upstream
+decision. Private downstream profiles remain in the private downstream
+repository only. Public documentation, paths, commit messages, and source
+comments must not reveal private board names, device populations, component part
+numbers, pin maps, or equipment details; use generic capability descriptions
+instead.
 
 The word "wire" is reserved for the **communication protocol** — the serialized
 bytes on the link, defined by `docs/wire-spec.md`, `contracts/`, and the golden
@@ -65,7 +67,6 @@ cpu1/board/
     protection/
   profiles/
     f28p65x_launchxl_drv8323rs_as5600/
-    <private-profile>/        # downstream only; never present in public mainline
 
 cpu2/board/
   include/v2k_cpu2_board.h
@@ -73,12 +74,21 @@ cpu2/board/
     pipes/
   profiles/
     f28p65x_launchxl_sci/
-    <private-profile>/        # downstream only
 ```
 
 The exact directory names may change during implementation, but the ownership
 rule should not: `common/` holds reusable board-layer components, while
-`profiles/` holds the concrete build-selected hardware composition.
+`profiles/` holds concrete public hardware compositions. Private downstream
+profiles use the same conceptual structure in the downstream repository, but no
+placeholder directory or private profile file is added to public mainline.
+
+Target-wide physical memory maps belong to board/profile ownership, not to
+`contracts/`. Public mainline's default board map is
+`cpu1/board/v2k_board_memmap.h`; `contracts/v2k_memmap.h` only defines the
+logical shared-plane contract and selects that public board header unless a
+downstream build overrides `V2K_TARGET_MEMMAP_HEADER`. The default lives under
+CPU1 board support because CPU1 is the boot master that assigns shared-memory
+ownership; CPU2 consumes the resulting logical macros through the contract.
 
 ## The board seam
 
@@ -150,6 +160,21 @@ smell: the board-specific part belongs below the seam, not here.
 - **Protection wiring** — the trip-source-to-trip-zone bindings and the
   read-back assertions that prove the output is gated before release.
 
+## CCS and SysConfig boundary
+
+The public mainline CCS project pair carries one SysConfig input per project.
+Board portability is not implemented by adding extra private SysConfig files or
+target configurations to this repository. A downstream target should carry its
+own CCS project pair, private build configuration, generated-board files, linker
+command files, target configuration, and target memory-map override.
+
+The public C seam supports that downstream split through
+`V2K_TARGET_MEMMAP_HEADER`: public mainline defaults it to
+`cpu1/board/v2k_board_memmap.h`, and a downstream build may define the macro to
+a private board memmap header. `contracts/v2k_memmap.h` keeps the shared
+interface logic portable while the downstream repository owns the concrete
+physical addresses and any retuned plane capacities.
+
 ## Scope data-ring tuning and host compatibility
 
 A board with a tighter RAM budget will want to retune the scope ring. The ring
@@ -158,9 +183,9 @@ so the retuning stays mostly free:
 
 **Per-board-free — firmware-internal or self-described on the wire:**
 
-- Ring depth, block slot words, ring base, and GSx placement. The host never
-  sees these; CPU2 owns the drain and the host reads only `overrun_cnt` and
-  `remain_hint`. Tune freely.
+- Ring depth, block slot words, ring base, and target shared-RAM placement. The
+  host never sees these; CPU2 owns the drain and the host reads only
+  `overrun_cnt` and `remain_hint`. Tune freely.
 - Block geometry — `n_ticks` (N), `n_ch` (M), and `stride_octets` — travels in
   every block header (`contracts/v2k_scope.h`), so a block is self-delimiting and
   a different N or channel count parses with no host change.
@@ -212,8 +237,10 @@ the private profile exists means doing them once instead of twice.
    device.
 5. **Split the memory-map header.** Separate the portable *logical* allocation
    (structure-to-plane mapping, section names, ring-depth reasoning) from the
-   *physical* base addresses and block sizes. The logical part stays in the
-   shared contracts; the physical part moves to a board header.
+   *physical* base addresses and block sizes. The logical contract selects a
+   target memmap header through `V2K_TARGET_MEMMAP_HEADER`; public mainline
+   defaults to `cpu1/board/v2k_board_memmap.h`, while downstream repositories
+   provide their own private board header without upstreaming it.
 6. **Replace smart-driver-shaped lifecycle bits with capability-based
    gate-driver semantics.** The board seam may expose generic power-stage
    lifecycle state, start blockers, fault inputs, optional fault-clear/reset
@@ -234,9 +261,11 @@ portable surface above then merges between targets with minimal conflicts.
 
 ## Public mainline and private downstream workflow
 
-Mainline is allowed to support multiple public board profiles. The path
-isolation rule applies only to private profiles: private-only board paths are
-not defined by mainline and never appear in the public repository.
+Mainline may support additional public board profiles only when they are meant
+to be public upstream artifacts. The path isolation rule applies to private
+profiles: private-only board paths, SysConfig files, linker command files, target
+configurations, and target memory-map headers are not defined by mainline and
+never appear in the public repository.
 
 The private device repository should be an independent private repository,
 initialized from public mainline history and configured with public mainline as

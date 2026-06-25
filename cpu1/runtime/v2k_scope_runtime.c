@@ -20,7 +20,7 @@ extern uint16_t V2K_UserBssEnd;
 extern uint16_t V2K_UserConstStart;
 extern uint16_t V2K_UserConstEnd;
 
-#pragma DATA_SECTION(g_v2k_scope_ring, "v2k_scope_ring")
+#pragma DATA_SECTION(g_v2k_scope_ring, V2K_SECT_SCOPE_RING)
 volatile uint16_t g_v2k_scope_ring[V2K_SCOPE_RING_WORDS];
 
 #pragma DATA_SECTION(g_v2k_ccs_view, "v2k_ccs_view")
@@ -171,7 +171,7 @@ static void v2k_scope_transition(v2k_scope_prod_t *prod, uint16_t mode)
 
 void v2k_scope_init(void)
 {
-    v2k_scope_prod_t *prod = &g_v2k_gs0.scope_prod;
+    v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
 
     memset((void *)g_v2k_scope_ring, 0, sizeof(g_v2k_scope_ring));
     memset(&s_scope, 0, sizeof(s_scope));
@@ -215,13 +215,13 @@ static uint16_t v2k_validate_bind(const v2k_scope_bind_t *bind)
         }
     }
     stride = v2k_stride_words(bind->ch, bind->n_ch);
-    return v2k_scope_layout(g_v2k_gs0.scope_prod.block_n_ticks, stride,
+    return v2k_scope_layout(g_v2k_cpu1_plane.scope_prod.block_n_ticks, stride,
                             &slot_words, &capacity);
 }
 
 static uint16_t v2k_validate_cfg(const v2k_scope_cfg_t *cfg)
 {
-    const v2k_scope_prod_t *prod = &g_v2k_gs0.scope_prod;
+    const v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
     uint16_t prescaler;
     uint16_t slot_words;
     uint16_t capacity;
@@ -304,19 +304,20 @@ static void v2k_prepare_capture_window(v2k_scope_prod_t *prod,
 
 void v2k_scope_service(void)
 {
-    const volatile v2k_scope_cfg_t *cfg = &V2K_GS4_RO->scope_cfg;
-    const volatile v2k_scope_bind_t *bind = &V2K_GS4_RO->scope_bind;
+    const volatile v2k_scope_cfg_t *cfg = &V2K_CPU2_PLANE_RO->scope_cfg;
+    const volatile v2k_scope_bind_t *bind = &V2K_CPU2_PLANE_RO->scope_bind;
     uint16_t seq_before;
     uint16_t seq_after;
 
-    // The ISR never reads CPU2-owned GS4 directly; a slightly stale cache only errs conservatively by dropping a few extra new blocks.
-    s_cons_rd_cache = V2K_GS4_RO->scope_cons.rd_idx;
+    // The ISR never reads the CPU2-owned plane directly; a slightly stale cache
+    // only errs conservatively by dropping a few extra new blocks.
+    s_cons_rd_cache = V2K_CPU2_PLANE_RO->scope_cons.rd_idx;
 
     if (!s_cfg_pending.pending)
     {
         seq_before = cfg->cfg_seq;
         if ((seq_before != s_cfg_seen) &&
-            (seq_before != g_v2k_gs0.scope_prod.cfg_ack_seq))
+            (seq_before != g_v2k_cpu1_plane.scope_prod.cfg_ack_seq))
         {
             s_cfg_pending.cfg = *cfg;
             seq_after = cfg->cfg_seq;
@@ -334,7 +335,7 @@ void v2k_scope_service(void)
     {
         seq_before = bind->bind_seq;
         if ((seq_before != s_bind_seen) &&
-            (seq_before != g_v2k_gs0.scope_prod.bind_ack_seq))
+            (seq_before != g_v2k_cpu1_plane.scope_prod.bind_ack_seq))
         {
             s_bind_pending.bind = *bind;
             seq_after = bind->bind_seq;
@@ -351,7 +352,7 @@ void v2k_scope_service(void)
 
 static void v2k_apply_bind(void)
 {
-    v2k_scope_prod_t *prod = &g_v2k_gs0.scope_prod;
+    v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
     uint16_t result = s_bind_pending.result;
     uint16_t slot_words = 0u;
     uint16_t capacity = 0u;
@@ -389,7 +390,7 @@ static void v2k_apply_bind(void)
 
 static void v2k_apply_cfg(void)
 {
-    v2k_scope_prod_t *prod = &g_v2k_gs0.scope_prod;
+    v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
     uint16_t result = s_cfg_pending.result;
     uint16_t prescaler;
     uint16_t slot_words = 0u;
@@ -478,7 +479,7 @@ void v2k_scope_apply_ready(void)
 
 static volatile uint16_t *v2k_block_words(uint16_t wr_idx)
 {
-    v2k_scope_prod_t *prod = &g_v2k_gs0.scope_prod;
+    v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
     return (volatile uint16_t *)prod->ring_base +
            ((uint32_t)(wr_idx & (prod->ring_capacity - 1u)) *
             prod->block_slot_words);
@@ -529,7 +530,7 @@ static uint16_t v2k_capture_trigger_ready(const v2k_scope_prod_t *prod)
 static void v2k_copy_sample(volatile uint16_t *dst)
 {
     uint16_t ch;
-    for (ch = 0u; ch < g_v2k_gs0.scope_prod.n_ch; ch++)
+    for (ch = 0u; ch < g_v2k_cpu1_plane.scope_prod.n_ch; ch++)
     {
         const v2k_scope_ch_bind_t *bind = &s_scope.bind[ch];
         const volatile uint16_t *src = (const volatile uint16_t *)bind->addr;
@@ -543,7 +544,7 @@ static void v2k_copy_sample(volatile uint16_t *dst)
 
 static void v2k_publish_block(uint16_t n_ticks)
 {
-    v2k_scope_prod_t *prod = &g_v2k_gs0.scope_prod;
+    v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
     volatile v2k_block_hdr_t *hdr =
         (volatile v2k_block_hdr_t *)v2k_block_words(prod->wr_idx);
 
@@ -559,7 +560,7 @@ static void v2k_publish_block(uint16_t n_ticks)
 
 static void v2k_freeze(void)
 {
-    v2k_scope_prod_t *prod = &g_v2k_gs0.scope_prod;
+    v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
     uint16_t frozen_count;
     if (s_scope.sample_in_block != 0u)
     {
@@ -579,7 +580,7 @@ static void v2k_freeze(void)
 
 static void v2k_scope_sample_one(v2k_tick_t tick)
 {
-    v2k_scope_prod_t *prod = &g_v2k_gs0.scope_prod;
+    v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
     uint16_t mode_before = prod->mode;
     volatile uint16_t *block;
     volatile v2k_block_hdr_t *hdr;
@@ -741,7 +742,7 @@ void v2k_scope_ccs_view_service(void)
 {
     uint16_t slot = g_v2k_ccs_view.channel_slot;
     uint16_t request = g_v2k_ccs_view.request_seq;
-    const v2k_scope_prod_t *prod = &g_v2k_gs0.scope_prod;
+    const v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
     uint16_t idx;
     uint16_t end;
     uint16_t offset = 0u;

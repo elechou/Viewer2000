@@ -4,7 +4,7 @@
 >
 > Phase 3 already proved CPU1 can produce descriptors, parameter status, and native scope blocks; Phase 3.5 must prove CPU2 and a real PC program can consume these interfaces **without disturbing the control core**.
 
-Phase 3's CCS Graph reads CPU1 memory directly, bypassing CPU2, the GS4 consumer index, IPC command forwarding, and the wire protocol. Phase 3.5 closes the full path for the first time:
+Phase 3's CCS Graph reads CPU1 memory directly, bypassing CPU2, the CPU2-plane consumer index, IPC command forwarding, and the wire protocol. Phase 3.5 closes the full path for the first time:
 
 ```text
 CPU1 ISR
@@ -227,7 +227,7 @@ Only after the host abandons the old request and uses a new seq is it a new serv
 | HELLO | read version, build hash, descriptor count, tick_hz, capability bits, and human-readable project metadata | no side effect |
 | STATUS | summarize state, heartbeat, parameter result, scope mode, command result | no side effect |
 | ENUM | paged read of the descriptor table, up to 8 entries per page | `desc_count/build_hash` |
-| CAL_WRITE | stage into GS4 shadow; same address overwrites | not yet published |
+| CAL_WRITE | stage into the CPU2 parameter shadow; same address overwrites | not yet published |
 | CAL_COMMIT | write `commit_seq+1` last | `applied_seq/result/fail_idx` |
 | CAL_READ | publish a one-shot `(addr,type)` read request | `read_seq/ack_seq` |
 | DAQ_CTRL | publish one scope cfg | `cfg_ack_seq/cfg_result/mode` |
@@ -251,7 +251,7 @@ Keep resident in CPU2 CCS Expressions:
 | `g_v2k_sci_good_frames` | requests that passed the full check |
 | `g_v2k_msg_2to1.cpu2_status.link_state` | whether a legal frame was received in roughly the last 2 s |
 | `g_v2k_msg_2to1.cpu2_status.heartbeat` | CPU2's local diagnostic heartbeat |
-| `g_v2k_gs4.scope_cons.rd_idx` | the Scope consumer position |
+| `g_v2k_cpu2_plane.scope_cons.rd_idx` | the Scope consumer position |
 
 These counters diagnose only the comms core; they must not become a source of control time or block timestamps.
 

@@ -11,7 +11,7 @@
 #include "../common/v2k_planes.h"
 
 void v2k_cpu2_board_init_device(void);
-void v2k_cpu2_board_assert_layout(const volatile v2k_gs4_plane_t *gs4,
+void v2k_cpu2_board_assert_layout(const volatile v2k_cpu2_plane_t *cpu2_plane,
                                   const volatile v2k_msg_2to1_t *msg_2to1);
 void v2k_cpu2_board_init_sci_pipe(void);
 void v2k_cpu2_board_delay_100us(void);

@@ -171,7 +171,7 @@ static void v2k_default_project_name(char dst[V2K_PROJECT_NAME_LEN])
 
 static void v2k_publish_firmware_info(void)
 {
-    v2k_firmware_info_t *info = &g_v2k_gs0.firmware_info;
+    v2k_firmware_info_t *info = &g_v2k_cpu1_plane.firmware_info;
 
     memset(info, 0, sizeof(*info));
     if (v2k_project_name_valid(g_v2k_user_desc_blob.firmware_info.project_name))
@@ -188,7 +188,7 @@ static void v2k_publish_firmware_info(void)
 void v2k_registry_add(const char *name, uint16_t type, uint16_t kind,
                       volatile void *addr, uint16_t prescaler)
 {
-    v2k_desc_table_t *table = &g_v2k_gs0.desc_table;
+    v2k_desc_table_t *table = &g_v2k_cpu1_plane.desc_table;
     uint16_t idx = table->hdr.entry_count;
     v2k_desc_entry_t *entry;
 
@@ -271,7 +271,7 @@ static uint16_t v2k_user_desc_entry_valid(const v2k_desc_entry_t *entry)
 static void v2k_registry_add_baked_user(void)
 {
     const v2k_user_desc_blob_t *blob = &g_v2k_user_desc_blob;
-    v2k_desc_table_t *table = &g_v2k_gs0.desc_table;
+    v2k_desc_table_t *table = &g_v2k_cpu1_plane.desc_table;
     uint16_t i;
 
     if (!v2k_user_desc_blob_valid())
@@ -301,7 +301,7 @@ static void v2k_registry_add_baked_user(void)
 
 void v2k_registry_init(void)
 {
-    v2k_desc_table_t *table = &g_v2k_gs0.desc_table;
+    v2k_desc_table_t *table = &g_v2k_cpu1_plane.desc_table;
     uint16_t slow_div = (uint16_t)(V2K_ISR_HZ / 1000u);
 
     g_v2k_desc_error = V2K_DESC_ERROR_NONE;
@@ -389,7 +389,7 @@ void v2k_registry_init(void)
 
 static const v2k_desc_entry_t *v2k_desc_find(uint32_t addr)
 {
-    const v2k_desc_table_t *table = &g_v2k_gs0.desc_table;
+    const v2k_desc_table_t *table = &g_v2k_cpu1_plane.desc_table;
     uint16_t i;
 
     for (i = 0u; i < table->hdr.entry_count; i++)
@@ -433,7 +433,7 @@ static uint16_t v2k_validate_write(const v2k_param_write_t *write)
 
 void v2k_param_service(void)
 {
-    const volatile v2k_param_shadow_t *shadow = &V2K_GS4_RO->param_shadow;
+    const volatile v2k_param_shadow_t *shadow = &V2K_CPU2_PLANE_RO->param_shadow;
     v2k_param_ready_t candidate;
     uint32_t seq_before;
     uint32_t seq_after;
@@ -446,7 +446,7 @@ void v2k_param_service(void)
     }
     seq_before = shadow->commit_seq;
     if ((seq_before == s_shadow_seen) ||
-        (seq_before == g_v2k_gs0.param_status.applied_seq))
+        (seq_before == g_v2k_cpu1_plane.param_status.applied_seq))
     {
         return;
     }
@@ -486,9 +486,9 @@ void v2k_param_service(void)
 
     if (result != V2K_CAL_OK)
     {
-        g_v2k_gs0.param_status.result = result;
-        g_v2k_gs0.param_status.fail_idx = i;
-        g_v2k_gs0.param_status.applied_seq = candidate.seq;
+        g_v2k_cpu1_plane.param_status.result = result;
+        g_v2k_cpu1_plane.param_status.fail_idx = i;
+        g_v2k_cpu1_plane.param_status.applied_seq = candidate.seq;
         return;
     }
 
@@ -523,9 +523,9 @@ void v2k_param_apply_ready(void)
     {
         v2k_write_value(&s_ready.writes[i]);
     }
-    g_v2k_gs0.param_status.result = V2K_CAL_OK;
-    g_v2k_gs0.param_status.fail_idx = 0u;
-    g_v2k_gs0.param_status.applied_seq = s_ready.seq;
+    g_v2k_cpu1_plane.param_status.result = V2K_CAL_OK;
+    g_v2k_cpu1_plane.param_status.fail_idx = 0u;
+    g_v2k_cpu1_plane.param_status.applied_seq = s_ready.seq;
     s_ready_valid = 0u;
 }
 
@@ -560,7 +560,7 @@ static uint32_t v2k_read_addr(uint32_t addr, uint16_t type)
 
 void v2k_param_read_service(void)
 {
-    const volatile v2k_param_read_req_t *req = &V2K_GS4_RO->param_read_req;
+    const volatile v2k_param_read_req_t *req = &V2K_CPU2_PLANE_RO->param_read_req;
     uint32_t seq_before;
     uint32_t seq_after;
     uint16_t i;
@@ -568,7 +568,7 @@ void v2k_param_read_service(void)
     uint16_t result = V2K_CAL_OK;
 
     seq_before = req->read_seq;
-    if (seq_before == g_v2k_gs0.param_read_resp.ack_seq)
+    if (seq_before == g_v2k_cpu1_plane.param_read_resp.ack_seq)
     {
         return;
     }
@@ -603,16 +603,16 @@ void v2k_param_read_service(void)
         }
     }
 
-    g_v2k_gs0.param_read_resp.result = result;
-    g_v2k_gs0.param_read_resp.count =
+    g_v2k_cpu1_plane.param_read_resp.result = result;
+    g_v2k_cpu1_plane.param_read_resp.count =
         (result == V2K_CAL_OK) ? count : 0u;
     if (result == V2K_CAL_OK)
     {
         for (i = 0u; i < count; i++)
         {
-            g_v2k_gs0.param_read_resp.value_bits[i] =
+            g_v2k_cpu1_plane.param_read_resp.value_bits[i] =
                 v2k_read_addr(s_read_refs[i].addr, s_read_refs[i].type);
         }
     }
-    g_v2k_gs0.param_read_resp.ack_seq = seq_before;
+    g_v2k_cpu1_plane.param_read_resp.ack_seq = seq_before;
 }

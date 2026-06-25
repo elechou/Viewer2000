@@ -1,12 +1,15 @@
 //=============================================================================
-// check_contracts.c — 接口头文件 PC 端编译检查
+// check_contracts.c - PC-side compile check for interface headers
 //
-// 目的：在 CHAR_BIT=8 的 PC 编译器上编译全部接口头文件，
-// 触发头文件内的 V2K_ASSERT_SIZE_BITS 静态断言（断言以 bit 计，双平台通用），
-// 并额外断言关键字段的 bit 偏移（防止隐式填充破坏"内存布局=线上格式"映射）。
+// This compiles all interface headers with a CHAR_BIT=8 PC compiler, triggering
+// the V2K_ASSERT_SIZE_BITS static assertions in each header. Those assertions
+// are expressed in bits, so they are shared by PC and C28x builds. This file
+// also asserts key field bit offsets to catch implicit padding that would break
+// the "memory layout == on-wire format" mapping.
 //
-// 用法: gcc -std=c99 -Wall -Wextra -Werror -c check_contracts.c
-// （cl2000 侧同一文件可直接编译，断言同样生效——Phase 1 接入 CCS 工程后验证）
+// Usage: gcc -std=c99 -Wall -Wextra -Werror -c check_contracts.c
+// The same file is compiled on the cl2000 side, where the assertions exercise
+// the C28x CHAR_BIT=16 layout.
 //=============================================================================
 #include <stddef.h>
 
@@ -18,19 +21,21 @@
 #include "../contracts/v2k_memmap.h"
 #include "../common/v2k_planes.h"
 
-// bit 偏移断言（offsetof 以 char 计 → ×CHAR_BIT 得 bit，双平台通用）
+// Bit-offset assertion. offsetof is in char units; multiply by CHAR_BIT to make
+// it portable between PC and C28x.
 #define V2K_ASSERT_OFFSET_BITS(t, field, bits) \
     V2K_STATIC_ASSERT((uint32_t)offsetof(t, field) * (uint32_t)CHAR_BIT == (bits))
 
-// ---- 聚合平面尺寸（GS0 含 char[]，PC/C28x char 宽度不同，不能跨平台总尺寸断言）----
-V2K_ASSERT_SIZE_BITS(v2k_gs4_plane_t, 312u * 16u);
+// ---- Aggregate plane sizes. The CPU1 plane contains char[] fields, so PC and
+// C28x char width differences prevent a cross-platform total-size assertion. ----
+V2K_ASSERT_SIZE_BITS(v2k_cpu2_plane_t, 312u * 16u);
 
-// ---- 描述符条目（name 之后不得有隐式填充）----
+// ---- Descriptor entry; no implicit padding may follow name. ----
 V2K_ASSERT_OFFSET_BITS(v2k_desc_entry_t, type,      V2K_NAME_BITS(V2K_NAME_LEN));
 V2K_ASSERT_OFFSET_BITS(v2k_desc_entry_t, addr,      V2K_NAME_BITS(V2K_NAME_LEN) + 32u);
 V2K_ASSERT_OFFSET_BITS(v2k_desc_entry_t, prescaler, V2K_NAME_BITS(V2K_NAME_LEN) + 64u);
 
-// ---- 描述符表头 ----
+// ---- Descriptor table header. ----
 V2K_ASSERT_OFFSET_BITS(v2k_desc_table_hdr_t, build_hash, 64u);
 V2K_ASSERT_OFFSET_BITS(v2k_firmware_info_t, build_time_utc,
                        V2K_NAME_BITS(V2K_PROJECT_NAME_LEN));
@@ -38,7 +43,7 @@ V2K_ASSERT_OFFSET_BITS(v2k_user_desc_blob_t, firmware_info, 128u);
 V2K_ASSERT_OFFSET_BITS(v2k_user_desc_blob_t, entries,
                        128u + V2K_NAME_BITS(V2K_PROJECT_NAME_LEN) + 32u);
 
-// ---- 示波 block 头与控制块 ----
+// ---- Scope block header and control blocks. ----
 V2K_ASSERT_OFFSET_BITS(v2k_block_hdr_t, block_seq, 32u);
 V2K_ASSERT_OFFSET_BITS(v2k_block_hdr_t, n_ch,      80u);
 V2K_ASSERT_OFFSET_BITS(v2k_block_hdr_t, stride_octets, 112u);
@@ -54,7 +59,7 @@ V2K_ASSERT_OFFSET_BITS(v2k_scope_cfg_t,  cfg_seq, 176u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_ch_bind_t, type,    32u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_bind_t,  ch,        32u);
 
-// ---- 参数 shadow 与状态 ----
+// ---- Parameter shadow and status. ----
 V2K_ASSERT_OFFSET_BITS(v2k_param_write_t,  value_bits, 32u);
 V2K_ASSERT_OFFSET_BITS(v2k_param_write_t,  type,       64u);
 V2K_ASSERT_OFFSET_BITS(v2k_param_read_ref_t, type,      32u);
@@ -66,7 +71,7 @@ V2K_ASSERT_OFFSET_BITS(v2k_param_status_t, result,      32u);
 V2K_ASSERT_OFFSET_BITS(v2k_param_read_resp_t, value_bits, 32u);
 V2K_ASSERT_OFFSET_BITS(v2k_param_read_resp_t, ack_seq,  1056u);
 
-// ---- 命令/状态平面 ----
+// ---- Command/status plane. ----
 V2K_ASSERT_OFFSET_BITS(v2k_cmd_req_t,      cmd_code,  32u);
 V2K_ASSERT_OFFSET_BITS(v2k_cpu1_status_t,  ack_seq,   32u);
 V2K_ASSERT_OFFSET_BITS(v2k_cpu1_status_t,  heartbeat, 128u);
@@ -83,5 +88,5 @@ V2K_ASSERT_OFFSET_BITS(v2k_cpu1_status_t,  peak_tick, 448u);
 V2K_ASSERT_OFFSET_BITS(v2k_cpu1_status_t,  budget_violations, 480u);
 V2K_ASSERT_OFFSET_BITS(v2k_cpu1_status_t,  isr_overflows, 512u);
 
-// 防"空 TU"告警
+// Prevent an empty translation-unit warning.
 typedef int v2k_check_contracts_nonempty;

@@ -2,8 +2,8 @@
 // v2k_main.c - CPU1 platform entrypoint and background runtime
 //
 // Responsibilities of this phase (AGENTS.md roadmap Phase 1):
-//   1. Ownership assignment: GS4 RAM → CPU2; CPU2 LED (GPIO13) data-register ownership → CPU2
-//   2. Publish shared-interface entities: GS0 plane (descriptor-table magic publish barrier) + MSGRAM heartbeat
+//   1. Ownership assignment: CPU2 shared RAM and CPU2 LED data register -> CPU2
+//   2. Publish shared-interface entities: CPU1 plane + MSGRAM heartbeat
 //   3. Boot CPU2 → IPC_sync rendezvous → IPC ping-pong
 //   4. Blink at 1 Hz (LED4 red = GPIO12, lit on low level)
 //
@@ -36,10 +36,10 @@ extern void SetDBGIER(uint16_t dbgier);
 //-----------------------------------------------------------------------------
 // Shared-memory entities (section → physical-region mapping in 28p65x_generic_*_lnk_cpu1.cmd)
 //-----------------------------------------------------------------------------
-#pragma DATA_SECTION(g_v2k_gs0, "v2k_gs0_cpu1")
-v2k_gs0_plane_t g_v2k_gs0;
+#pragma DATA_SECTION(g_v2k_cpu1_plane, V2K_SECT_CPU1_PLANE)
+v2k_cpu1_plane_t g_v2k_cpu1_plane;
 
-#pragma DATA_SECTION(g_v2k_msg_1to2, "v2k_msg_1to2")
+#pragma DATA_SECTION(g_v2k_msg_1to2, V2K_SECT_MSG_1TO2)
 v2k_msg_1to2_t g_v2k_msg_1to2;
 
 //-----------------------------------------------------------------------------
@@ -99,7 +99,7 @@ static __interrupt void v2k_nmi_isr(void)
 //-----------------------------------------------------------------------------
 static void v2k_assert_layout(void)
 {
-    if (((uint32_t)&g_v2k_gs0 != V2K_GS0_PLANE_BASE) ||
+    if (((uint32_t)&g_v2k_cpu1_plane != V2K_CPU1_PLANE_BASE) ||
         ((uint32_t)&g_v2k_msg_1to2 != V2K_MSGRAM_1TO2_BASE))
     {
         for (;;) { ESTOP0; }
@@ -120,10 +120,9 @@ void main(void)
     //
     // Ownership assignment (boot-master responsibility, before booting CPU2):
     // CPU1 owns Flash Banks 0-2; CPU2 owns Banks 3-4 and boots from Bank 3.
-    // GS4 goes to CPU2 (v2k_memmap.h: parameter shadow + scope cfg/cons + CPU2 code).
-    // Loading CPU2's .out via the debugger also writes GS4, so CPU1 must run past
-    // this line before CPU2 is loaded (see the debug-session order in
-    // docs/phase1-sysconfig.md).
+    // CPU2 shared RAM ownership is assigned here. Loading CPU2's .out via the
+    // debugger also writes that RAM, so CPU1 must run past this line before CPU2
+    // is loaded (see the debug-session order in docs/phase1-sysconfig.md).
     //
     v2k_board_assign_boot_resources();
 
@@ -133,7 +132,7 @@ void main(void)
     // v2k_descriptor.h). The memset is on-chip owned-region init, not an on-wire
     // serialization path, so it is not bound by "no memcpy on the wire".
     //
-    memset(&g_v2k_gs0, 0, sizeof(g_v2k_gs0));
+    memset(&g_v2k_cpu1_plane, 0, sizeof(g_v2k_cpu1_plane));
     memset(&g_v2k_msg_1to2, 0, sizeof(g_v2k_msg_1to2));
     g_v2k_msg_1to2.cpu1_status.contract_ver = V2K_CONTRACT_VER;
     g_v2k_msg_1to2.cpu1_status.sys_state    = V2K_STATE_INIT;
@@ -231,7 +230,7 @@ void main(void)
             // run-to-completion work units. With no new seq/request they return
             // immediately, never waiting on the comms core or a peripheral.
             // Grouped at a ~1 ms poll point to avoid an idle control core
-            // continuously reading GS4/MSGRAM.
+            // continuously reading CPU2-plane/MSGRAM data.
             v2k_param_service();
             v2k_param_read_service();
             v2k_profile_service();

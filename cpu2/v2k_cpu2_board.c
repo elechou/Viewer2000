@@ -19,10 +19,10 @@ void v2k_cpu2_board_init_device(void)
     Device_init();
 }
 
-void v2k_cpu2_board_assert_layout(const volatile v2k_gs4_plane_t *gs4,
+void v2k_cpu2_board_assert_layout(const volatile v2k_cpu2_plane_t *cpu2_plane,
                                   const volatile v2k_msg_2to1_t *msg_2to1)
 {
-    if (((uint32_t)gs4 != V2K_GS4_BASE) ||
+    if (((uint32_t)cpu2_plane != V2K_CPU2_PLANE_BASE) ||
         ((uint32_t)msg_2to1 != V2K_MSGRAM_2TO1_BASE))
     {
         v2k_cpu2_board_panic_halt();

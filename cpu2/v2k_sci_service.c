@@ -1,9 +1,10 @@
 //=============================================================================
 // v2k_sci_service.c - Viewer2000 wire v6 over SCIA/XDS110 VCP
 //
-// RX ISR 只把 8-bit octet 搬进本地 SPSC 环；COBS/CRC、消息解释、共享平面
-// 服务与 TX 均在 CPU2 超级循环执行。所有线上字段显式序列化，禁止 struct
-// memcpy；C28x 的 uint16_t 缓冲只使用低 8 bit 保存 octet。
+// The RX ISR only moves 8-bit octets into a local SPSC ring; COBS/CRC, message
+// handling, shared-plane service, and TX all run in the CPU2 super-loop. Every
+// on-wire field is serialized explicitly. C28x uint16_t buffers store octets in
+// the low 8 bits only.
 //=============================================================================
 
 #include <string.h>
@@ -39,15 +40,16 @@
 #define V2K_ACK_UNSUPPORTED   4u
 #define V2K_ACK_INTERNAL      5u
 
-extern v2k_gs4_plane_t g_v2k_gs4;
+extern v2k_cpu2_plane_t g_v2k_cpu2_plane;
 extern v2k_msg_2to1_t g_v2k_msg_2to1;
 
 static volatile uint16_t s_rx_ring[V2K_RX_RING_WORDS];
 static volatile uint16_t s_rx_wr;
 static volatile uint16_t s_rx_rd;
 
-// 当前最大请求是 16 条 CAL_WRITE，共 205 raw octets；响应仍允许 1024 payload。
-// C28x 每个 octet 占一个 16-bit word，收发缓冲必须分开核算。
+// The largest current request is 16 CAL_WRITE entries, 205 raw octets total.
+// Responses still allow 1024 payload octets. On C28x each octet occupies one
+// 16-bit word, so RX and TX buffers are budgeted separately.
 static uint16_t s_rx_frame[V2K_RX_FRAME_WORDS];
 static uint16_t s_rx_frame_len;
 static uint16_t s_rx_discard;
@@ -239,9 +241,9 @@ static void v2k_handle_hello(uint16_t seq)
     v2k_put_u16(s_raw, off, V2K_WIRE_VER);
     v2k_put_u16(s_raw, (uint16_t)(off + 2u), V2K_CONTRACT_VER);
     v2k_put_u32(s_raw, (uint16_t)(off + 4u),
-                V2K_GS0_RO->desc_table.hdr.build_hash);
+                V2K_CPU1_PLANE_RO->desc_table.hdr.build_hash);
     v2k_put_u16(s_raw, (uint16_t)(off + 8u),
-                V2K_GS0_RO->desc_table.hdr.entry_count);
+                V2K_CPU1_PLANE_RO->desc_table.hdr.entry_count);
     v2k_put_u16(s_raw, (uint16_t)(off + 10u), 0u);
     for (i = 0u; i < 16u; i++)
     {
@@ -254,10 +256,10 @@ static void v2k_handle_hello(uint16_t seq)
     for (i = 0u; i < V2K_PROJECT_NAME_LEN; i++)
     {
         s_raw[(uint16_t)(off + 36u + i)] =
-            ((uint16_t)V2K_GS0_RO->firmware_info.project_name[i]) & 0xFFu;
+            ((uint16_t)V2K_CPU1_PLANE_RO->firmware_info.project_name[i]) & 0xFFu;
     }
     v2k_put_u32(s_raw, (uint16_t)(off + 68u),
-                V2K_GS0_RO->firmware_info.build_time_utc);
+                V2K_CPU1_PLANE_RO->firmware_info.build_time_utc);
     v2k_response_send(72u);
 }
 
@@ -265,7 +267,7 @@ static void v2k_handle_status(uint16_t seq)
 {
     const volatile v2k_cpu1_status_t *cpu1 =
         &V2K_MSG_1TO2_RO->cpu1_status;
-    const volatile v2k_param_status_t *cal = &V2K_GS0_RO->param_status;
+    const volatile v2k_param_status_t *cal = &V2K_CPU1_PLANE_RO->param_status;
     uint16_t off = v2k_response_begin(V2K_MSG_STATUS, seq);
     v2k_put_u16(s_raw, off, cpu1->sys_state);
     v2k_put_u16(s_raw, (uint16_t)(off + 2u), cpu1->fault_code);
@@ -278,9 +280,9 @@ static void v2k_handle_status(uint16_t seq)
     v2k_put_u16(s_raw, (uint16_t)(off + 22u), cal->result);
     v2k_put_u16(s_raw, (uint16_t)(off + 24u), cal->fail_idx);
     v2k_put_u32(s_raw, (uint16_t)(off + 26u),
-                V2K_GS0_RO->desc_table.hdr.build_hash);
-    s_raw[(uint16_t)(off + 30u)] = V2K_GS0_RO->scope_prod.mode & 0xFFu;
-    s_raw[(uint16_t)(off + 31u)] = V2K_GS0_RO->scope_prod.flags & 0xFFu;
+                V2K_CPU1_PLANE_RO->desc_table.hdr.build_hash);
+    s_raw[(uint16_t)(off + 30u)] = V2K_CPU1_PLANE_RO->scope_prod.mode & 0xFFu;
+    s_raw[(uint16_t)(off + 31u)] = V2K_CPU1_PLANE_RO->scope_prod.flags & 0xFFu;
     v2k_put_u16(s_raw, (uint16_t)(off + 32u), 0u);
     v2k_put_u32(s_raw, (uint16_t)(off + 34u), cpu1->ack_seq);
     v2k_put_u16(s_raw, (uint16_t)(off + 38u), cpu1->cmd_result);
@@ -302,7 +304,7 @@ static void v2k_handle_status(uint16_t seq)
 static void v2k_handle_enum(uint16_t seq, const uint16_t *payload,
                             uint16_t payload_len)
 {
-    const volatile v2k_desc_table_t *table = &V2K_GS0_RO->desc_table;
+    const volatile v2k_desc_table_t *table = &V2K_CPU1_PLANE_RO->desc_table;
     uint16_t start;
     uint16_t max_count;
     uint16_t count;
@@ -354,9 +356,9 @@ static void v2k_handle_enum(uint16_t seq, const uint16_t *payload,
 static int16_t v2k_find_staged(uint32_t addr)
 {
     uint16_t i;
-    for (i = 0u; i < g_v2k_gs4.param_shadow.count; i++)
+    for (i = 0u; i < g_v2k_cpu2_plane.param_shadow.count; i++)
     {
-        if (g_v2k_gs4.param_shadow.writes[i].addr == addr)
+        if (g_v2k_cpu2_plane.param_shadow.writes[i].addr == addr)
         {
             return (int16_t)i;
         }
@@ -374,16 +376,16 @@ static void v2k_handle_cal_write(uint16_t seq, const uint16_t *payload,
         v2k_send_ack(V2K_MSG_CAL_WRITE, seq, V2K_ACK_BAD_PARAM, 0uL);
         return;
     }
-    if (g_v2k_gs4.param_shadow.commit_seq !=
-        V2K_GS0_RO->param_status.applied_seq)
+    if (g_v2k_cpu2_plane.param_shadow.commit_seq !=
+        V2K_CPU1_PLANE_RO->param_status.applied_seq)
     {
         v2k_send_ack(V2K_MSG_CAL_WRITE, seq, V2K_ACK_BUSY, 0uL);
         return;
     }
-    if (s_cal_staged_commit_seq != g_v2k_gs4.param_shadow.commit_seq)
+    if (s_cal_staged_commit_seq != g_v2k_cpu2_plane.param_shadow.commit_seq)
     {
-        g_v2k_gs4.param_shadow.count = 0u;
-        s_cal_staged_commit_seq = g_v2k_gs4.param_shadow.commit_seq;
+        g_v2k_cpu2_plane.param_shadow.count = 0u;
+        s_cal_staged_commit_seq = g_v2k_cpu2_plane.param_shadow.commit_seq;
     }
     count = payload[0] & 0xFFu;
     if ((count == 0u) || (payload_len != (uint16_t)(2u + 12u * count)))
@@ -403,20 +405,20 @@ static void v2k_handle_cal_write(uint16_t seq, const uint16_t *payload,
         }
         else
         {
-            if (g_v2k_gs4.param_shadow.count >= V2K_PARAM_BATCH_MAX)
+            if (g_v2k_cpu2_plane.param_shadow.count >= V2K_PARAM_BATCH_MAX)
             {
                 v2k_send_ack(V2K_MSG_CAL_WRITE, seq,
                              V2K_ACK_BAD_PARAM, 0uL);
                 return;
             }
-            dst = g_v2k_gs4.param_shadow.count++;
+            dst = g_v2k_cpu2_plane.param_shadow.count++;
         }
-        g_v2k_gs4.param_shadow.writes[dst].addr = addr;
-        g_v2k_gs4.param_shadow.writes[dst].value_bits =
+        g_v2k_cpu2_plane.param_shadow.writes[dst].addr = addr;
+        g_v2k_cpu2_plane.param_shadow.writes[dst].value_bits =
             v2k_get_u32(payload, (uint16_t)(in + 4u));
-        g_v2k_gs4.param_shadow.writes[dst].type =
+        g_v2k_cpu2_plane.param_shadow.writes[dst].type =
             v2k_get_u16(payload, (uint16_t)(in + 8u));
-        g_v2k_gs4.param_shadow.writes[dst].reserved = 0u;
+        g_v2k_cpu2_plane.param_shadow.writes[dst].reserved = 0u;
     }
     v2k_send_ack(V2K_MSG_CAL_WRITE, seq, V2K_ACK_OK, 0uL);
 }
@@ -424,27 +426,27 @@ static void v2k_handle_cal_write(uint16_t seq, const uint16_t *payload,
 static void v2k_handle_cal_commit(uint16_t seq, uint16_t payload_len)
 {
     uint32_t commit_seq;
-    if ((payload_len != 0u) || (g_v2k_gs4.param_shadow.count == 0u))
+    if ((payload_len != 0u) || (g_v2k_cpu2_plane.param_shadow.count == 0u))
     {
         v2k_send_ack(V2K_MSG_CAL_COMMIT, seq, V2K_ACK_BAD_PARAM, 0uL);
         return;
     }
-    if (g_v2k_gs4.param_shadow.commit_seq !=
-        V2K_GS0_RO->param_status.applied_seq)
+    if (g_v2k_cpu2_plane.param_shadow.commit_seq !=
+        V2K_CPU1_PLANE_RO->param_status.applied_seq)
     {
         v2k_send_ack(V2K_MSG_CAL_COMMIT, seq, V2K_ACK_BUSY, 0uL);
         return;
     }
-    commit_seq = g_v2k_gs4.param_shadow.commit_seq + 1uL;
-    g_v2k_gs4.param_shadow.commit_seq = commit_seq;
+    commit_seq = g_v2k_cpu2_plane.param_shadow.commit_seq + 1uL;
+    g_v2k_cpu2_plane.param_shadow.commit_seq = commit_seq;
     v2k_send_ack(V2K_MSG_CAL_COMMIT, seq, V2K_ACK_OK, commit_seq);
 }
 
 static void v2k_handle_cal_read(uint16_t seq, const uint16_t *payload,
                                 uint16_t payload_len)
 {
-    volatile v2k_param_read_req_t *req = &g_v2k_gs4.param_read_req;
-    const volatile v2k_param_read_resp_t *resp = &V2K_GS0_RO->param_read_resp;
+    volatile v2k_param_read_req_t *req = &g_v2k_cpu2_plane.param_read_req;
+    const volatile v2k_param_read_resp_t *resp = &V2K_CPU1_PLANE_RO->param_read_resp;
     uint32_t read_seq;
     uint16_t count;
     uint16_t i;
@@ -525,7 +527,7 @@ static void v2k_handle_daq_ctrl(uint16_t seq, const uint16_t *payload,
         v2k_send_ack(V2K_MSG_DAQ_CTRL, seq, V2K_ACK_BAD_PARAM, 0uL);
         return;
     }
-    cfg = &g_v2k_gs4.scope_cfg;
+    cfg = &g_v2k_cpu2_plane.scope_cfg;
     cfg_seq = (uint16_t)(cfg->cfg_seq + 1u);
     cfg->mode_req = v2k_get_u16(payload, 0u);
     cfg->trig_ch_slot = v2k_get_u16(payload, 2u);
@@ -547,9 +549,9 @@ static void v2k_handle_daq_ctrl(uint16_t seq, const uint16_t *payload,
     cfg->cfg_seq = cfg_seq;
     for (i = 0u; i < 3000u; i++)
     {
-        if (V2K_GS0_RO->scope_prod.cfg_ack_seq == cfg_seq)
+        if (V2K_CPU1_PLANE_RO->scope_prod.cfg_ack_seq == cfg_seq)
         {
-            result = V2K_GS0_RO->scope_prod.cfg_result;
+            result = V2K_CPU1_PLANE_RO->scope_prod.cfg_result;
             ack = (result == V2K_SCOPE_RESULT_OK) ?
                   V2K_ACK_OK :
                   ((result == V2K_SCOPE_RESULT_BAD_STATE) ?
@@ -581,12 +583,12 @@ static void v2k_handle_daq_bind(uint16_t seq, const uint16_t *payload,
         v2k_send_ack(V2K_MSG_DAQ_BIND, seq, V2K_ACK_BAD_PARAM, 0uL);
         return;
     }
-    if (V2K_GS0_RO->scope_prod.mode != V2K_SCOPE_OFF)
+    if (V2K_CPU1_PLANE_RO->scope_prod.mode != V2K_SCOPE_OFF)
     {
         v2k_send_ack(V2K_MSG_DAQ_BIND, seq, V2K_ACK_BAD_STATE, 0uL);
         return;
     }
-    bind = &g_v2k_gs4.scope_bind;
+    bind = &g_v2k_cpu2_plane.scope_bind;
     bind_seq = (uint16_t)(bind->bind_seq + 1u);
     bind->n_ch = count;
     for (i = 0u; i < count; i++)
@@ -599,9 +601,9 @@ static void v2k_handle_daq_bind(uint16_t seq, const uint16_t *payload,
     bind->bind_seq = bind_seq;
     for (i = 0u; i < 3000u; i++)
     {
-        if (V2K_GS0_RO->scope_prod.bind_ack_seq == bind_seq)
+        if (V2K_CPU1_PLANE_RO->scope_prod.bind_ack_seq == bind_seq)
         {
-            uint16_t result = V2K_GS0_RO->scope_prod.bind_result;
+            uint16_t result = V2K_CPU1_PLANE_RO->scope_prod.bind_result;
             uint16_t ack = (result == V2K_SCOPE_RESULT_OK) ?
                            V2K_ACK_OK :
                            ((result == V2K_SCOPE_RESULT_BAD_STATE) ?
@@ -643,8 +645,8 @@ static void v2k_handle_block_req(uint16_t seq, const uint16_t *payload,
         v2k_send_ack(V2K_MSG_BLOCK_REQ, seq, V2K_ACK_BAD_PARAM, 0uL);
         return;
     }
-    prod = &V2K_GS0_RO->scope_prod;
-    cons = &g_v2k_gs4.scope_cons;
+    prod = &V2K_CPU1_PLANE_RO->scope_prod;
+    cons = &g_v2k_cpu2_plane.scope_cons;
     if ((prod->mode == V2K_SCOPE_CAPTURE_FROZEN) &&
         (s_frozen_state_seq != prod->state_seq))
     {
@@ -665,7 +667,8 @@ static void v2k_handle_block_req(uint16_t seq, const uint16_t *payload,
                 (prod->mode == V2K_SCOPE_CAPTURE_FROZEN) ?
                 prod->trig_tick : 0uL);
     off = (uint16_t)(off + 4u);
-    // 触发覆盖写期间 rd_idx 没有消费语义，只允许冻结后排空。
+    // During trigger overwrite, rd_idx has no consumer meaning; draining is
+    // allowed only after the capture freezes.
     if ((prod->mode != V2K_SCOPE_STREAM) &&
         (prod->mode != V2K_SCOPE_CAPTURE_FROZEN))
     {
@@ -809,7 +812,8 @@ static void v2k_process_encoded_frame(void)
         ((s_rx_frame[1] & 0x7Fu) == s_last_req_type) &&
         (seq == s_last_req_seq))
     {
-        // host 超时重发同一帧时重放原响应，禁止 COMMIT/CMD 等服务重复执行。
+        // If the host retries the same frame after a timeout, replay the
+        // original response and do not execute COMMIT/CMD-style services again.
         s_tx_pos = 0u;
         return;
     }
@@ -852,7 +856,8 @@ static void v2k_tx_service(void)
         SCI_writeCharNonBlocking(SCIA_BASE, s_tx_frame[s_tx_pos++]);
         g_v2k_sci_tx_octets++;
     }
-    // 完成后保留帧内容和长度，供相同 (msg_type, seq) 的超时重试直接重放。
+    // Keep the frame content and length after completion so a timeout retry with
+    // the same (msg_type, seq) can replay it directly.
 }
 
 void v2k_sci_init(void)
@@ -873,13 +878,13 @@ void v2k_sci_init(void)
     s_last_req_seq = 0u;
     s_have_last_response = 0u;
 
-    // SCIA 静态配置（clock enable / setConfig 115200 8N1 / enableFIFO /
-    // enableModule / FIFO level=TX0,RX0）由 sysconfig 生成的 SCIA_BASE_init
-    // 落地（在 cpu2.c main() 里调用，先于本 init）。这里只做：
-    //   1) 把 RX FIFO 触发阈值从生成的 RX0（empty）改为 RX1，匹配本服务
-    //      “RX ISR 逐 octet 搬运”策略；
-    //   2) 清一次 RX 溢出锁存，覆盖 boot 期间任何脏字节；
-    //   3) 注册 INT_SCIA_RX，开 RXFF 中断 + PIE。
+    // Static SCIA setup (clock enable, 115200 8N1 setConfig, FIFO enable,
+    // module enable, FIFO levels TX0/RX0) is generated by SysConfig in
+    // SCIA_BASE_init and called from cpu2.c before this init. This function:
+    //   1. Changes the RX FIFO trigger threshold from generated RX0 (empty) to
+    //      RX1 to match this service's one-octet-at-a-time RX ISR strategy.
+    //   2. Clears one RX overflow latch to cover any dirty octets during boot.
+    //   3. Registers INT_SCIA_RX and enables RXFF interrupt + PIE.
     SCI_setFIFOInterruptLevel(SCIA_BASE, SCI_FIFO_TX0, SCI_FIFO_RX1);
     SCI_clearOverflowStatus(SCIA_BASE);
     Interrupt_register(INT_SCIA_RX, &v2k_scia_rx_isr);
@@ -894,8 +899,9 @@ void v2k_sci_service(void)
     {
         uint16_t value = s_rx_ring[s_rx_rd] & 0xFFu;
 
-        // TX buffer 也是上一响应的重放缓存。响应尚未完全送入 FIFO 时
-        // 暂停解析后续请求，避免粘包场景下把第二帧当作“TX busy”丢掉。
+        // The TX buffer also caches the previous response for replay. While the
+        // response has not fully entered the FIFO, pause request parsing so a
+        // second coalesced frame is not dropped as "TX busy".
         if (s_tx_pos != s_tx_len)
         {
             break;

@@ -68,7 +68,7 @@ V2K_ASSERT_SIZE_BITS(v2k_param_read_ref_t, 64u);
 //-----------------------------------------------------------------------------
 // Shadow region (CPU2-owned: written by CPU2 and CCS; CPU1 reads only and acks
 // via status.applied_seq. The publish action = writing commit_seq last; the
-// GSx far side is read-only, so there is no dual-writer field)
+// peer plane is read-only, so there is no dual-writer field)
 //-----------------------------------------------------------------------------
 typedef struct {
     uint16_t count;        // Entries in this batch ≤ V2K_PARAM_BATCH_MAX

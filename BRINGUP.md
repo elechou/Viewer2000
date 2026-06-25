@@ -15,7 +15,7 @@ Operating steps in `docs/phase1-sysconfig.md`. Verification checklist (all passe
 - [x] After resuming CPU2, both LEDs blink: red LED4 1 Hz / green LED5 2 Hz (by eye)
 - [x] `v2k_assert_layout` does not fire (neither core halts at ESTOP0) = .cmd placement matches v2k_memmap.h
 - [x] Expressions: g_ping_cnt / g_pong_cnt increment in lockstep; g_handshake_state == 3
-- [x] `g_v2k_gs0.desc_table.hdr.magic == 0x564B4454`
+- [x] `g_v2k_cpu1_plane.desc_table.hdr.magic == 0x564B4454`
 - [x] Heartbeat monitor (bonus): halt CPU2 → g_cpu2_alive 1→0, status_flags sets CPU2_LOST, red LED keeps blinking; resume recovers (rule 1 verified on hardware)
 - [x] Extra measurement: **halting either core does not affect the other's blink** — bidirectional fault-domain independence, beyond the "CPU2 dies, CPU1 keeps running" direction that rule 1 requires
 
@@ -25,7 +25,7 @@ Record area:
 |---|---|---|---|---|
 | 2026-06-12 | v2k_assert_layout self-check | first on-board run halts at ESTOP0 → inspect .map | g_v2k_msg_1to2 lands at 0x3A088 instead of 0x3A000 (driverlib ipc.obj's message-queue buffer occupies the conventional MSGRAM_* section name and is ordered first) | Self-check mechanism works. Fix: v2k switches to an independent section name + the .cmd carves a 0x40-word sub-region, contract base unchanged |
 | 2026-06-12 | "ran away" after Resume + CPU2 repeatedly held in reset | Registers read PC=0x081A3A (FLASH_BANK0), RESC.NMIWDRSn=1 | Unhandled NMI → NMI watchdog full-chip reset → S3 default flash boot runs into the **old single-core firmware**; the full-chip reset also pushes CPU2 back into reset. Single-stepping survives = NMIWD is suspended while halted | Prime suspect for the NMI source is CPU2WDRS (CPU2 runs M0 garbage before the .out is loaded → its WD resets; TI's nmi_ex1 example confirms this is a known dual-core NMI path). Fix: erase old flash firmware + hang a fallback NMI ISR on both cores (g_nmi_cnt/flags observable) |
-| 2026-06-12 | **Phase 1 overall acceptance** | after erasing flash, bring up the board in the order of docs/phase1-sysconfig.md §4; check the §5 Expressions list item by item | both LEDs 1 Hz/2 Hz; g_ping_cnt/g_pong_cnt increment in lockstep; g_handshake_state==3; desc magic==0x564B4454; halt CPU2 → g_cpu2_alive 1→0 + CPU2_LOST set + red LED keeps blinking, resume auto-recovers; halting either core does not affect the other's blink | **Phase 1 done**: dual-core boot, GSx/MSGRAM ownership and contract placement, IPC rendezvous + ping-pong, heartbeat monitor, NMI fallback all proven. Remaining: whether g_nmi_cnt is non-zero during the NMI-fallback window was not recorded (next session, glance at g_nmi_flags_last to confirm the CPU2WDRS hypothesis) |
+| 2026-06-12 | **Phase 1 overall acceptance** | after erasing flash, bring up the board in the order of docs/phase1-sysconfig.md §4; check the §5 Expressions list item by item | both LEDs 1 Hz/2 Hz; g_ping_cnt/g_pong_cnt increment in lockstep; g_handshake_state==3; desc magic==0x564B4454; halt CPU2 → g_cpu2_alive 1→0 + CPU2_LOST set + red LED keeps blinking, resume auto-recovers; halting either core does not affect the other's blink | **Phase 1 done**: dual-core boot, shared-RAM/MSGRAM ownership and contract placement, IPC rendezvous + ping-pong, heartbeat monitor, NMI fallback all proven. Remaining: whether g_nmi_cnt is non-zero during the NMI-fallback window was not recorded (next session, glance at g_nmi_flags_last to confirm the CPU2WDRS hypothesis) |
 | 2026-06-12 | NMI source CPU2WDRS hypothesis confirmed (clears the previous row's remaining issue) | with boot pins already changed to SCI/wait and full flash erased, run a dual-core debug session again, read both cores' NMI observables in Expressions | CPU1: g_nmi_cnt=1, g_nmi_flags_last=513=0x201=NMIINT\|**CPU2WDRSN** (verified against driverlib sysctl.h bit definitions); CPU2: g_nmi_cnt=0 | **Hypothesis confirmed**: the NMI source is the CPU2 watchdog reset (after CPU2 is released by Device_bootCPU2 but before its .out is loaded, it runs M0 garbage → its WD resets). Counts 1 rather than repeating = after the WD reset, CPU2 boot ROM waits for a new IPC boot command and feeds its own WD, exactly one per session. **This window is unrelated to boot pins or flash content** (the boot target is M0 RAM, not flash); the pins/flash-erase only change "where it lands after a full-chip reset". The NMI fallback is the resident piece that cuts the "CPU2 dies → NMIWD full-chip reset" path (rule 1); do not delete it |
 
 ---
@@ -79,7 +79,7 @@ Record area:
 Operating steps in `docs/phase3-executor-observability.md`.
 
 - [x] Phase 3 baseline contract version 2; DAQ_CTRL 12/14-octet compatibility vectors pass host checks (Phase 3.5 bumps to version 3 because the status block appends `tick_hz`)
-- [x] GS0 plane / slow loop and GS1-GS3 fast-loop link layout done
+- [x] CPU1 plane / slow loop and scope-ring link layout done
 - [x] Fixed-order L1 executor, staggered 1 kHz/100 Hz due mask, duty clamp/apply
 - [x] Descriptor table, background batch-validated / ISR same-tick-applied parameters, 10 Hz value mirror
 - [x] LIVE/SNAPSHOT, edge trigger, partial final block, consumer API, CCS view
@@ -225,7 +225,7 @@ Operating steps and remaining acceptance items are in `docs/phase4.1-user-code-b
 
 - [x] Phase 4.1 plan updated in English with the full mutable-user-state reset contract
 - [x] CPU1 managed-build hooks generate `v2k_user_boundary.cmd` / normalized manifest before link and run the post-link verifier before `all` completes
-- [x] RAM linker ownership: USER_RUN=RAMLS6, USER_CONST_RAM=RAMLS7, USER_GOLDEN_RAM=RAMD5[0:0x800), GS4 excluded
+- [x] RAM linker ownership: USER_RUN=RAMLS6, USER_CONST_RAM=RAMLS7, USER_GOLDEN_RAM=RAMD5[0:0x800), CPU2 shared RAM excluded
 - [x] User data golden uses TI linker `crc_table(..., algorithm = CRC32_PRIME)` and runtime expected/actual CRC diagnostics
 - [x] User app no longer uses reset-section pragmas; plain-C state spans two translation units, initialized data, BSS, arrays, structs, function statics, DCL state, and `const`
 - [x] Python unit tests for classifier/manifest/verifier failure modes pass
@@ -260,7 +260,7 @@ Scope2000 regression gates. Further 100 kHz work is deferred by policy.
 
 Operating policy and acceptance items are in `docs/phase4.5-symbol-baking.md`.
 
-- [x] `V2K_DESC_MAX=128`, `V2K_USER_DESC_MAX=96`, contract version 10, and GS0 C28x size assertions pass
+- [x] `V2K_DESC_MAX=128`, `V2K_USER_DESC_MAX=96`, contract version 10, and CPU1-plane C28x size assertions pass
 - [x] CPU1 reserves an exact-size patch blob in RAMD5_FREE for RAM and FLASH_BANK1 for FLASH
 - [x] TI `ofd2000 --xml --dwarf` baker scopes variables through Phase 4.1 linker ranges and expands supported scalar leaves
 - [x] Baker-generated final-image hash replaces the stale Git-HEAD hash and is stable across repeated patching
@@ -295,9 +295,9 @@ Hardware verification record (LAUNCHXL-F28P65X, CCS 21.0.0, RAM/20 kHz, dual-cor
 |---|---|---|---|---|
 | 2026-06-20 | Runtime blob acceptance | CPU1 read `g_v2k_desc_error` + `desc_table.hdr`; CPU2 read `g_v2k_user_desc_blob` header (blob lives in @Program) | `desc_error=0`; table magic=`0x564B4454` "VKDT", contract_ver=9, entry_stride_words=22, entry_count=52 (22 platform + 30 user); blob magic=`0x564B5544` "VKUD", version=2, count=30, capacity=96; `build_hash=0x19406E08` identical across report/blob/table | Runtime validated the blob header and all 30 user entries and appended them within capacity; the published table carries the baked set |
 | 2026-06-20 | Address correctness (check B) | CPU1 CCS Expressions `&var` vs `v2k_user_desc_report.json` word-addresses, plus value sanity | `&setpoint`=0xB000, `&pi`=0xB002, `&pi.Imax`=0xB010, `&gain`=0xB800, `&offset`=0xB018, `&trace`=0xB02A, `&secondary_gain`=0xB01E, `&secondary_ticks`=0xB032 — all exact; `setpoint`=1.5, `gain[0]`=1.0 match the source declarations | Baked word-addresses match CCS exactly, no off-by-word from the 16-bit-char convention; the addresses point at the right variables |
-| 2026-06-20 | Baked names in the live table | CPU1 decode `desc_table.entries[i].name/addr/type/kind` over the appended user range (i=22,44,48,51) | entry22=`setpoint`(0xB000,F32,kind3), entry44=`trace.idx`(U16), entry48=`gain[0]`(0xB800,const,kind2), entry51=`gain[3]`; struct/array leaves carry dotted/bracketed names | Names + struct/array expansion are physically present in the GS0 table at the exact path ENUM reads; const leaves are SCOPE-only (kind 2) |
-| 2026-06-20 | Check D — tune a baked PARAM | drive GS4 `param_shadow` via CPU2 {addr=0xB000, type=F32, value_bits=0x40200000=2.5f}, count=1, `commit_seq`=1; read back on CPU1 | `setpoint` 1.5→2.5; `param_status.applied_seq=1`, `result=OK(0)` | A baked user PARAM tunes through the param double-buffer with the same handshake as a platform PARAM — no descriptor-membership special-casing |
-| 2026-06-20 | Check D — const write rejected | GS4 shadow {addr=0xB800 (`gain[0]`, const), type=F32}, `commit_seq`=2; then restore setpoint via `commit_seq`=3 | `param_status.result=3 (BAD_ADDR)`, `fail_idx=0`, `applied_seq=2`, `gain[0]` unchanged=1.0; restore commit applies setpoint=1.5/result OK | Const baked as SCOPE-only enumerates/observes but is excluded from the write path, matching the implemented kind policy |
+| 2026-06-20 | Baked names in the live table | CPU1 decode `desc_table.entries[i].name/addr/type/kind` over the appended user range (i=22,44,48,51) | entry22=`setpoint`(0xB000,F32,kind3), entry44=`trace.idx`(U16), entry48=`gain[0]`(0xB800,const,kind2), entry51=`gain[3]`; struct/array leaves carry dotted/bracketed names | Names + struct/array expansion are physically present in the CPU1 descriptor table at the exact path ENUM reads; const leaves are SCOPE-only (kind 2) |
+| 2026-06-20 | Check D — tune a baked PARAM | drive CPU2 `param_shadow` {addr=0xB000, type=F32, value_bits=0x40200000=2.5f}, count=1, `commit_seq`=1; read back on CPU1 | `setpoint` 1.5→2.5; `param_status.applied_seq=1`, `result=OK(0)` | A baked user PARAM tunes through the param double-buffer with the same handshake as a platform PARAM — no descriptor-membership special-casing |
+| 2026-06-20 | Check D — const write rejected | CPU2 shadow {addr=0xB800 (`gain[0]`, const), type=F32}, `commit_seq`=2; then restore setpoint via `commit_seq`=3 | `param_status.result=3 (BAD_ADDR)`, `fail_idx=0`, `applied_seq=2`, `gain[0]` unchanged=1.0; restore commit applies setpoint=1.5/result OK | Const baked as SCOPE-only enumerates/observes but is excluded from the write path, matching the implemented kind policy |
 | 2026-06-20 | Offline baker suite | `python3 -m unittest test_v2k_bake_user_desc` | 9/9 pass: struct/array/const expansion, C28x wide-char round-trip, capacity+alignment overflow, duplicate/overlong-name reject, pointer report, typedef/const/TI-far resolve | The offline halves of checks A (extract/expand) and F (capacity overflow) hold in the current tree |
 
 The 2026-06-21 closure record below adds FLASH, full standalone ENUM paging,
