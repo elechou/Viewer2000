@@ -330,6 +330,44 @@ manual bookkeeping in the common case.
 6. Track mainline by routine merge; contribute board-neutral fixes back only by
    reviewed cherry-pick or reimplementation after a private-information review.
 
+### Current public profile contract
+
+Public mainline carries a small machine-readable profile contract in each core's
+board layer:
+
+- CPU1 selects a profile through `V2K_BOARD_PROFILE_HEADER`, defaulting to
+  `cpu1/board/profiles/f28p65x_launchxl_drv8323rs_as5600/v2k_board_profile.h`.
+- CPU2 selects a profile through `V2K_CPU2_BOARD_PROFILE_HEADER`, defaulting to
+  `cpu2/board/profiles/f28p65x_launchxl_sci/v2k_cpu2_board_profile.h`.
+- Each public profile has a hand-written `manifest.toml` declaring the board API version,
+  CPU topology, capability set, memory-map header, SysConfig input, linker
+  command files, target configuration, and board-owned sources. TOML is used
+  here because these files are maintained by people and benefit from comments.
+
+The seam between the portable surface and the board layer is validated without a
+dedicated second build configuration. The public FLASH build links the portable
+runtime against the real board through the seam headers only, and
+`tools/check_board_seams.py` enforces that no portable file (CPU1 runtime, or the
+portable CPU2 files including `cpu2.c`) reaches a vendor register outside that
+seam. A private downstream profile drops into the same `profiles/<id>/` shape with
+its own `manifest.toml`, board sources, and `V2K_*_BOARD_PROFILE_HEADER`
+selection; because the portable surface references the board only through the
+seam, accepting that profile needs no edits above the board layer.
+
+(A throwaway `null_loopback` profile with a no-op board implementation was
+prototyped as an explicit link-level acid test. It was dropped: the CCS build
+tooling forces the active configuration back to `FLASH`, and the green FLASH build
+plus the static seam check already cover the same risk. The selection mechanism,
+manifest schema, and checker remain — they are what a real downstream profile
+plugs into.)
+
+Run `python3 tools/check_board_seams.py` before splitting or merging board-seam
+changes. The check rejects vendor register access from the CPU1 runtime and the
+portable CPU2 files (including `cpu2.c`, the super-loop orchestration), requires
+every public profile manifest to declare a non-empty `board_sources` (a profile
+must bring its own board implementation), and verifies referenced artifacts exist
+— treating `"none"` as an artifact a build-only profile deliberately omits.
+
 ## CPU1-only student deliverable
 
 A CPU1-only deliverable for student user-code writing and flashing is not a

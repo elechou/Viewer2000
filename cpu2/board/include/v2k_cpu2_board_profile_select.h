@@ -1,0 +1,36 @@
+//=============================================================================
+// v2k_cpu2_board_profile_select.h - selected CPU2 board profile
+//=============================================================================
+#ifndef V2K_CPU2_BOARD_PROFILE_SELECT_H
+#define V2K_CPU2_BOARD_PROFILE_SELECT_H
+
+#include "v2k_cpu2_board_api.h"
+
+#ifndef V2K_CPU2_BOARD_PROFILE_HEADER
+#define V2K_CPU2_BOARD_PROFILE_HEADER \
+    "../profiles/f28p65x_launchxl_sci/v2k_cpu2_board_profile.h"
+#endif
+
+#include V2K_CPU2_BOARD_PROFILE_HEADER
+
+#ifndef V2K_CPU2_BOARD_PROFILE_API_VERSION
+#error "Selected CPU2 board profile must define V2K_CPU2_BOARD_PROFILE_API_VERSION"
+#endif
+
+#if V2K_CPU2_BOARD_PROFILE_API_VERSION != V2K_CPU2_BOARD_API_VERSION
+#error "Selected CPU2 board profile API version does not match v2k_cpu2_board.h"
+#endif
+
+#ifndef V2K_CPU2_BOARD_PROFILE_ID_TEXT
+#error "Selected CPU2 board profile must define V2K_CPU2_BOARD_PROFILE_ID_TEXT"
+#endif
+
+#ifndef V2K_CPU2_BOARD_PROFILE_CPU_TOPOLOGY
+#error "Selected CPU2 board profile must define V2K_CPU2_BOARD_PROFILE_CPU_TOPOLOGY"
+#endif
+
+#ifndef V2K_CPU2_BOARD_PROFILE_PIPE_CAPS
+#error "Selected CPU2 board profile must define V2K_CPU2_BOARD_PROFILE_PIPE_CAPS"
+#endif
+
+#endif // V2K_CPU2_BOARD_PROFILE_SELECT_H

@@ -1,14 +1,14 @@
 //=============================================================================
-// v2k_sci_service.h - Phase 3.5 SCIA/XDS110 协议数据泵
+// v2k_sci_service.h - Phase 3.5 Viewer2000 protocol data pump
 //=============================================================================
 #ifndef V2K_SCI_SERVICE_H
 #define V2K_SCI_SERVICE_H
 
 #include <stdint.h>
 
-// 波特率 / 帧格式 / FIFO 启停由 cpu2 sysconfig 的 SCI 实例落地，对应
-// SCIA_BASE_BAUDRATE 等宏在生成的 board.h；改 baud 走 sysconfig，本服务
-// 不再单独维护一份常量。
+// Baud rate, frame format, FIFO enable, and the physical pipe instance are
+// board-profile configuration. This service owns only the Viewer2000 wire
+// protocol and shared-plane transactions.
 
 extern volatile uint32_t g_v2k_sci_rx_octets;
 extern volatile uint32_t g_v2k_sci_tx_octets;

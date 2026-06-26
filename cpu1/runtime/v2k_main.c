@@ -20,8 +20,6 @@
 //#############################################################################
 
 #include <string.h>
-#include "driverlib.h"
-#include "device.h"
 #include "../../common/v2k_planes.h"
 #include "v2k_timebase.h"
 #include "v2k_fault.h"
@@ -30,8 +28,6 @@
 #include "v2k_scope_runtime.h"
 #include "v2k_user_runtime.h"
 #include "../board/v2k_board.h"
-
-extern void SetDBGIER(uint16_t dbgier);
 
 //-----------------------------------------------------------------------------
 // Shared-memory entities (section → physical-region mapping in 28p65x_generic_*_lnk_cpu1.cmd)
@@ -71,38 +67,16 @@ static uint16_t v2k_tick_due(v2k_tick_t now,
 }
 
 //-----------------------------------------------------------------------------
-// NMI backstop (boot-master responsibility, AGENTS.md dual-core split).
-// An unhandled NMI gets escalated by the NMI watchdog into a whole-chip reset
-// (Phase 1, BRINGUP.md 2026-06-12: after CPU2 was released from reset but before
-// its .out loaded, it ran garbage instructions in M0 → CPU2 watchdog reset event
-// → CPU1 NMI → NMIWD whole-chip reset → boot old firmware from flash, symptom =
-// "runaway"). The handler does just three things: count, leave a trace, clear
-// flags — clearing the flags stops the NMIWD count; a mirror of the flags stays
-// in variables so the event is not masked (rule 7).
-//-----------------------------------------------------------------------------
-volatile uint32_t g_nmi_cnt;         // Cumulative NMI count
-volatile uint32_t g_nmi_flags_last;  // Most recent NMIFLG (SYSCTL_NMI_* bits)
-volatile uint32_t g_nmi_shadow_last; // Most recent NMI shadow flags (historical union)
-
-static __interrupt void v2k_nmi_isr(void)
-{
-    g_nmi_flags_last  = SysCtl_getNMIFlagStatus();
-    g_nmi_shadow_last = SysCtl_getNMIShadowFlagStatus();
-    g_nmi_cnt++;
-    SysCtl_clearAllNMIFlags();
-}
-
-//-----------------------------------------------------------------------------
 // Link-placement self-check: an entity address != its memmap base is a build
 // error (.cmd out of sync with v2k_memmap.h); halt immediately and check the
-// linker script. ESTOP0 acts as a breakpoint under the debugger.
+// linker script.
 //-----------------------------------------------------------------------------
 static void v2k_assert_layout(void)
 {
     if (((uint32_t)&g_v2k_cpu1_plane != V2K_CPU1_PLANE_BASE) ||
         ((uint32_t)&g_v2k_msg_1to2 != V2K_MSGRAM_1TO2_BASE))
     {
-        for (;;) { ESTOP0; }
+        v2k_board_panic_halt();
     }
 }
 
@@ -114,7 +88,7 @@ void main(void)
     uint32_t cpu2_hb_last = 0u;
     uint16_t cpu2_hb_stale = 0u;
 
-    Device_init();
+    v2k_board_boot_init_device();
     v2k_assert_layout();
 
     //
@@ -162,33 +136,9 @@ void main(void)
     v2k_board_init_generated_peripherals();
 
     //
-    // Phase 3.5 SCIA backchannel: the pinmux (GPIO42 TX / GPIO43 RX, PULLUP,
-    // ASYNC) and CPUSEL_SCIA→CPU2 are both generated into CPU1 board.c by the two
-    // sysconfig contexts working together:
-    //   - the SCI instance in CPU2's syscfg reverse-triggers the
-    //     GPIO_setPinConfig(SCIA_SCIRX_PIN_CONFIG)/SCITX_PIN_CONFIG etc. in CPU1
-    //     PINMUX_init
-    //   - CPU1's sysctl.cpuSel_SCIA triggers the
-    //     SysCtl_selectCPUForPeripheralInstance(SYSCTL_CPUSEL_SCIA, ...CPU2) in
-    //     SYSCTL_init
-    // This core's application source adds no further SCIA static config (see
-    // phase3.5-sci-scope2000.md §1.3).
+    // Board-owned interrupt and NMI setup must be in place before releasing CPU2.
     //
-
-    //
-    // The NMI backstop must be in place before booting CPU2 — an NMI can arrive
-    // at any time in the window from CPU2's release from reset until its .out
-    // finishes loading (flow aligned with the TI example nmi_ex1_cpu1handling)
-    //
-    Interrupt_initModule();
-    Interrupt_initVectorTable();
-    SysCtl_clearAllNMIFlags();
-    Interrupt_register(INT_NMI, &v2k_nmi_isr);
-    SysCtl_enableNMIGlobalInterrupt();
-    Interrupt_enable(INT_NMI);
-    SetDBGIER(INTERRUPT_CPU_INT1); // ADCA1 is in PIE Group 1 = time-critical
-    EINT;
-    ERTM;
+    v2k_board_boot_init_interrupts();
 
     //
     // Phase 2 protection-first (2): contract self-check (reconcile syscfg config
@@ -199,26 +149,12 @@ void main(void)
     v2k_fault_init();
     v2k_tb_start();
 
-    //
-    // Boot CPU2 from the image selected by the active build configuration.
-    // Flash builds use the fixed CPU2 image entry at Bank 3 Sector 0.
-    //
-#ifdef _FLASH
-    Device_bootCPU2(BOOTMODE_BOOT_TO_FLASH_BANK3_SECTOR0);
-#else
-    Device_bootCPU2(BOOTMODE_BOOT_TO_M0RAM);
-#endif
-
-    //
-    // Rendezvous with CPU2 (one-time, blocks until both cores reach the sync point)
-    //
-    IPC_clearFlagLtoR(IPC_CPU1_L_CPU2_R, IPC_FLAG_ALL);
-    IPC_sync(IPC_CPU1_L_CPU2_R, IPC_FLAG31);
+    v2k_board_boot_cpu2_and_sync();
 
     // sys_state is synced by v2k_fault_poll from here on (fault_init already set IDLE)
 
     // Send the first ping (thereafter the main loop re-sends on each ack)
-    IPC_setFlagLtoR(IPC_CPU1_L_CPU2_R, IPC_FLAG0);
+    (void)v2k_board_ipc_ping_try_send();
 
     for (;;)
     {
@@ -244,17 +180,16 @@ void main(void)
             g_v2k_msg_1to2.cpu1_status.heartbeat++;
             g_v2k_msg_1to2.cpu1_status.tick = now;
             // ping is a 1 ms periodic diagnostic, not a control task; skip outright if one is still unacked.
-            if (!IPC_isFlagBusyLtoR(IPC_CPU1_L_CPU2_R, IPC_FLAG0))
+            if (v2k_board_ipc_ping_try_send() != 0u)
             {
                 g_ping_cnt++;
-                IPC_setFlagLtoR(IPC_CPU1_L_CPU2_R, IPC_FLAG0);
             }
         }
 
         // Check CPU2's heartbeat every 256 ms; loss of contact only sets a status bit, the control ISR keeps running.
         if (v2k_tick_due(now, &monitor_tick, V2K_BG_MONITOR_TICKS))
         {
-            uint32_t hb = V2K_MSG_2TO1_RO->cpu2_status.heartbeat;
+            uint32_t hb = v2k_board_cpu2_heartbeat_read();
             if (hb == cpu2_hb_last)
             {
                 if (cpu2_hb_stale < 4u) { cpu2_hb_stale++; }

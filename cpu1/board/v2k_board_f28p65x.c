@@ -12,7 +12,10 @@
 #include "v2k_board_as5600_internal.h"
 #include "v2k_board_drv8323rs.h"
 #include "v2k_board_pwm.h"
+#include "../../common/v2k_planes.h"
 #include "../runtime/v2k_registry.h"
+
+extern void SetDBGIER(uint16_t dbgier);
 
 #ifndef V2K_BOARD_POWERSTAGE_MODE
 #define V2K_BOARD_POWERSTAGE_MODE V2K_BOARD_POWERSTAGE_MODE_DRY_RUN
@@ -51,9 +54,73 @@ static volatile uint16_t s_start_block_reason;
 static volatile uint16_t s_fault_shutdown_pending;
 static volatile uint16_t s_fault_shutdown_complete = 1u;
 
+// NMI diagnostics stay in board support because NMI flag registers and the
+// interrupt vector are target-owned boot resources.
+volatile uint32_t g_nmi_cnt;
+volatile uint32_t g_nmi_flags_last;
+volatile uint32_t g_nmi_shadow_last;
+
+static __interrupt void v2k_board_nmi_isr(void)
+{
+    g_nmi_flags_last  = SysCtl_getNMIFlagStatus();
+    g_nmi_shadow_last = SysCtl_getNMIShadowFlagStatus();
+    g_nmi_cnt++;
+    SysCtl_clearAllNMIFlags();
+}
+
 void v2k_board_panic_halt(void)
 {
     for (;;) { ESTOP0; }
+}
+
+void v2k_board_boot_init_device(void)
+{
+    Device_init();
+}
+
+// The NMI backstop must be installed here, before v2k_board_boot_cpu2_and_sync()
+// releases CPU2. An unhandled NMI is escalated by the NMI watchdog into a
+// whole-chip reset, and there is a window — from CPU2's release from reset until
+// its .out finishes loading — where CPU2 runs garbage in M0, faults, and raises a
+// CPU1 NMI (Phase 1, BRINGUP.md 2026-06-12: the "runaway" that NMIWD-reset the
+// chip back into old flash firmware). Flow follows TI nmi_ex1_cpu1handling.
+void v2k_board_boot_init_interrupts(void)
+{
+    Interrupt_initModule();
+    Interrupt_initVectorTable();
+    SysCtl_clearAllNMIFlags();
+    Interrupt_register(INT_NMI, &v2k_board_nmi_isr);
+    SysCtl_enableNMIGlobalInterrupt();
+    Interrupt_enable(INT_NMI);
+    SetDBGIER(INTERRUPT_CPU_INT1); // ADCA1 is in PIE Group 1 = time-critical.
+    EINT;
+    ERTM;
+}
+
+void v2k_board_boot_cpu2_and_sync(void)
+{
+#ifdef _FLASH
+    Device_bootCPU2(BOOTMODE_BOOT_TO_FLASH_BANK3_SECTOR0);
+#else
+    Device_bootCPU2(BOOTMODE_BOOT_TO_M0RAM);
+#endif
+    IPC_clearFlagLtoR(IPC_CPU1_L_CPU2_R, IPC_FLAG_ALL);
+    IPC_sync(IPC_CPU1_L_CPU2_R, IPC_FLAG31);
+}
+
+uint16_t v2k_board_ipc_ping_try_send(void)
+{
+    if (IPC_isFlagBusyLtoR(IPC_CPU1_L_CPU2_R, IPC_FLAG0))
+    {
+        return 0u;
+    }
+    IPC_setFlagLtoR(IPC_CPU1_L_CPU2_R, IPC_FLAG0);
+    return 1u;
+}
+
+uint32_t v2k_board_cpu2_heartbeat_read(void)
+{
+    return V2K_MSG_2TO1_RO->cpu2_status.heartbeat;
 }
 
 void v2k_board_assign_boot_resources(void)

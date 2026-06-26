@@ -29,6 +29,8 @@ typedef void (*v2k_board_isr_handler_t)(void);
 #define V2K_BOARD_START_BLOCK_GATE_STATUS       0x0010u
 #define V2K_BOARD_START_BLOCK_CURRENT_PROTECTION 0x0020u
 
+#include "include/v2k_board_profile_select.h"
+
 // Control time base and fixed ISR fast path.
 void v2k_board_timebase_init(v2k_board_isr_handler_t adc_isr);
 void v2k_board_timebase_start(void);
@@ -63,6 +65,11 @@ uint16_t v2k_board_fault_trip_is_current(void);
 void v2k_board_fault_ack_isr(void);
 
 void v2k_board_panic_halt(void);
+void v2k_board_boot_init_device(void);
+void v2k_board_boot_init_interrupts(void);
+void v2k_board_boot_cpu2_and_sync(void);
+uint16_t v2k_board_ipc_ping_try_send(void);
+uint32_t v2k_board_cpu2_heartbeat_read(void);
 void v2k_board_assign_boot_resources(void);
 void v2k_board_freeze_timebase_clock(void);
 void v2k_board_init_generated_peripherals(void);
