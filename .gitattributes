@@ -2,6 +2,21 @@
 # Stored as LF in the repo and checked out as LF (no CRLF phantom diffs).
 * text=auto eol=lf
 
+# CCS may prepend a fixed generated guidance block to these conventional
+# agent-instruction files. Keep the files tracked, but store only the
+# project-owned content in Git by installing the local clean filter:
+#
+#   sh tools/git/setup_ccs_agent_filter.sh       # macOS/Linux/Git Bash
+#   powershell -ExecutionPolicy Bypass -File tools\git\setup_ccs_agent_filter.ps1
+#
+# Git intentionally keeps filter commands in local config, so run the setup
+# script once per clone. The filter strips only the generated header before
+# content is staged. If an old index already contains the CCS header, run:
+#
+#   git add --renormalize AGENTS.md CLAUDE.md
+/AGENTS.md filter=ccs-agent-header
+/CLAUDE.md filter=ccs-agent-header
+
 # Binary assets: never apply EOL conversion.
 *.png  binary
 *.jpg  binary
