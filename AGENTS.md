@@ -56,6 +56,16 @@ is a stopped CPU2 LED and a dead SCI service while CPU1 continues ticking. Use
 the isolated SCI link for live acceptance. If JTAG attachment is unavoidable,
 restore the deployment state with a physical power cycle afterward.
 
+# Build Configuration Policy
+
+From Phase 5.0 onward the only supported Viewer2000 firmware build
+configuration is **FLASH** for both CPU1 and CPU2. The old RAM configuration is
+deprecated and kept only for historical Phase 1-4 bring-up references. Do not
+use RAM builds for powered commissioning, current acceptance evidence, quick
+start instructions, capacity fixes, or build-matrix gates. The RAM linker
+command files may remain in the tree temporarily so old records and tooling can
+be interpreted, but they are not a supported product surface.
+
 # AGENTS.md — Viewer2000 (C2000 RCP platform)
 
 ## Project positioning

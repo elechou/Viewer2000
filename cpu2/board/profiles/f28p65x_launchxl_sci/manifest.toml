@@ -22,7 +22,8 @@ pipes = ["sci-xds110"]
 sysconfig = "cpu2/sysconfig_cpu2.syscfg"
 linker_command_files = [
   "cpu2/28p65x_generic_flash_lnk_cpu2.cmd",
-  "cpu2/28p65x_generic_ram_lnk_cpu2.cmd",
 ]
+# The legacy RAM linker command file remains in the repository for historical
+# Phase 1-4 bring-up references only. FLASH is the supported profile artifact.
 target_configuration = "cpu2/targetConfigs/TMS320F28P650DK9.ccxml"
 board_sources = ["cpu2/v2k_cpu2_board.c"]

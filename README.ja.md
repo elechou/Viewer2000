@@ -139,11 +139,13 @@ void control(void) {
 MOTORCONTROL-SDK、上記の評価キット、そして
 [Scope2000](https://github.com/elechou/Scope2000) ホストビューアが必要。
 
-1. **ビルド。** `cpu1/` と `cpu2/` を CCS にインポートして両方ビルド（高速
-   イテレーションなら `RAM` 構成、スタンドアロンブートなら `FLASH`）。ビルドが
-   自動的に SysConfig を実行し、ユーザー変数ディスクリプタを焼き込む。特別な設定
-   は不要。
-2. **ロード・実行。** ボード搭載の XDS110 で接続し、両コアをロードして実行。
+1. **Build.** Import `cpu1/` and `cpu2/` into CCS and build the `FLASH`
+   configuration for both projects. The legacy `RAM` configuration is deprecated from
+   Phase 5.0 onward and is no longer a supported acceptance target. The build
+   automatically runs SysConfig and bakes user-variable descriptors.
+2. **Program and run.** Terminate any CCS GUI debug session, flash both cores with
+   `tools/ccs/flash_dual_core_f28p65x.sh` (or `.cmd` on Windows), set S3 to Flash boot,
+   and power-cycle the board.
 3. **波形を見る、パラメータを調整する。** Scope2000 を起動し、ボードの XDS110
    仮想 COM ポートに接続。変数が自動的に出てくる — ピン・スコープ・ライブ書き
    込み、好きにいじれる。

@@ -300,12 +300,15 @@ Accepted for the 2026-06-23 low-energy first-rotation node:
 
 Not claimed by this node:
 
-- [ ] CPU1/CPU2 RAM-build acceptance for this application.
 - [ ] Encoder sequence/angle consistency with the observed rotor movement.
 - [ ] ISR overflow/budget counters sampled before and after the V/f window.
 - [ ] Loaded operation, current calibration in amperes, gate-source/switch-node
   timing, measured nFAULT-to-PWM shutdown latency, or calibrated-current
   shutdown.
+
+RAM-build acceptance is intentionally not a pending item. The RAM configuration
+is deprecated from Phase 5.0 onward and is not a supported powered-application
+acceptance target.
 
 No repeated endurance run is required for this Phase 5.5 first-rotation
 acceptance.

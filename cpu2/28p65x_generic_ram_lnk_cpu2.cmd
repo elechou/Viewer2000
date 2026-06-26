@@ -1,3 +1,12 @@
+/*
+ * Deprecated RAM build linker command file.
+ *
+ * Viewer2000's supported firmware build configuration is FLASH from Phase 5.0
+ * onward. This file remains only so historical Phase 1-4 bring-up records and
+ * old debug notes can still be interpreted. Do not use it as a capacity target,
+ * powered-commissioning artifact, or current acceptance build.
+ */
+
 MEMORY
 {
    /* BEGIN is used for the "boot to SARAM" bootloader mode   */

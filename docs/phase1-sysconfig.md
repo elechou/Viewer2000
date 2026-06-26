@@ -39,12 +39,14 @@ Notes:
 
 Phase 1 **needs no modules added** (CPU2's LED pad config is done by CPU1; CPU2 only writes the data register, not via sysconfig). Just complete the step-0 fix and save.
 
-## 3. Select the RAM build configuration
+## 3. Historical RAM build configuration
 
 Phase 1 used a RAM build only. The deployment partition was subsequently fixed:
 CPU1 owns Flash Banks 0-2, CPU2 owns Banks 3-4, and CPU2 boots from Bank 3
 Sector 0. The FLASH/20 kHz path was accepted on 2026-06-21; the steps below are
-retained for RAM bring-up:
+retained only for interpreting the original RAM bring-up record. From Phase 5.0
+onward, RAM builds are deprecated and are not a supported acceptance or quick
+iteration path.
 
 1. For each project: right-click → Build Configurations → Set Active → **RAM** (you've built the FLASH config before, remember to switch);
 2. Build cpu1 first, then cpu2, expect 0 errors;

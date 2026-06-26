@@ -625,14 +625,16 @@ control primitives.
 
 ### 10.1 Build And Contract Checks
 
-- Build CPU1 RAM.
 - Build CPU1 FLASH.
-- Build CPU2 RAM.
 - Build CPU2 FLASH.
 - Run contract checks.
 - Run user-boundary verifier.
 - Run descriptor baking.
 - Verify Scope2000/SCI compatibility: descriptor enumeration still works; user raw ADC/encoder variables appear through symbol baking and platform driver diagnostics remain enumerable.
+
+RAM builds are no longer a Phase 5.0 acceptance gate. From Phase 5.0 onward the
+supported build configuration is FLASH for both cores; RAM linker files are kept
+only for historical bring-up references.
 
 ### 10.2 Pin Audit
 

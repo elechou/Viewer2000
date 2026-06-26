@@ -134,10 +134,13 @@ You'll need [Code Composer Studio](https://www.ti.com/tool/CCSTUDIO), TI's C2000
 MOTORCONTROL-SDK, the evaluation kit above, and the
 [Scope2000](https://github.com/elechou/Scope2000) host viewer.
 
-1. **Build.** Import the `cpu1/` and `cpu2/` projects into CCS and build both (use the `RAM`
-   configuration for fast iteration, `FLASH` for standalone boot). The build automatically
-   runs SysConfig and bakes user-variable descriptors — nothing extra to set up.
-2. **Load and run.** Connect via the onboard XDS110 debug probe, load both cores, and run.
+1. **Build.** Import the `cpu1/` and `cpu2/` projects into CCS and build the `FLASH`
+   configuration for both. The legacy `RAM` configuration is deprecated from Phase 5.0
+   onward and is no longer a supported acceptance target. The build automatically runs
+   SysConfig and bakes user-variable descriptors — nothing extra to set up.
+2. **Program and run.** Terminate any CCS GUI debug session, flash both cores with
+   `tools/ccs/flash_dual_core_f28p65x.sh` (or `.cmd` on Windows), set S3 to Flash boot,
+   and power-cycle the board.
 3. **Watch waveforms, tune parameters.** Launch Scope2000 and connect to the board's XDS110
    virtual COM port. Your variables pop up automatically — pin them, scope them, change them
    live.

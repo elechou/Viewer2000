@@ -23,9 +23,10 @@ Phase 5.2 makes two deliberate code changes:
 #define V2K_BOARD_POWERSTAGE_POWERED_CONFIG_APPROVED 1u
 ```
 
-The tracked CPU1 RAM and FLASH compiler predefines are in `cpu1/.cproject`.
+The tracked CPU1 FLASH compiler predefines are in `cpu1/.cproject`.
 `cpu1/board/v2k_board_f28p65x.c` deliberately retains its fail-safe DRY_RUN/approval
-off fallback when those project settings are absent.
+off fallback when those project settings are absent. The legacy RAM configuration is
+deprecated from Phase 5.0 onward and is not a supported powered-commissioning baseline.
 
 `cpu1/app/user.c` has no tunable duty variable. Every control tick submits:
 
@@ -40,12 +41,11 @@ path, but this application can only request equal 50% duties. Phase 5.2
 contains no V/f generator, frequency command, phase accumulator, or motor
 enable parameter.
 
-Current build results:
+Current supported build result:
 
 | Configuration | Result | Baked build hash |
 |---|---|---:|
 | CPU1 FLASH | full build, 0 errors, 5 known SysConfig board-connection warnings | `0xCB2C96A6` |
-| CPU1 RAM | full build, 0 errors, 5 known SysConfig board-connection warnings | `0xE757B88E` |
 
 The warnings are the existing DRV ENABLE/CS/SPID LaunchPad hardware-route
 warnings already audited in Phase 5.0.
@@ -159,7 +159,7 @@ Phase 5.2 completes when:
 
 - [x] tracked CPU1 baseline selects POWERED and approval enabled;
 - [x] user application is hard-locked to three neutral duties;
-- [x] CPU1 RAM and FLASH full builds pass;
+- [x] CPU1 FLASH full build passes;
 - [ ] the images are flashed and cold-boot to IDLE;
 - [ ] motor-disconnected POWERED START reaches READY with clean DRV/current
   diagnostics and stable supply current;

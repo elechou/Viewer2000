@@ -122,10 +122,13 @@ Arduino 的 `loop()` 就是一个无视一切的超级循环，只要没有中�
 C2000Ware MOTORCONTROL-SDK、上面那套评估板，以及
 [Scope2000](https://github.com/elechou/Scope2000) 上位机。
 
-1. **编译。** 把 `cpu1/` 和 `cpu2/` 导入 CCS，两个都编译（快速迭代选 `RAM`
-   配置，要脱机跑选 `FLASH`）。构建过程会自动跑 SysConfig、自动烤录变量描述符，
-   不用你操心。
-2. **下载运行。** 板载 XDS110 连上，两个核都加载，跑起来。
+1. **Build.** Import `cpu1/` and `cpu2/` into CCS and build the `FLASH`
+   configuration for both projects. The legacy `RAM` configuration is deprecated from
+   Phase 5.0 onward and is no longer a supported acceptance target. The build
+   automatically runs SysConfig and bakes user-variable descriptors.
+2. **Program and run.** Terminate any CCS GUI debug session, flash both cores with
+   `tools/ccs/flash_dual_core_f28p65x.sh` (or `.cmd` on Windows), set S3 to Flash boot,
+   and power-cycle the board.
 3. **看波形、调参数。** 打开 Scope2000，连上板子的 XDS110 虚拟串口。你的变量会
    自动冒出来 — pin 上、示波、实时改值，随你折腾。
 4. **改成你自己的。** 去 [`cpu1/app/user.c`](cpu1/app/user.c) 里改 `control()`，
