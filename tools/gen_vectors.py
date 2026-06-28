@@ -2,7 +2,7 @@
 """Generate Viewer2000 golden test vectors for the wire protocol.
 
 This script is executable pseudocode for docs/wire-spec.md: COBS, CRC-32C,
-frame construction, and every v7 message reference sample. The generated
+frame construction, and every v8 message reference sample. The generated
 contracts/vectors/*.txt files are normative byte samples for firmware C
 serializer tests and host Rust parser conformance tests. When implementations
 disagree, the vectors are authoritative and the spec must be corrected.
@@ -89,7 +89,7 @@ for _case in (b"", b"\x00\x00", b"\x01" * 300, bytes(range(256))):
 # ---------------------------------------------------------------------------
 # Frame construction, docs/wire-spec.md section 3.1.
 # ---------------------------------------------------------------------------
-VER_MAGIC = 0x57
+VER_MAGIC = 0x58
 
 
 def raw_frame(msg_type: int, seq: int, payload: bytes) -> bytes:
@@ -144,42 +144,45 @@ def build_cases():
     add("hello_req", "HELLO_REQ: empty payload", 0x01, 0x0001, b"")
     add("hello_resp", "HELLO_RESP: versions, build_hash, firmware name, tick_hz, capabilities, project metadata, MCU model, and Scope resources",
         0x81, 0x0001,
-        struct.pack("<HHIHH16sII32sIHHHHI", 7, 13, BUILD_HASH, 10, 0,
+        struct.pack("<HHIHH16sII32sIHHHHI", 8, 13, BUILD_HASH, 10, 0,
                     b"viewer2000", 20000, 0x7F,
                     b"phase4-demo", BUILD_TIME_UTC,
                     1, 16, 10, 0, 0x7000))
 
     # ---- 4.2 STATUS ----
-    add("status_req", "STATUS_REQ: empty payload, also used as link heartbeat", 0x02, 0x0002, b"")
+    status_payload = struct.pack("<HHHIIIIHHI4BIHHIIIIIIHIIII",
+                                 2,            # sys_state = RUNNING
+                                 0,            # fault_code
+                                 0,            # status_flags
+                                 123456789,    # tick
+                                 4567,         # cpu1_heartbeat
+                                 4566,         # cpu2_heartbeat
+                                 7,            # applied_seq
+                                 0,            # cal_result = OK
+                                 0,            # cal_fail_idx
+                                 BUILD_HASH,
+                                 1, 0, 0, 0,   # scope mode/flags/reserved
+                                 9,            # cmd_ack_seq
+                                 0,            # cmd_result = OK
+                                 0,            # reserved
+                                 3,            # prof_seq begin
+                                 10000,        # cycle_budget
+                                 4200,         # load_avg
+                                 7300,         # load_peak
+                                 1600,         # ctrl_at_peak = user control() body
+                                 900,          # scope_at_peak
+                                 40,           # lat_at_peak
+                                 123456700,    # peak_tick
+                                 0,            # budget violations
+                                 0,            # ISR overflows
+                                 3)            # prof_seq end
+    add("status_req", "STATUS_REQ: empty payload, optional explicit status read", 0x02, 0x0002, b"")
     add("status_resp",
         "STATUS_RESP: RUNNING state, Scope mode STREAM",
-        0x82, 0x0002,
-        struct.pack("<HHHIIIIHHI4BIHHIIIIIIHIIII",
-                    2,            # sys_state = RUNNING
-                    0,            # fault_code
-                    0,            # status_flags
-                    123456789,    # tick
-                    4567,         # cpu1_heartbeat
-                    4566,         # cpu2_heartbeat
-                    7,            # applied_seq
-                    0,            # cal_result = OK
-                    0,            # cal_fail_idx
-                    BUILD_HASH,
-                    1, 0, 0, 0,   # scope mode/flags/reserved
-                    9,            # cmd_ack_seq
-                    0,            # cmd_result = OK
-                    0,            # reserved
-                    3,            # prof_seq begin
-                    10000,        # cycle_budget
-                    4200,         # load_avg
-                    7300,         # load_peak
-                    1600,         # ctrl_at_peak = user control() body
-                    900,          # scope_at_peak
-                    40,           # lat_at_peak
-                    123456700,    # peak_tick
-                    0,            # budget violations
-                    0,            # ISR overflows
-                    3))           # prof_seq end
+        0x82, 0x0002, status_payload)
+    add("status_push",
+        "STATUS_PUSH: firmware-initiated 10 Hz status frame with STATUS_RESP payload layout",
+        0x41, 0x0000, status_payload)
 
     # ---- 4.3 ENUM ----
     add("enum_req", "ENUM_REQ: request 8 entries starting at index 0", 0x03, 0x0003,
@@ -238,33 +241,37 @@ def build_cases():
         "ACK(DAQ_BIND) negative semantics: scope not OFF gives BAD_STATE; send DAQ_CTRL(OFF) first",
         0xA2, 0x000D, struct.pack("<BBHI", 3, 0x22, 0, 4))
 
-    # ---- 4.6 BLOCK ----
-    add("block_req", "BLOCK_REQ: request at most 2 blocks", 0x21, 0x0009,
+    # ---- 4.6 SCOPE push / drain ----
+    add("block_req", "BLOCK_REQ: legacy pull request, unsupported by v8 firmware", 0x21, 0x0009,
         struct.pack("<BB", 2, 0))
-    add("block_data_1blk",
-        "BLOCK_DATA: 1 block, N=4, M=2, all I16, stride=4, samples include zero and negative values to cover COBS zero paths",
-        0xA1, 0x0009,
+    add("ack_block_req_unsupported", "ACK(BLOCK_REQ): v8 push transport rejects pull polling",
+        0xA1, 0x0009, struct.pack("<BBHI", 4, 0x21, 0, 0))
+    add("scope_block_push_1blk",
+        "SCOPE_BLOCK_PUSH: 1 block, N=4, M=2, all I16, stride=4, samples include zero and negative values to cover COBS zero paths",
+        0x42, 0x0001,
         struct.pack("<BBBBHHI", 1, 1, 0, 0, 0, 5, 0)
         # count1, STREAM, overrun0, remain5, trigger_tick0
         + block(1000, 17, 0, 3, (0, 0),
                 [[0, 100], [-100, 0], [200, -200], [0, 300]]))
-    add("block_data_mixed",
-        "BLOCK_DATA: 1 mixed-width block, N=2, channels=[F32,I16], stride=6, tick-major native layout F32 then I16",
-        0xA1, 0x000E,
+    add("scope_block_push_mixed",
+        "SCOPE_BLOCK_PUSH: 1 mixed-width block, N=2, channels=[F32,I16], stride=6, tick-major native layout F32 then I16",
+        0x42, 0x0002,
         struct.pack("<BBBBHHI", 1, 1, 0, 0, 0, 0, 0)
         # count1, STREAM, trigger_tick0
         + block(2000, 5, 0, 2, (4, 0),
                 [[1.5, -7], [-0.25, 32767]]))
-    add("block_data_capture_frozen",
-        "BLOCK_DATA: Capture Frozen prefix includes trigger_tick; block remains native layout",
-        0xA1, 0x000F,
+    add("drain_start",
+        "DRAIN_START: capture-frozen drain announces 256 frozen blocks",
+        0x43, 0x0000, struct.pack("<HH", 256, 0))
+    add("scope_block_push_capture_frozen",
+        "SCOPE_BLOCK_PUSH: Capture Frozen prefix includes trigger_tick; block remains native layout",
+        0x42, 0x0003,
         struct.pack("<BBBBHHI", 1, 4, 0, 0, 0, 0, 1234)
         + block(1200, 9, 0, 2, (4,),
                 [[-0.5], [0.0], [0.5]]))
-    add("block_data_empty",
-        "BLOCK_DATA boundary: count=0, ring empty, legal response",
-        0xA1, 0x000A,
-        struct.pack("<BBBBHHI", 0, 1, 0, 0, 0, 0, 0))
+    add("drain_end",
+        "DRAIN_END: capture-frozen drain complete",
+        0x44, 0x0000, b"")
 
     # ---- 4.7 CMD ----
     add("cmd_app_start", "CMD: APP_START", 0x30, 0x000B,

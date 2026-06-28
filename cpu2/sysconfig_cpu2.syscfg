@@ -22,6 +22,7 @@ const sci1           = sci.addInstance();
  */
 sci1.$hardware    = system.deviceData.board.components.XDS_UART.subComponents.XDS_SCI_INST1;
 sci1.$name        = "SCIA_BASE";
+sci1.baudRates    = 3125000;
 sci1.rxQual.$name = "myGPIOQUAL0";
 sci1.txQual.$name = "myGPIOQUAL1";
 

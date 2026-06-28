@@ -1,4 +1,4 @@
-# Viewer2000 wire protocol specification (wire spec) v6
+# Viewer2000 wire protocol specification (wire spec) v8
 
 > **Document status**: this document together with the `contracts/` headers forms the single source of truth for the protocol; the golden test vectors under `contracts/vectors/` are the executable form of this document. Both the firmware C serializer and the host Rust parser must pass the conformance test against the same set of vectors. When the three disagree, **the vectors are authoritative**, and the document is fixed immediately.
 >
@@ -12,7 +12,7 @@
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ Service-semantics layer  session/enum/param txn/DAQ stream/command (§5)     │ transport-agnostic
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ Message layer  message catalog v6, fixed-length little-endian layout (§4)   │ transport-agnostic
+│ Message layer  message catalog v8, fixed-length little-endian layout (§4)   │ transport-agnostic
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ Frame adapter  per-transport:                 (§3)                          │ transport-dependent
 │             SCI = COBS + frame header + CRC-32C                             │
@@ -32,7 +32,9 @@ The service semantics keep the generic vocabulary CAL/DAQ/prescaler from XCP (AS
 - Multi-octet integers are always **little-endian (LE)**; `f32` = the LE bit pattern of IEEE-754 single precision.
 - Strings = ASCII fixed-length, NUL-padded (NUL termination not guaranteed).
 - In the offset tables, `off:sz` is in octets.
-- Master/slave model: **the host is the sole initiator** (request-response), the firmware has no spontaneous frames. This is isomorphic to EtherCAT's master polling model; the SCI transport validates the same service semantics used by the later EtherCAT transport.
+- SCI model: control-plane messages remain request-response, while STATUS and
+  scope data are firmware-initiated push frames. The host must keep receiving
+  and demuxing push frames while command responses are in flight.
 - The `value_bits` (parameter value bit pattern) convention is in `v2k_common.h`: F32 native bit pattern, I16 sign-extended / U16 zero-extended to 32 bit.
 - **The universal key for variable addressing = `(addr, type)`** (CPU1 data-space word address + type code). All addresses come from one source the host enumerates over the wire: **the descriptor table**, which holds the platform quantities (registered by L0/L1) plus the user's application variables (**baked into the table at build time from the firmware DWARF**; struct members / array elements expanded into named scalar entries; pairing guarded by build_hash). The names therefore travel with the device — the host needs no `.out`. Users/students write plain C: no registration code, no name strings, no mandated declaration style.
 - **The on-wire value is the real value**: the protocol carries no `min/max/scale/offset` display or guard-rail metadata. Both the DAQ block and the CAL value interpret the bit pattern by the variable's native type; the firmware does no quantization, no conversion, no parameter range clamping or range rejection.
@@ -45,10 +47,10 @@ The service semantics keep the generic vocabulary CAL/DAQ/prescaler from XCP (AS
 Pre-encoding frame ("raw frame", CRC coverage = offset 0 .. 7+n-1):
 
 off  sz  field
-0    1   ver_magic   = 0x57 (high nibble 0x5 fixed magic, low nibble = V2K_WIRE_VER)
-1    1   msg_type    (§4 catalog; response = request | 0x80)
+0    1   ver_magic   = 0x58 (high nibble 0x5 fixed magic, low nibble = V2K_WIRE_VER)
+1    1   msg_type    (§4 catalog; response = request | 0x80, or a push type)
 2    1   flags       = 0x00, reserved
-3    2   seq         host +1 per request (wraps); the response echoes it verbatim, the host pairs by it
+3    2   seq         request-response pairing seq, or push_frame_seq for SCOPE_BLOCK_PUSH
 5    2   payload_len = n (octet count, ≤ V2K_MAX_PAYLOAD = 1024)
 7    n   payload
 7+n  4   crc32c      (LE)
@@ -61,8 +63,8 @@ On-wire form: COBS(raw frame) + 0x00 delimiter
   - SLIP/HDLC escape style: worst-case 2× inflation, and this protocol's main payload is an int16 sample stream, with **0x00 octets frequent near signal zero-crossings**, so the inflation rate floats with the waveform content — unacceptable on the bandwidth-tightest SCI link. COBS has a constant overhead ≤ ⌈len/254⌉+1 octet.
   - Pure length-prefix + magic scan: zero TX transform (saves one octet-processing pass on the C28x), but sync recovery is heuristic (a magic collision needs CRC to exclude). COBS's encoding cost happens in the CPU2 background loop (not the control ISR), trading for deterministic resync — worth it.
   - Having the in-frame `payload_len` and COBS coexist is intentional redundancy: after decoding, check the length before the CRC, discarding a corrupt frame early.
-- **Decoder discard rule**: COBS decode failure / `ver_magic` mismatch / length mismatch / CRC mismatch → silently drop the whole frame (a corrupt frame's content is untrustworthy, **no NAK**). Reliability is ensured by the host's timeout resend (all requests idempotent, see §5.4).
-- The frame `seq` and the block header's `block_seq` (v2k_scope.h) have different jobs and **must not be merged**: the former handles link-layer request-response pairing and resend dedup; the latter handles data-stream dropped-block detection, and a dropped block isn't refilled by the link layer (rule 1), the host draws a gap.
+- **Decoder discard rule**: COBS decode failure / `ver_magic` mismatch / length mismatch / CRC mismatch -> silently drop the whole frame (a corrupt frame's content is untrustworthy, **no NAK**). Request reliability is ensured by the host's timeout resend (all requests idempotent, see §5.4). Push-frame loss is detected and shown as a stream gap, not retransmitted.
+- The frame `seq`, `SCOPE_BLOCK_PUSH.push_frame_seq`, and the block header's `block_seq` (v2k_scope.h) have different jobs and **must not be merged**: request seq handles request-response pairing and resend dedup; push_frame_seq detects lost SCI push frames; block_seq detects dropped producer blocks. A dropped block is not refilled by the link layer (rule 1), the host draws a gap.
 
 ### 3.2 EtherCAT mapping plan
 
@@ -70,13 +72,13 @@ On-wire form: COBS(raw frame) + 0x00 delimiter
 |---|---|---|
 | The whole frame-adapter layer | (vanishes) | mailbox/PDO is self-delimited, Ethernet FCS carries its own check |
 | Control-plane messages (HELLO/ENUM/CAL/DAQ_CTRL/CMD) | mailbox (minimal CoE or vendor mailbox) | the raw frame drops COBS and CRC, `ver_magic..payload` loaded verbatim |
-| BLOCK_DATA payload | TxPDO fixed layout | `count + 0–2 blocks`, the master grabs more when there's data each 2 kHz cycle |
+| SCOPE_BLOCK_PUSH payload | TxPDO fixed layout | `count + blocks`, the master grabs more when there's data each 2 kHz cycle |
 | BLOCK_REQ | (vanishes) | reading the PDO each cycle is an implicit request |
 | STATUS_RESP core fields | TxPDO header region | state/fault/heartbeat visible with the stream |
 
 The timestamp is always the ISR tick in the block header, unrelated to the EtherCAT DC clock system (no DC).
 
-## 4. Message catalog v6
+## 4. Message catalog v8
 
 ### 4.0 Master table
 
@@ -89,9 +91,13 @@ The timestamp is always the ISR tick in the block header, unrelated to the Ether
 | 0x11 | CAL_COMMIT | H→F | 0 | 0x91 ACK (data=commit_seq) |
 | 0x12 | CAL_READ | H→F | 2+8k | 0x92 CAL_READ_RESP |
 | 0x20 | DAQ_CTRL | H→F | 20 | 0xA0 ACK |
-| 0x21 | BLOCK_REQ | H→F | 2 | 0xA1 BLOCK_DATA |
+| 0x21 | BLOCK_REQ | H→F | any | 0xA1 ACK(UNSUPPORTED) in v8 |
 | 0x22 | DAQ_BIND | H→F | 2+8k | 0xA2 ACK (data=bind_seq) |
 | 0x30 | CMD | H→F | 8 | 0xB0 ACK (data=ack_seq) |
+| 0x41 | STATUS_PUSH | F→H | 84 | none |
+| 0x42 | SCOPE_BLOCK_PUSH | F→H | 12+Σblock | none |
+| 0x43 | DRAIN_START | F→H | 4 | none |
+| 0x44 | DRAIN_END | F→H | 0 | none |
 | 0x60–0x6F | (reserved) firmware update | — | — | finalized with the mature high-bandwidth transport |
 | 0x70 | (reserved) LOG pull | — | — | CPU2 diagnostic log |
 
@@ -108,7 +114,7 @@ off sz field
 
 ### 4.1 HELLO (0x01 / 0x81)
 
-Request payload empty. The wire v7 response is 84 octets:
+Request payload empty. The wire v8 response is 84 octets:
 
 ```
 0   2  proto_ver     = V2K_WIRE_VER (host disconnects on mismatch, hinting a firmware/host version mismatch)
@@ -141,13 +147,15 @@ Request payload empty. The wire v7 response is 84 octets:
 | 6 | NATIVE_BLOCK | native-bit-width `ScopeBlock` |
 
 The host rejects shorter HELLO responses because scope capacity and channel-count
-limits are part of the v7 connection contract.
+limits are part of the v8 connection contract.
 
 `project_name` is copied from CPU1's CCS/Eclipse `cpu1/.project` `<name>` field as-is, after only the wire-level printable-ASCII/32-character check. If the name is empty it becomes `untitled`. If it is `untitled`, the CPU1 post-link baker emits a build warning but does not fail the build. These HELLO fields are for human identification only. Machine safety and host cache invalidation still use `build_hash`.
 
-### 4.2 STATUS (0x02 / 0x82)
+### 4.2 STATUS (0x02 / 0x82, push 0x41)
 
-Request payload empty. Response 84 octets; doubles as the link heartbeat (host periodic polling):
+`STATUS_REQ` request payload is empty and returns `STATUS_RESP`. Firmware also
+pushes `STATUS_PUSH` at about 10 Hz after a valid v8 host frame is observed.
+Both response and push carry the same 84-octet payload:
 
 ```
 0   2  sys_state      V2K_STATE_* (v2k_command.h)
@@ -290,17 +298,21 @@ CPU2 writes cfg and publishes `cfg_seq`, waits for CPU1's `cfg_ack_seq/cfg_resul
 
 Semantics: addr comes from the descriptor table (platform quantities + build-time-baked user variables, §2); samples are losslessly direct-copied at **native width** (I16/U16→2 octets, I32/U32/F32→4 octets, bit pattern verbatim, firmware zero-conversion zero-quantization — accuracy first). Physical-quantity conversion (e.g. ADC count→ampere) is pure host-side display metadata, not on the wire, not in the firmware. **Bindable only when scope mode==OFF.** CPU2 writes the bind region and publishes `bind_seq`, then briefly waits (≤1 ms) for CPU1's `bind_ack_seq/bind_result`, putting the final result into the ACK: OK / BAD_STATE (not OFF, DAQ_CTRL(OFF) first) / BAD_PARAM (n_ch or type illegal), data=bind_seq; a timeout returns INTERNAL (CPU1 ISR not running).
 
-### 4.6 BLOCK_REQ / BLOCK_DATA (0x21 / 0xA1)
+### 4.6 SCOPE_BLOCK_PUSH and capture drain (0x42 / 0x43 / 0x44)
 
-Request (2 octets): `{0:1 max_blocks(1..2), 1:1 reserved}`
-Response (12 + Σblock octets):
+`BLOCK_REQ` is no longer part of the active v8 data path; if received with v8
+magic it returns `ACK(UNSUPPORTED)`. CPU2 pushes `SCOPE_BLOCK_PUSH` whenever
+complete scope blocks are available and no command response is pending.
+
+`SCOPE_BLOCK_PUSH` uses frame `seq=push_frame_seq`, incremented by one for each
+scope push frame. The payload is `12 + Σblock` octets:
 
 ```
-0  1  count        0..max_blocks (0 = no data currently, legal)
+0  1  count        number of complete blocks in this push frame
 1  1  mode         current V2K_SCOPE_*
 2  2  reserved
 4  2  overrun_cnt  producer-side cumulative dropped blocks (host reports "capture-side overload" by this)
-6  2  remain_hint  blocks still takeable in the ring (host tunes the poll cadence; freeze-drain progress)
+6  2  remain_hint  blocks still takeable in the ring after this frame; capture-drain progress
 8  4  trigger_tick the ISR tick of the trigger hit when CAPTURE_FROZEN; set 0 in other modes
 12 …  count × block
 ```
@@ -316,6 +328,18 @@ block = the scope-plane memory layout on the wire verbatim (**zero re-encoding o
 ```
 
 The host detects dropped blocks by `block_seq` jumps → draws a gap, **there is no retransmission** (rule 1).
+
+When Capture reaches `CAPTURE_FROZEN` with a new `state_seq`, CPU2 first sends:
+
+```
+DRAIN_START payload (4 octets):
+0  2  frozen_count
+2  2  reserved
+```
+
+It then pushes all frozen blocks using `SCOPE_BLOCK_PUSH`, and finally sends
+`DRAIN_END` with an empty payload. The host renders the captured window only
+after the drain is complete.
 
 Bandwidth reference (ISR period 20-100 kHz TBD): 20 kHz x 8 ch x f32 = 640 KB/s; 100 kHz x 8 ch x f32 = 3.2 MB/s. Both are within EtherCAT practical throughput, so the physical-layer conclusion is unchanged. The EtherCAT-tier N is fixed by the single-frame process-data ceiling, about 1486 octets.
 
@@ -338,7 +362,7 @@ host                                                     firmware(CPU2)
  │ ←────────────────────── HELLO_RESP ────────────────────── │  proto_ver mismatch → host aborts and reports an error
  │ ─────────────────────── ENUM_REQ(0,8) ──────────────────→ │
  │ ←────────────────────── ENUM_RESP ─────────────────────── │  … page until count < max or start≥total
- │ (then periodic STATUS polling, suggested 2–10 Hz)         │
+ │ (then receive STATUS_PUSH, SCOPE_BLOCK_PUSH, drain marks) │
 ```
 
 The host caches the descriptor table, keyed by `build_hash`. The descriptor baker computes this value from the final ELF with the patch section normalized, plus the generated descriptor records. It therefore changes when linked code, addresses, or the baked variable set changes, including dirty-tree builds. At any time (in HELLO or STATUS), detecting a `build_hash` change means **invalidate the entire cache and re-enumerate**. This prevents reading new firmware with an old table.
@@ -353,21 +377,20 @@ host                         CPU2                       CPU1 ISR safe point
  │ ←────── ACK(OK) ×m ──────── │                                 │
  │ ─────── CAL_COMMIT ───────→ │ publish commit_seq=s ─────────→ │ sees s≠applied_seq:
  │ ←────── ACK(OK,data=s) ──── │                                 │ mechanical check→apply whole set→
- │ ─────── STATUS poll ──────→ │ read the parameter-status block │ write applied_seq=s
- │ ←────── applied_seq==s? ─── │  ←────────────────────────────  │
+ │ ←────── STATUS_PUSH ─────── │ read the parameter-status block │ write applied_seq=s
 ```
 
 Key points: within a batch **all valid or all rejected** (takes effect on the same tick, cal_result/cal_fail_idx report the cause; all successful writes are native-bit-pattern writes, with no range or unit conversion); the host must not issue the next COMMIT batch before applied_seq catches up to commit_seq.
 
-`CAL_READ` is an on-demand single read, not the periodic mirror: the host sends an `(addr,type)` list, CPU2 publishes the read request, CPU1's background reads and acks. It serves the Variable Map / on-demand watch; high-speed real-time waveforms still use the DAQ_BIND + BLOCK_REQ scope ring.
+`CAL_READ` is an on-demand single read, not the periodic mirror: the host sends an `(addr,type)` list, CPU2 publishes the read request, CPU1's background reads and acks. It serves the Variable Map / on-demand watch; high-speed real-time waveforms use the DAQ_BIND + SCOPE_BLOCK_PUSH scope ring.
 
 ### 5.3 Scope flow
 
 Channel selection (before any mode starts): `DAQ_CTRL(OFF)` -> `DAQ_BIND(channel list)` -> only after ACK(OK) may you start. Binding is on-demand; the device does not rely on a boot default binding.
 
-**Stream entry**: `DAQ_CTRL(mode=STREAM, prescaler, record_points=0)` → the host continuously `BLOCK_REQ` polls (a "soft PDO" in the SCI phase; frequency adapts by `remain_hint`). When the ring fills the producer drops new blocks + overrun_cnt++, the flow doesn't stop, and the host draws a gap by block_seq.
+**Stream entry**: `DAQ_CTRL(mode=STREAM, prescaler, record_points=0)` -> CPU2 pushes `SCOPE_BLOCK_PUSH` frames whenever complete blocks are available. When the ring fills the producer drops new blocks + overrun_cnt++, the flow doesn't stop, and the host draws a gap by block_seq.
 
-**Capture entry**: under the same channel binding, send `DAQ_CTRL(mode=CAPTURE_ARMED, trig…, pre_trig_pct, prescaler, record_points)` → CPU1 overwrites the ring in the same block format and evaluates the trigger each tick → after a hit it enters CAPTURE_POST to capture the post segment (depth = record_points×(100-pre_trig_pct)%) → CAPTURE_FROZEN (visible in STATUS.scope_mode) → the host `BLOCK_REQ` drains slowly (remain_hint decrements to 0) → the host re-ARMs or switches back to STREAM. The pre-trigger history is naturally preserved by the ring structure; the host reconstructs block order by `start_tick`.
+**Capture entry**: under the same channel binding, send `DAQ_CTRL(mode=CAPTURE_ARMED, trig…, pre_trig_pct, prescaler, record_points)` -> CPU1 overwrites the ring in the same block format and evaluates the trigger each tick -> after a hit it enters CAPTURE_POST to capture the post segment (depth = record_points×(100-pre_trig_pct)%) -> CAPTURE_FROZEN (visible in STATUS.scope_mode) -> CPU2 sends `DRAIN_START`, pushes all frozen blocks, then sends `DRAIN_END` -> the host re-ARMs or switches back to STREAM. The pre-trigger history is naturally preserved by the ring structure; the host reconstructs block order by `start_tick`.
 
 Capture freezes complete block slots plus one guard block so a trigger that
 lands in the middle of a block still contains enough samples for the host to
@@ -381,10 +404,10 @@ The "watch window" of an application variable = after selecting variables, run S
 ### 5.4 Error handling and resync
 
 - Corrupt frames silently dropped (§3.1). The host sets a timeout per request (suggested 100 ms) + resend.
-- CPU2 caches the last encoded response; when the host resends the same `(msg_type, seq)` on timeout, it replays directly, without re-executing CAL_COMMIT, CMD, DAQ_BIND, or consuming a BLOCK. The cache reuses only the current TX buffer, adding no second 1 KB-class buffer.
+- CPU2 caches the last encoded response in the high-priority response slot; when the host resends the same `(msg_type, seq)` on timeout, it replays directly, without re-executing CAL_COMMIT, CMD, or DAQ_BIND.
 - The service itself stays safely retryable: a repeated CAL_WRITE overwrites the same-addr staged entry; DAQ_BIND overwrites the whole region. Only after the host abandons the old request and uses a new seq is it treated as a new operation.
-- The host discards late/mismatched responses by the frame seq echo.
-- Sync recovery: the host sends any request, and the firmware decoder auto-resyncs at the 0x00 boundary.
+- The host discards late/mismatched responses by the frame seq echo, and continues to process push frames while waiting for a response.
+- Sync recovery: the host sends any request, and the firmware decoder auto-resyncs at the 0x00 boundary. Normal streaming does not require periodic `STATUS_REQ` or `BLOCK_REQ`.
 
 ## 6. Versioning and evolution strategy
 

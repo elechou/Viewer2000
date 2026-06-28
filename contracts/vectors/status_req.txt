@@ -1,6 +1,6 @@
 # vector: status_req
-# STATUS_REQ: empty payload, also used as link heartbeat
+# STATUS_REQ: empty payload, optional explicit status read
 # raw  = frame before COBS (ver|type|flags|seq|len|payload|crc32c, all LE)
 # wire = COBS(raw) + 0x00 delimiter, the actual SCI-link octets
-raw: 570200020000007aa4dc24
-wire: 03570202020101057aa4dc2400
+raw: 58020002000000a0e91477
+wire: 0358020202010105a0e9147700

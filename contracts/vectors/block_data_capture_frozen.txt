@@ -1,6 +1,0 @@
-# vector: block_data_capture_frozen
-# BLOCK_DATA: Capture Frozen prefix includes trigger_tick; block remains native layout
-# raw  = frame before COBS (ver|type|flags|seq|len|payload|crc32c, all LE)
-# wire = COBS(raw) + 0x00 delimiter, the actual SCI-link octets
-raw: 57a1000f0028000104000000000000d2040000b0040000090000000300010002000400000000bf000000000000003fcd998aae
-wire: 0357a1020f0228030104010101010103d2040103b0040102090101020302010202020401010102bf010101010101063fcd998aae00

@@ -8,8 +8,8 @@
 //
 // ---- Two entry points, one hot path ----
 // The host faces two explicit entry points:
-//   * Stream: a continuous block stream; the host keeps consuming via BLOCK_REQ,
-//     and when the ring is full new blocks are dropped and overrun is reported;
+//   * Stream: a continuous block stream; CPU2 pushes complete scope batches, and
+//     when the ring is full new blocks are dropped and overrun is reported;
 //   * Capture: a device-side triggered freeze window; CPU1 overwrites the ring,
 //     evaluates the trigger, fills the post segment, then the host drains it
 //     slowly after the freeze.
@@ -36,8 +36,8 @@
 //   [v2k_block_hdr_t][sample area: tick-major interleave, within each tick laid
 //    out in binding order, each channel stored contiguously at native width,
 //    stride_octets per tick]
-// A block is the payload unit of the on-wire BLOCK_DATA (wire-spec §4.6); header
-// + samples go on the wire as-is — this is "memory layout == on-wire format"
+// A block is the payload unit of the on-wire SCOPE_BLOCK_PUSH (wire-spec §4.6);
+// header + samples go on the wire as-is — this is "memory layout == on-wire format"
 // realized on the hot path; CPU2 does no re-encoding.
 // The header bind_seq tags the binding generation that produced the block: after
 // a re-bind the host discards leftover old blocks by it; stride_octets makes the

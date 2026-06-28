@@ -1,5 +1,5 @@
 //=============================================================================
-// v2k_sci_service.c - Viewer2000 wire v7 over the CPU2 board pipe
+// v2k_sci_service.c - Viewer2000 wire v8 push transport over the CPU2 board pipe
 //
 // COBS/CRC, message handling, shared-plane service, and TX all run in the CPU2
 // super-loop. Every on-wire field is serialized explicitly. C28x uint16_t
@@ -16,7 +16,7 @@
 #define V2K_RAW_MAX           (7u + V2K_MAX_PAYLOAD + 4u)
 #define V2K_WIRE_MAX          (V2K_RAW_MAX + (V2K_RAW_MAX / 254u) + 2u)
 #define V2K_RX_FRAME_WORDS    256u
-#define V2K_LINK_TIMEOUT_MS   2000uL
+#define V2K_STATUS_PUSH_PERIOD_MS 100uL
 
 #define V2K_MSG_HELLO         0x01u
 #define V2K_MSG_STATUS        0x02u
@@ -28,6 +28,10 @@
 #define V2K_MSG_BLOCK_REQ     0x21u
 #define V2K_MSG_DAQ_BIND      0x22u
 #define V2K_MSG_CMD           0x30u
+#define V2K_MSG_STATUS_PUSH   0x41u
+#define V2K_MSG_SCOPE_BLOCK_PUSH 0x42u
+#define V2K_MSG_DRAIN_START   0x43u
+#define V2K_MSG_DRAIN_END     0x44u
 
 #define V2K_ACK_OK            0u
 #define V2K_ACK_BAD_PARAM     1u
@@ -49,14 +53,21 @@ static uint16_t s_rx_discard;
 static uint16_t s_tx_frame[V2K_WIRE_MAX];
 static uint16_t s_tx_len;
 static uint16_t s_tx_pos;
-static uint16_t s_last_req_type;
-static uint16_t s_last_req_seq;
+static uint16_t s_response_frame[V2K_WIRE_MAX];
+static uint16_t s_response_len;
+static uint16_t s_response_pending;
+static uint16_t s_last_response_req_type;
+static uint16_t s_last_response_seq;
 static uint16_t s_have_last_response;
 
 static uint16_t s_raw[V2K_RAW_MAX];
 static uint16_t s_frozen_state_seq;
-static uint32_t s_last_valid_heartbeat;
 static uint32_t s_cal_staged_commit_seq;
+static uint32_t s_last_status_push_heartbeat;
+static uint16_t s_push_frame_seq;
+static uint16_t s_drain_active;
+static uint16_t s_drain_start_pending;
+static uint16_t s_drain_end_pending;
 
 volatile uint32_t g_v2k_sci_rx_octets;
 volatile uint32_t g_v2k_sci_tx_octets;
@@ -179,36 +190,84 @@ static uint16_t v2k_cobs_encode(const uint16_t *src, uint16_t len,
     return write;
 }
 
-static uint16_t v2k_response_begin(uint16_t msg_type, uint16_t seq)
+static uint16_t v2k_frame_begin(uint16_t msg_type, uint16_t seq)
 {
     s_raw[0] = V2K_WIRE_VER_MAGIC;
-    s_raw[1] = (msg_type | 0x80u) & 0xFFu;
+    s_raw[1] = msg_type & 0xFFu;
     s_raw[2] = 0u;
     v2k_put_u16(s_raw, 3u, seq);
     v2k_put_u16(s_raw, 5u, 0u);
     return 7u;
 }
 
-static void v2k_response_send(uint16_t payload_len)
+static uint16_t v2k_response_begin(uint16_t msg_type, uint16_t seq)
+{
+    return v2k_frame_begin((uint16_t)(msg_type | 0x80u), seq);
+}
+
+static uint16_t v2k_active_tx_idle(void)
+{
+    return (s_tx_pos == s_tx_len) ? 1u : 0u;
+}
+
+static uint16_t v2k_finish_frame(uint16_t payload_len,
+                                 uint16_t *wire_buf,
+                                 uint16_t *wire_len)
 {
     uint16_t raw_len;
     uint32_t crc;
-    if ((payload_len > V2K_MAX_PAYLOAD) || (s_tx_pos != s_tx_len))
+
+    if (payload_len > V2K_MAX_PAYLOAD)
     {
-        return;
+        return 0u;
     }
     v2k_put_u16(s_raw, 5u, payload_len);
     raw_len = (uint16_t)(7u + payload_len);
     crc = v2k_crc32c(s_raw, raw_len);
     v2k_put_u32(s_raw, raw_len, crc);
     raw_len = (uint16_t)(raw_len + 4u);
-    s_tx_len = v2k_cobs_encode(s_raw, raw_len, s_tx_frame, V2K_WIRE_MAX);
-    s_tx_pos = 0u;
-    if (s_tx_len != 0u)
+    *wire_len = v2k_cobs_encode(s_raw, raw_len, wire_buf, V2K_WIRE_MAX);
+    return (*wire_len != 0u) ? 1u : 0u;
+}
+
+static void v2k_response_send(uint16_t payload_len)
+{
+    if (s_response_pending)
     {
-        s_last_req_type = s_raw[1] & 0x7Fu;
-        s_last_req_seq = v2k_get_u16(s_raw, 3u);
+        return;
+    }
+    if (v2k_finish_frame(payload_len, s_response_frame, &s_response_len))
+    {
+        s_response_pending = 1u;
+        s_last_response_req_type = s_raw[1] & 0x7Fu;
+        s_last_response_seq = v2k_get_u16(s_raw, 3u);
         s_have_last_response = 1u;
+    }
+}
+
+static uint16_t v2k_start_push_frame(uint16_t payload_len)
+{
+    if (!v2k_active_tx_idle())
+    {
+        return 0u;
+    }
+    if (v2k_finish_frame(payload_len, s_tx_frame, &s_tx_len))
+    {
+        s_tx_pos = 0u;
+        return 1u;
+    }
+    return 0u;
+}
+
+static void v2k_start_pending_response(void)
+{
+    if (s_response_pending && v2k_active_tx_idle())
+    {
+        memcpy(s_tx_frame, s_response_frame,
+               (uint32_t)s_response_len * sizeof(s_response_frame[0]));
+        s_tx_len = s_response_len;
+        s_tx_pos = 0u;
+        s_response_pending = 0u;
     }
 }
 
@@ -260,12 +319,11 @@ static void v2k_handle_hello(uint16_t seq)
     v2k_response_send(84u);
 }
 
-static void v2k_handle_status(uint16_t seq)
+static uint16_t v2k_write_status_payload(uint16_t off)
 {
     const volatile v2k_cpu1_status_t *cpu1 =
         &V2K_MSG_1TO2_RO->cpu1_status;
     const volatile v2k_param_status_t *cal = &V2K_CPU1_PLANE_RO->param_status;
-    uint16_t off = v2k_response_begin(V2K_MSG_STATUS, seq);
     v2k_put_u16(s_raw, off, cpu1->sys_state);
     v2k_put_u16(s_raw, (uint16_t)(off + 2u), cpu1->fault_code);
     v2k_put_u16(s_raw, (uint16_t)(off + 4u), cpu1->status_flags);
@@ -295,7 +353,32 @@ static void v2k_handle_status(uint16_t seq)
     v2k_put_u32(s_raw, (uint16_t)(off + 72u), cpu1->budget_violations);
     v2k_put_u32(s_raw, (uint16_t)(off + 76u), cpu1->isr_overflows);
     v2k_put_u32(s_raw, (uint16_t)(off + 80u), cpu1->prof_seq);
-    v2k_response_send(84u);
+    return 84u;
+}
+
+static void v2k_handle_status(uint16_t seq)
+{
+    uint16_t off = v2k_response_begin(V2K_MSG_STATUS, seq);
+    v2k_response_send(v2k_write_status_payload(off));
+}
+
+static uint16_t v2k_start_status_push(void)
+{
+    uint32_t heartbeat = g_v2k_msg_2to1.cpu2_status.heartbeat;
+    uint16_t off;
+
+    if ((uint32_t)(heartbeat - s_last_status_push_heartbeat) <
+        V2K_STATUS_PUSH_PERIOD_MS)
+    {
+        return 0u;
+    }
+    off = v2k_frame_begin(V2K_MSG_STATUS_PUSH, 0u);
+    if (v2k_start_push_frame(v2k_write_status_payload(off)))
+    {
+        s_last_status_push_heartbeat = heartbeat;
+        return 1u;
+    }
+    return 0u;
 }
 
 static void v2k_handle_enum(uint16_t seq, const uint16_t *payload,
@@ -622,35 +705,15 @@ static uint16_t v2k_scope_remaining(
     return (uint16_t)(end - cons->rd_idx);
 }
 
-static void v2k_handle_block_req(uint16_t seq, const uint16_t *payload,
-                                 uint16_t payload_len)
+static uint16_t v2k_write_scope_batch_payload(
+    uint16_t off,
+    const volatile v2k_scope_prod_t *prod,
+    volatile v2k_scope_cons_t *cons,
+    uint16_t *count_out)
 {
-    uint16_t max_blocks;
     uint16_t count = 0u;
-    uint16_t off;
     uint16_t count_off;
-    const volatile v2k_scope_prod_t *prod;
-    volatile v2k_scope_cons_t *cons;
-    if (payload_len != 2u)
-    {
-        v2k_send_ack(V2K_MSG_BLOCK_REQ, seq, V2K_ACK_BAD_PARAM, 0uL);
-        return;
-    }
-    max_blocks = payload[0] & 0xFFu;
-    if ((max_blocks == 0u) || (max_blocks > 2u))
-    {
-        v2k_send_ack(V2K_MSG_BLOCK_REQ, seq, V2K_ACK_BAD_PARAM, 0uL);
-        return;
-    }
-    prod = &V2K_CPU1_PLANE_RO->scope_prod;
-    cons = &g_v2k_cpu2_plane.scope_cons;
-    if ((prod->mode == V2K_SCOPE_CAPTURE_FROZEN) &&
-        (s_frozen_state_seq != prod->state_seq))
-    {
-        v2k_scope_consumer_begin_frozen(prod, cons);
-        s_frozen_state_seq = prod->state_seq;
-    }
-    off = v2k_response_begin(V2K_MSG_BLOCK_REQ, seq);
+
     count_off = off;
     s_raw[off++] = 0u;
     s_raw[off++] = prod->mode & 0xFFu;
@@ -664,15 +727,14 @@ static void v2k_handle_block_req(uint16_t seq, const uint16_t *payload,
                 (prod->mode == V2K_SCOPE_CAPTURE_FROZEN) ?
                 prod->trig_tick : 0uL);
     off = (uint16_t)(off + 4u);
-    // During trigger overwrite, rd_idx has no consumer meaning; draining is
-    // allowed only after the capture freezes.
+
     if ((prod->mode != V2K_SCOPE_STREAM) &&
         (prod->mode != V2K_SCOPE_CAPTURE_FROZEN))
     {
-        v2k_response_send((uint16_t)(off - 7u));
-        return;
+        *count_out = 0u;
+        return off;
     }
-    while (count < max_blocks)
+    while ((uint32_t)(off - 7u) < V2K_MAX_PAYLOAD)
     {
         v2k_scope_block_view_t view;
         uint16_t block_octets;
@@ -696,8 +758,125 @@ static void v2k_handle_block_req(uint16_t seq, const uint16_t *payload,
         count++;
     }
     s_raw[count_off] = count;
-    v2k_put_u16(s_raw, 13u, v2k_scope_remaining(prod, cons));
-    v2k_response_send((uint16_t)(off - 7u));
+    v2k_put_u16(s_raw, (uint16_t)(count_off + 6u),
+                v2k_scope_remaining(prod, cons));
+    *count_out = count;
+    return off;
+}
+
+static void v2k_handle_block_req(uint16_t seq)
+{
+    v2k_send_ack(V2K_MSG_BLOCK_REQ, seq, V2K_ACK_UNSUPPORTED, 0uL);
+}
+
+static void v2k_update_capture_drain(void)
+{
+    const volatile v2k_scope_prod_t *prod = &V2K_CPU1_PLANE_RO->scope_prod;
+    volatile v2k_scope_cons_t *cons = &g_v2k_cpu2_plane.scope_cons;
+
+    if (prod->mode == V2K_SCOPE_CAPTURE_FROZEN)
+    {
+        if (s_frozen_state_seq != prod->state_seq)
+        {
+            v2k_scope_consumer_begin_frozen(prod, cons);
+            s_frozen_state_seq = prod->state_seq;
+            s_drain_active = 1u;
+            s_drain_start_pending = 1u;
+            s_drain_end_pending = 0u;
+        }
+    }
+    else
+    {
+        s_drain_active = 0u;
+        s_drain_start_pending = 0u;
+        s_drain_end_pending = 0u;
+    }
+}
+
+static uint16_t v2k_start_drain_marker(void)
+{
+    const volatile v2k_scope_prod_t *prod = &V2K_CPU1_PLANE_RO->scope_prod;
+    uint16_t off;
+
+    if (s_drain_start_pending)
+    {
+        off = v2k_frame_begin(V2K_MSG_DRAIN_START, 0u);
+        v2k_put_u16(s_raw, off, prod->frozen_count);
+        v2k_put_u16(s_raw, (uint16_t)(off + 2u), 0u);
+        if (v2k_start_push_frame(4u))
+        {
+            s_drain_start_pending = 0u;
+            return 1u;
+        }
+    }
+    if (s_drain_end_pending)
+    {
+        (void)v2k_frame_begin(V2K_MSG_DRAIN_END, 0u);
+        if (v2k_start_push_frame(0u))
+        {
+            s_drain_end_pending = 0u;
+            s_drain_active = 0u;
+            return 1u;
+        }
+    }
+    return 0u;
+}
+
+static uint16_t v2k_start_scope_block_push(void)
+{
+    const volatile v2k_scope_prod_t *prod = &V2K_CPU1_PLANE_RO->scope_prod;
+    volatile v2k_scope_cons_t *cons = &g_v2k_cpu2_plane.scope_cons;
+    uint16_t off;
+    uint16_t count;
+
+    if ((prod->mode != V2K_SCOPE_STREAM) &&
+        (prod->mode != V2K_SCOPE_CAPTURE_FROZEN))
+    {
+        return 0u;
+    }
+    off = v2k_frame_begin(V2K_MSG_SCOPE_BLOCK_PUSH, s_push_frame_seq);
+    off = v2k_write_scope_batch_payload(off, prod, cons, &count);
+    if (count == 0u)
+    {
+        return 0u;
+    }
+    if (v2k_start_push_frame((uint16_t)(off - 7u)))
+    {
+        s_push_frame_seq++;
+        return 1u;
+    }
+    return 0u;
+}
+
+static uint16_t v2k_start_next_push(void)
+{
+    const volatile v2k_scope_prod_t *prod = &V2K_CPU1_PLANE_RO->scope_prod;
+    volatile v2k_scope_cons_t *cons = &g_v2k_cpu2_plane.scope_cons;
+
+    if ((g_v2k_msg_2to1.cpu2_status.link_state == 0u) ||
+        s_response_pending || !v2k_active_tx_idle())
+    {
+        return 0u;
+    }
+    if (v2k_start_drain_marker())
+    {
+        return 1u;
+    }
+    if (v2k_start_scope_block_push())
+    {
+        return 1u;
+    }
+    if (s_drain_active &&
+        (prod->mode == V2K_SCOPE_CAPTURE_FROZEN) &&
+        (v2k_scope_remaining(prod, cons) == 0u))
+    {
+        s_drain_end_pending = 1u;
+        if (v2k_start_drain_marker())
+        {
+            return 1u;
+        }
+    }
+    return v2k_start_status_push();
 }
 
 static void v2k_handle_cmd(uint16_t seq, const uint16_t *payload,
@@ -752,7 +931,7 @@ static void v2k_dispatch(uint16_t msg_type, uint16_t seq,
             v2k_handle_daq_ctrl(seq, payload, payload_len);
             break;
         case V2K_MSG_BLOCK_REQ:
-            v2k_handle_block_req(seq, payload, payload_len);
+            v2k_handle_block_req(seq);
             break;
         case V2K_MSG_DAQ_BIND:
             v2k_handle_daq_bind(seq, payload, payload_len);
@@ -774,7 +953,7 @@ static void v2k_process_encoded_frame(void)
     uint16_t seq;
     uint32_t received_crc;
     uint32_t calculated_crc;
-    if ((s_tx_pos != s_tx_len) || (s_rx_frame_len == 0u))
+    if (s_rx_frame_len == 0u)
     {
         return;
     }
@@ -803,15 +982,18 @@ static void v2k_process_encoded_frame(void)
     }
     seq = v2k_get_u16(s_rx_frame, 3u);
     g_v2k_sci_good_frames++;
-    s_last_valid_heartbeat = g_v2k_msg_2to1.cpu2_status.heartbeat;
     g_v2k_msg_2to1.cpu2_status.link_state = 1u;
     if (s_have_last_response &&
-        ((s_rx_frame[1] & 0x7Fu) == s_last_req_type) &&
-        (seq == s_last_req_seq))
+        ((s_rx_frame[1] & 0x7Fu) == s_last_response_req_type) &&
+        (seq == s_last_response_seq))
     {
         // If the host retries the same frame after a timeout, replay the
         // original response and do not execute COMMIT/CMD-style services again.
-        s_tx_pos = 0u;
+        s_response_pending = 1u;
+        return;
+    }
+    if (s_response_pending)
+    {
         return;
     }
     v2k_dispatch(s_rx_frame[1] & 0x7Fu, seq,
@@ -824,44 +1006,16 @@ static void v2k_tx_service(void)
     {
         v2k_cpu2_board_pipe_write_octet(s_tx_frame[s_tx_pos++]);
     }
-    // Keep the frame content and length after completion so a timeout retry with
-    // the same (msg_type, seq) can replay it directly.
+    // The active frame remains intact after completion. Request-response replay
+    // is cached separately in s_response_frame.
 }
 
-void v2k_sci_init(void)
-{
-    memset(s_rx_frame, 0, sizeof(s_rx_frame));
-    memset(s_tx_frame, 0, sizeof(s_tx_frame));
-    memset(s_raw, 0, sizeof(s_raw));
-    s_frozen_state_seq = 0u;
-    s_cal_staged_commit_seq = 0xFFFFFFFFuL;
-    s_rx_frame_len = 0u;
-    s_rx_discard = 0u;
-    s_tx_len = 0u;
-    s_tx_pos = 0u;
-    s_last_req_type = 0u;
-    s_last_req_seq = 0u;
-    s_have_last_response = 0u;
-
-    v2k_cpu2_board_pipe_init();
-}
-
-void v2k_sci_service(void)
+static void v2k_rx_service(void)
 {
     uint16_t value;
 
-    v2k_cpu2_board_pipe_service();
-    v2k_tx_service();
-    while (s_tx_pos == s_tx_len)
+    while (v2k_cpu2_board_pipe_read_octet(&value))
     {
-        if (!v2k_cpu2_board_pipe_read_octet(&value))
-        {
-            break;
-        }
-
-        // The TX buffer also caches the previous response for replay. While the
-        // response has not fully entered the FIFO, pause request parsing so a
-        // second coalesced frame is not dropped as "TX busy".
         value &= 0xFFu;
         if (value == 0u)
         {
@@ -871,10 +1025,6 @@ void v2k_sci_service(void)
             }
             s_rx_frame_len = 0u;
             s_rx_discard = 0u;
-            if (s_tx_pos != s_tx_len)
-            {
-                break;
-            }
         }
         else if (!s_rx_discard)
         {
@@ -889,12 +1039,43 @@ void v2k_sci_service(void)
             }
         }
     }
+}
+
+void v2k_sci_init(void)
+{
+    memset(s_rx_frame, 0, sizeof(s_rx_frame));
+    memset(s_tx_frame, 0, sizeof(s_tx_frame));
+    memset(s_response_frame, 0, sizeof(s_response_frame));
+    memset(s_raw, 0, sizeof(s_raw));
+    s_frozen_state_seq = 0u;
+    s_cal_staged_commit_seq = 0xFFFFFFFFuL;
+    s_last_status_push_heartbeat = 0uL;
+    s_rx_frame_len = 0u;
+    s_rx_discard = 0u;
+    s_tx_len = 0u;
+    s_tx_pos = 0u;
+    s_response_len = 0u;
+    s_response_pending = 0u;
+    s_last_response_req_type = 0u;
+    s_last_response_seq = 0u;
+    s_have_last_response = 0u;
+    s_push_frame_seq = 0u;
+    s_drain_active = 0u;
+    s_drain_start_pending = 0u;
+    s_drain_end_pending = 0u;
+
+    v2k_cpu2_board_pipe_init();
+}
+
+void v2k_sci_service(void)
+{
+    v2k_cpu2_board_pipe_service();
+    v2k_start_pending_response();
+    v2k_tx_service();
+    v2k_rx_service();
+    v2k_update_capture_drain();
+    v2k_start_pending_response();
+    (void)v2k_start_next_push();
     v2k_tx_service();
     v2k_cpu2_board_pipe_service();
-    if ((g_v2k_msg_2to1.cpu2_status.link_state == 1u) &&
-        ((uint32_t)(g_v2k_msg_2to1.cpu2_status.heartbeat -
-                    s_last_valid_heartbeat) > V2K_LINK_TIMEOUT_MS))
-    {
-        g_v2k_msg_2to1.cpu2_status.link_state = 0u;
-    }
 }
