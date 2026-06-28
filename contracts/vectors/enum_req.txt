@@ -1,6 +1,6 @@
 # vector: enum_req
-# ENUM_REQ：从 0 开始要 8 条
-# raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
-# wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
+# ENUM_REQ: request 8 entries starting at index 0
+# raw  = frame before COBS (ver|type|flags|seq|len|payload|crc32c, all LE)
+# wire = COBS(raw) + 0x00 delimiter, the actual SCI-link octets
 raw: 5703000300040000000800285d3dc2
 wire: 035703020302040101020805285d3dc200

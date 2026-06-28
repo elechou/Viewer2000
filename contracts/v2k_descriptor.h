@@ -2,12 +2,12 @@
 // v2k_descriptor.h — shared-memory interface: descriptor table
 //                    (platform-quantity enumeration + default sampling hints)
 //
-// Role (variable-discovery architecture; revised 2026-06-19, see Phase 4.5):
+// Role (variable-discovery architecture; revised 2026-06-19):
 // This table registers **platform quantities** (registered by board/runtime:
 // grouped v2k_io diagnostics, applied duty cycles, status words, platform
 // parameters)
 // **plus user application variables** — the latter baked in at compile time by
-// the build tool from the firmware .out DWARF (Phase 4.5). The student writes
+// the build tool from the firmware .out DWARF. The student writes
 // plain C: no registration API call, no hand-typed name strings, no mandated
 // declaration style (the C symbol is the sole naming source, collected at build
 // time, never hand-typed). Once the names are baked into the device the host
@@ -17,8 +17,8 @@
 // Responsibilities of this table:
 //   1. Works out of the box: the host enumerates platform + user names and
 //      immediately draws waveforms;
-//   2. (Phase 3 once default-bound the first few observables in registration
-//      order at boot; Phase 4 switched to on-demand binding.)
+//   2. Channel binding is on-demand; the device does not rely on a boot default
+//      binding of early observables.
 //
 // 2026-06-17 semantic fix:
 // * The on-wire value is the real value; the descriptor no longer carries
@@ -39,8 +39,8 @@
 //   valid.
 //
 // The descriptor "add" primitive is an L1-internal function; user variables are
-// baked into the table at Phase 4.5 build time and port names are registered by
-// wire — there is no registration API exposed to L3 user code.
+// baked into the table at build time and port names are registered by wire;
+// there is no registration API exposed to L3 user code.
 //=============================================================================
 #ifndef V2K_DESCRIPTOR_H
 #define V2K_DESCRIPTOR_H

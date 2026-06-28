@@ -54,7 +54,7 @@
 // 256+ L3-defined). Append new values; never reuse them because the host
 // renders the numeric source.
 #define V2K_FAULT_NONE     0u
-#define V2K_FAULT_TZ1_EXT  1u   // External TZ1; DRV8323 nFAULT in Phase 5
+#define V2K_FAULT_TZ1_EXT  1u   // External TZ1 source, board-profile defined
 #define V2K_FAULT_OVERCURRENT 2u // Hardware current-window trip (CMPSS or ADC PPB).
 
 //-----------------------------------------------------------------------------
@@ -88,12 +88,12 @@ typedef struct {
     v2k_tick_t tick;        // Current ISR tick snapshot
     uint32_t tick_hz;       // ISR tick rate used by the host for time conversion
     uint32_t prof_seq;      // Runtime-load snapshot sequence; written last
-    uint32_t cycle_budget;  // V2K_EPWMCLK_HZ / V2K_ISR_HZ
+    uint32_t cycle_budget;  // V2K_CPUTIMER_HZ / V2K_ISR_HZ
     uint32_t load_avg;      // Mean ADC/EOC latency + ISR cycles in the completed window
     uint32_t load_peak;     // Peak ADC/EOC latency + ISR cycles in the completed window
     uint32_t ctrl_at_peak;  // User control() body cycles on the peak tick
     uint32_t scope_at_peak; // Scope epilogue cycles on the peak tick
-    uint16_t lat_at_peak;   // ADC/EOC entry latency on the peak tick
+    uint16_t lat_at_peak;   // ADC/EOC entry latency on the peak tick, in CPUTIMER cycles
     uint16_t prof_reserved;
     v2k_tick_t peak_tick;   // Hidden bring-up correlation tick for the peak record
     uint32_t budget_violations; // Lifetime ISR budget violations

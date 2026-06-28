@@ -1,6 +1,6 @@
 # vector: hello_resp
 # HELLO_RESP: versions, build_hash, firmware name, tick_hz, capabilities, project metadata, MCU model, and Scope resources
-# raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
-# wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
+# raw  = frame before COBS (ver|type|flags|seq|len|payload|crc32c, all LE)
+# wire = COBS(raw) + 0x00 delimiter, the actual SCI-link octets
 raw: 5781000100540007000d00ebb6cc080a00000076696577657232303030000000000000204e00007f0000007068617365342d64656d6f00000000000000000000000000000000000000000000d8356a010010000a000000007000002455fc1c
 wire: 035781020102540207020d06ebb6cc080a01010b76696577657232303030010101010103204e01027f01010c7068617365342d64656d6f01010101010101010101010101010101010101010105d8356a010210020a010101027001052455fc1c00

@@ -1,6 +1,6 @@
 # vector: enum_resp_2entries
-# ENUM_RESP：总数 10，本页 2 条（用户 vel_kp 参数/示波 + 系统 iq_meas 示波）
-# raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
-# wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
+# ENUM_RESP: total 10, page contains user vel_kp param/scope and system iq_meas scope
+# raw  = frame before COBS (ver|type|flags|seq|len|payload|crc32c, all LE)
+# wire = COBS(raw) + 0x00 delimiter, the actual SCI-link octets
 raw: 57830003003e000a000000020076656c5f6b70000000000000000000000400070012a000000100000069715f6d6561730000000000000000000000020044a0000001000000f0082fdf
 wire: 0357830203023e020a010102020776656c5f6b70010101010101010101020402070312a001020101010869715f6d6561730101010101010101010102020344a0010201010105f0082fdf00

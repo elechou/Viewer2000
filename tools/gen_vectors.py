@@ -19,9 +19,9 @@ from pathlib import Path
 VECTORS_DIR = Path(__file__).resolve().parent.parent / "contracts" / "vectors"
 
 # ---------------------------------------------------------------------------
-# CRC-32C (Castagnoli)：反射式，poly=0x82F63B78, init=0xFFFFFFFF, xorout=0xFFFFFFFF
-# 即 iSCSI/RFC3720 参数集；与 SSE4.2 crc32 指令、C2000Ware VCRC
-# CRC_run32BitPoly2Reflected 一致。
+# CRC-32C (Castagnoli): reflected form, poly=0x82F63B78, init=0xFFFFFFFF,
+# xorout=0xFFFFFFFF. This is the iSCSI/RFC3720 parameter set and matches
+# SSE4.2 crc32 instructions and C2000Ware VCRC CRC_run32BitPoly2Reflected.
 # ---------------------------------------------------------------------------
 _CRC32C_TABLE = []
 for _i in range(256):
@@ -38,32 +38,32 @@ def crc32c(data: bytes) -> int:
     return c ^ 0xFFFFFFFF
 
 
-# 公认校验值（Check value, "123456789" → 0xE3069283）
-assert crc32c(b"123456789") == 0xE3069283, "CRC-32C 实现错误"
+# Standard check value: "123456789" -> 0xE3069283.
+assert crc32c(b"123456789") == 0xE3069283, "CRC-32C implementation error"
 
 # ---------------------------------------------------------------------------
-# COBS (Consistent Overhead Byte Stuffing)
-# 编码后数据不含 0x00；线上形态 = cobs_encode(frame) + b"\x00"
+# COBS (Consistent Overhead Byte Stuffing).
+# Encoded data contains no 0x00; wire form is cobs_encode(frame) + b"\x00".
 # ---------------------------------------------------------------------------
 def cobs_encode(data: bytes) -> bytes:
     out = bytearray()
     idx = 0
     while True:
-        # 找下一个 0x00（或数据尾），段长上限 254
+        # Find the next 0x00 or end of data; each segment is capped at 254.
         end = min(idx + 254, len(data))
         zero = data.find(0, idx, end)
         seg_end = zero if zero != -1 else end
-        out.append(seg_end - idx + 1)           # code = 段长 + 1
+        out.append(seg_end - idx + 1)           # code = segment length + 1
         out += data[idx:seg_end]
         if zero != -1:
-            idx = zero + 1                      # 跳过这个 0x00
-            if idx == len(data):                # 数据以 0x00 结尾 → 末尾空段
+            idx = zero + 1                      # skip this 0x00
+            if idx == len(data):                # data ended with 0x00
                 out.append(0x01)
                 break
         else:
             if end == len(data):
                 break
-            idx = end                           # 254 满段，无 0 被消耗
+            idx = end                           # full 254-octet segment consumed no zero
     return bytes(out)
 
 
@@ -72,7 +72,7 @@ def cobs_decode(data: bytes) -> bytes:
     idx = 0
     while idx < len(data):
         code = data[idx]
-        assert code != 0, "COBS 编码区内不得出现 0x00"
+        assert code != 0, "0x00 is forbidden inside a COBS-encoded region"
         out += data[idx + 1 : idx + code]
         idx += code
         if code < 0xFF and idx < len(data):
@@ -80,14 +80,14 @@ def cobs_decode(data: bytes) -> bytes:
     return bytes(out)
 
 
-# 自检：经典样例 + 含零块往返
+# Self-check: classic examples plus zero-containing round trips.
 assert cobs_encode(b"\x00") == b"\x01\x01"
 assert cobs_encode(b"\x11\x22\x00\x33") == b"\x03\x11\x22\x02\x33"
 for _case in (b"", b"\x00\x00", b"\x01" * 300, bytes(range(256))):
     assert cobs_decode(cobs_encode(_case)) == _case
 
 # ---------------------------------------------------------------------------
-# 帧构造（wire-spec §3.1）
+# Frame construction, docs/wire-spec.md section 3.1.
 # ---------------------------------------------------------------------------
 VER_MAGIC = 0x57
 
@@ -103,19 +103,21 @@ def wire_frame(raw: bytes) -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# 消息 payload 构造（wire-spec §4；字段顺序与偏移以 spec 为准）
+# Message payload construction, docs/wire-spec.md section 4.
+# Field order and offsets follow the spec.
 # ---------------------------------------------------------------------------
 def desc_entry(name, type_, kind, addr, presc, reserved=0):
     return struct.pack("<16sHHIHH", name.encode("ascii"),
                        type_, kind, addr, presc, reserved)
 
 
-# V2K_TYPE_* → (struct 格式码, 样本 octet 宽度)；样本按原生宽度无损直拷
+# V2K_TYPE_* -> (struct format code, native sample width in octets).
+# Samples are copied losslessly at their native width.
 _TYPE_FMT = {0: ("h", 2), 1: ("H", 2), 2: ("i", 4), 3: ("I", 4), 4: ("f", 4)}
 
 
 def block(start_tick, block_seq, flags, bind_seq, ch_types, samples_2d):
-    """block = 16 octet 头 + 样本区（tick-major，每 tick 内按绑定顺序原生宽度排列）"""
+    """Return a block: 16-octet header + tick-major native-width sample area."""
     n_ticks, n_ch = len(samples_2d), len(ch_types)
     stride = sum(_TYPE_FMT[t][1] for t in ch_types)
     hdr = struct.pack("<IHHHHHH", start_tick, block_seq, flags,
@@ -125,12 +127,12 @@ def block(start_tick, block_seq, flags, bind_seq, ch_types, samples_2d):
     return hdr + body
 
 
-BUILD_HASH = 0x08CCB6EB  # 样本固定值（取自本 repo initial commit 短哈希）
-BUILD_TIME_UTC = 1_781_913_600  # 2026-06-20 00:00:00 UTC, fixed for deterministic vectors
+BUILD_HASH = 0x08CCB6EB  # Fixed sample value from the repository baseline hash.
+BUILD_TIME_UTC = 1_781_913_600  # 2026-06-20 00:00:00 UTC, fixed for deterministic vectors.
 
 # ---------------------------------------------------------------------------
-# vector 用例表
-# 每项: (文件名, 描述, raw 帧)。负例（CRC 损坏）单独处理。
+# Vector case table. Each item is (file name, description, raw frame).
+# Negative cases such as corrupted CRC are handled separately.
 # ---------------------------------------------------------------------------
 def build_cases():
     cases = []
@@ -148,9 +150,9 @@ def build_cases():
                     1, 16, 10, 0, 0x7000))
 
     # ---- 4.2 STATUS ----
-    add("status_req", "STATUS_REQ：空 payload（兼任链路心跳）", 0x02, 0x0002, b"")
+    add("status_req", "STATUS_REQ: empty payload, also used as link heartbeat", 0x02, 0x0002, b"")
     add("status_resp",
-        "STATUS_RESP：RUNNING 态，Scope mode=STREAM",
+        "STATUS_RESP: RUNNING state, Scope mode STREAM",
         0x82, 0x0002,
         struct.pack("<HHHIIIIHHI4BIHHIIIIIIHIIII",
                     2,            # sys_state = RUNNING
@@ -180,36 +182,35 @@ def build_cases():
                     3))           # prof_seq end
 
     # ---- 4.3 ENUM ----
-    add("enum_req", "ENUM_REQ：从 0 开始要 8 条", 0x03, 0x0003,
+    add("enum_req", "ENUM_REQ: request 8 entries starting at index 0", 0x03, 0x0003,
         struct.pack("<HBB", 0, 8, 0))
     add("enum_resp_2entries",
-        "ENUM_RESP：总数 10，本页 2 条（用户 vel_kp 参数/示波 + 系统 iq_meas 示波）",
+        "ENUM_RESP: total 10, page contains user vel_kp param/scope and system iq_meas scope",
         0x83, 0x0003,
         struct.pack("<HHBB", 10, 0, 2, 0)
         + desc_entry("vel_kp", 4, 0x0007, 0x0000A012, 1, 0)  # F32, USER|PARAM|SCOPE
         + desc_entry("iq_meas", 0, 0x0002, 0x0000A044, 1))  # I16, system SCOPE
     add("enum_resp_empty",
-        "ENUM_RESP 边界：start_idx 越过总数 → count=0（合法的读完信号）",
+        "ENUM_RESP boundary: start_idx past total gives count=0, a legal done signal",
         0x83, 0x0004, struct.pack("<HHBB", 10, 10, 0, 0))
 
     # ---- 4.4 CAL ----
     add("cal_write",
-        "CAL_WRITE：2 条暂存，按 (addr,type) 寻址"
-        "（0xA012=F32 写 3.5；0xA044=I16 写 -7 符号扩展）",
+        "CAL_WRITE: stage 2 entries addressed by (addr,type): 0xA012 F32 writes 3.5; 0xA044 I16 writes -7 sign-extended",
         0x10, 0x0005,
         struct.pack("<BB", 2, 0)
         + struct.pack("<IIHH", 0x0000A012,
                       struct.unpack("<I", struct.pack("<f", 3.5))[0], 4, 0)
         + struct.pack("<IIHH", 0x0000A044, 0xFFFFFFF9, 0, 0))
-    add("cal_commit", "CAL_COMMIT：空 payload", 0x11, 0x0006, b"")
-    add("ack_cal_commit", "ACK(CAL_COMMIT)：OK，data=commit_seq=8",
+    add("cal_commit", "CAL_COMMIT: empty payload", 0x11, 0x0006, b"")
+    add("ack_cal_commit", "ACK(CAL_COMMIT): OK, data=commit_seq=8",
         0x91, 0x0006, struct.pack("<BBHI", 0, 0x11, 0, 8))
-    add("cal_read", "CAL_READ：按 (addr,type) 读 3 条", 0x12, 0x0007,
+    add("cal_read", "CAL_READ: read 3 entries by (addr,type)", 0x12, 0x0007,
         struct.pack("<BB", 3, 0)
         + struct.pack("<IHH", 0x0000A012, 4, 0)
         + struct.pack("<IHH", 0x0000A044, 1, 0)
         + struct.pack("<IHH", 0x0000A046, 0, 0))
-    add("cal_read_resp", "CAL_READ_RESP：read_seq=42 的 3 个 value_bits",
+    add("cal_read_resp", "CAL_READ_RESP: 3 value_bits for read_seq=42",
         0x92, 0x0007,
         struct.pack("<IBBH", 42, 3, 0, 0)
         + struct.pack("<3I",
@@ -218,68 +219,64 @@ def build_cases():
 
     # ---- 4.5 DAQ_CTRL / DAQ_BIND ----
     add("daq_ctrl_capture",
-        "DAQ_CTRL：Capture 入口进入 CAPTURE_ARMED，触发源=通道槽位 1 上升沿过 2.5，"
-        "hysteresis=0.05，pre-trigger 30%，prescaler=1，record=1000 pts",
+        "DAQ_CTRL: enter CAPTURE_ARMED, trigger source slot 1 rising across 2.5, hysteresis 0.05, pre-trigger 30%, prescaler 1, record 1000 pts",
         0x20, 0x0008,
         struct.pack("<HHffHHHH", 2, 1, 2.5, 0.05, 0, 30, 1, 1000))
     add("daq_ctrl_stream",
-        "DAQ_CTRL：Stream 入口连续流，trigger 与 record_points 字段被忽略，prescaler=1",
+        "DAQ_CTRL: enter STREAM, trigger and record_points ignored, prescaler 1",
         0x20, 0x000D,
         struct.pack("<HHffHHHH", 1, 0, 0.0, 0.0, 0, 0, 1, 0))
     add("daq_bind_2ch",
-        "DAQ_BIND：绑定 2 通道（0xA044=I16 原生 2 octets；"
-        "0xC120=F32 原生 4 octets 无损——地址来自枚举后的描述符表）",
+        "DAQ_BIND: bind 2 channels: 0xA044 I16 native 2 octets, 0xC120 F32 native 4 octets; addresses came from ENUM",
         0x22, 0x000C,
         struct.pack("<BB", 2, 0)
-        + struct.pack("<IHH", 0x0000A044, 0, 0)    # I16 源
+        + struct.pack("<IHH", 0x0000A044, 0, 0)    # I16 source
         + struct.pack("<IHH", 0x0000C120, 4, 0))   # F32 source from ENUM
-    add("ack_daq_bind", "ACK(DAQ_BIND)：OK，data=bind_seq=3",
+    add("ack_daq_bind", "ACK(DAQ_BIND): OK, data=bind_seq=3",
         0xA2, 0x000C, struct.pack("<BBHI", 0, 0x22, 0, 3))
     add("ack_daq_bind_badstate",
-        "ACK(DAQ_BIND) 负例语义：scope 非 OFF → BAD_STATE（须先 DAQ_CTRL(OFF)）",
+        "ACK(DAQ_BIND) negative semantics: scope not OFF gives BAD_STATE; send DAQ_CTRL(OFF) first",
         0xA2, 0x000D, struct.pack("<BBHI", 3, 0x22, 0, 4))
 
     # ---- 4.6 BLOCK ----
-    add("block_req", "BLOCK_REQ：最多取 2 块", 0x21, 0x0009,
+    add("block_req", "BLOCK_REQ: request at most 2 blocks", 0x21, 0x0009,
         struct.pack("<BB", 2, 0))
     add("block_data_1blk",
-        "BLOCK_DATA：1 块（N=4×M=2 全 I16，stride=4，样本含 0 与负值"
-        "——COBS 含零路径覆盖）",
+        "BLOCK_DATA: 1 block, N=4, M=2, all I16, stride=4, samples include zero and negative values to cover COBS zero paths",
         0xA1, 0x0009,
         struct.pack("<BBBBHHI", 1, 1, 0, 0, 0, 5, 0)
         # count1, STREAM, overrun0, remain5, trigger_tick0
         + block(1000, 17, 0, 3, (0, 0),
                 [[0, 100], [-100, 0], [200, -200], [0, 300]]))
     add("block_data_mixed",
-        "BLOCK_DATA：1 块混合宽度（N=2，通道=[F32, I16]，stride=6——"
-        "钉死原生宽度交错布局：每 tick 内 F32 4 octets 后接 I16 2 octets）",
+        "BLOCK_DATA: 1 mixed-width block, N=2, channels=[F32,I16], stride=6, tick-major native layout F32 then I16",
         0xA1, 0x000E,
         struct.pack("<BBBBHHI", 1, 1, 0, 0, 0, 0, 0)
         # count1, STREAM, trigger_tick0
         + block(2000, 5, 0, 2, (4, 0),
                 [[1.5, -7], [-0.25, 32767]]))
     add("block_data_capture_frozen",
-        "BLOCK_DATA：Capture Frozen 前缀带 trigger_tick，block 仍为原生布局",
+        "BLOCK_DATA: Capture Frozen prefix includes trigger_tick; block remains native layout",
         0xA1, 0x000F,
         struct.pack("<BBBBHHI", 1, 4, 0, 0, 0, 0, 1234)
         + block(1200, 9, 0, 2, (4,),
                 [[-0.5], [0.0], [0.5]]))
     add("block_data_empty",
-        "BLOCK_DATA 边界：count=0（环空，合法响应）",
+        "BLOCK_DATA boundary: count=0, ring empty, legal response",
         0xA1, 0x000A,
         struct.pack("<BBBBHHI", 0, 1, 0, 0, 0, 0, 0))
 
     # ---- 4.7 CMD ----
-    add("cmd_app_start", "CMD：APP_START", 0x30, 0x000B,
+    add("cmd_app_start", "CMD: APP_START", 0x30, 0x000B,
         struct.pack("<HHI", 1, 0, 0))
-    add("ack_cmd_busy", "ACK(CMD)：mailbox 忙 → BUSY", 0xB0, 0x000B,
+    add("ack_cmd_busy", "ACK(CMD): mailbox busy gives BUSY", 0xB0, 0x000B,
         struct.pack("<BBHI", 2, 0x30, 0, 0))
 
     return cases
 
 
 # ---------------------------------------------------------------------------
-# 文件渲染
+# File rendering.
 # ---------------------------------------------------------------------------
 def hexstr(b: bytes) -> str:
     return b.hex()
@@ -290,8 +287,8 @@ def render(name: str, desc: str, raw: bytes, corrupt_note: str = "") -> str:
     lines = [
         f"# vector: {name}",
         f"# {desc}",
-        "# raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)",
-        "# wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）",
+        "# raw  = frame before COBS (ver|type|flags|seq|len|payload|crc32c, all LE)",
+        "# wire = COBS(raw) + 0x00 delimiter, the actual SCI-link octets",
     ]
     if corrupt_note:
         lines.append(f"# {corrupt_note}")
@@ -302,19 +299,19 @@ def render(name: str, desc: str, raw: bytes, corrupt_note: str = "") -> str:
 def generate() -> dict:
     files = {}
     for name, desc, raw in build_cases():
-        # 自检：每个用例 wire→raw 往返 + CRC 复核
+        # Self-check: each case round-trips wire->raw and CRC verifies.
         assert cobs_decode(wire_frame(raw)[:-1]) == raw
         body, crc = raw[:-4], struct.unpack("<I", raw[-4:])[0]
         assert crc32c(body) == crc
         files[f"{name}.txt"] = render(name, desc, raw)
 
-    # 负例：CRC 末 octet 翻转（解码器必须静默丢弃，spec §3.1）
+    # Negative case: flip the last CRC octet. Decoders must silently discard it.
     good = raw_frame(0x02, 0x00FF, b"")
     bad = good[:-1] + bytes([good[-1] ^ 0xFF])
     files["neg_bad_crc.txt"] = render(
         "neg_bad_crc",
-        "负例：STATUS_REQ 帧 CRC 末 octet 翻转——解码器必须静默丢弃，不回 NAK",
-        bad, corrupt_note="本帧 CRC 故意损坏，wire 行仍按损坏后内容编码")
+        "Negative case: STATUS_REQ frame has its last CRC octet flipped; decoder must silently discard and send no NAK",
+        bad, corrupt_note="CRC is intentionally corrupted; wire is encoded from the corrupted raw frame")
     return files
 
 
@@ -341,7 +338,7 @@ def main() -> int:
     VECTORS_DIR.mkdir(parents=True, exist_ok=True)
     for fname, content in files.items():
         (VECTORS_DIR / fname).write_text(content, encoding="utf-8", newline="\n")
-    print(f"已生成 {len(files)} 个 vectors → {VECTORS_DIR}")
+    print(f"Generated {len(files)} vectors -> {VECTORS_DIR}")
     return 0
 
 

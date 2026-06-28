@@ -22,7 +22,7 @@
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Design invariant: **everything above the message layer is transport-agnostic**. Swapping the physical layer only swaps the frame adapter (the entire migration of Phase 3.5 → 6); the messages and shared interfaces (`contracts/*.h`) don't move a bit.
+Design invariant: **everything above the message layer is transport-agnostic**. Swapping the physical layer only swaps the frame adapter; the messages and shared interfaces (`contracts/*.h`) don't move a bit.
 
 The service semantics keep the generic vocabulary CAL/DAQ/prescaler from XCP (ASAM MCD-1), but Viewer2000 exposes two Scope entries: Stream = continuous block flow, Capture = device-side trigger-freeze window. The two reuse the same channel binding, ring, and block format; the firmware protocol no longer exposes the XCP event-channel / group concept.
 
@@ -32,9 +32,9 @@ The service semantics keep the generic vocabulary CAL/DAQ/prescaler from XCP (AS
 - Multi-octet integers are always **little-endian (LE)**; `f32` = the LE bit pattern of IEEE-754 single precision.
 - Strings = ASCII fixed-length, NUL-padded (NUL termination not guaranteed).
 - In the offset tables, `off:sz` is in octets.
-- Master/slave model: **the host is the sole initiator** (request-response), the firmware has no spontaneous frames. This is isomorphic to EtherCAT's master polling model — what Phase 3.5 validates is the semantics of Phase 6.
+- Master/slave model: **the host is the sole initiator** (request-response), the firmware has no spontaneous frames. This is isomorphic to EtherCAT's master polling model; the SCI transport validates the same service semantics used by the later EtherCAT transport.
 - The `value_bits` (parameter value bit pattern) convention is in `v2k_common.h`: F32 native bit pattern, I16 sign-extended / U16 zero-extended to 32 bit.
-- **The universal key for variable addressing = `(addr, type)`** (CPU1 data-space word address + type code). All addresses come from one source the host enumerates over the wire: **the descriptor table**, which holds the platform quantities (registered by L0/L1) plus the user's application variables (**baked into the table at build time from the firmware DWARF — Phase 4.5**; struct members / array elements expanded into named scalar entries; pairing guarded by build_hash). The names therefore travel with the device — the host needs no `.out`. Users/students write plain C: no registration code, no name strings, no mandated declaration style.
+- **The universal key for variable addressing = `(addr, type)`** (CPU1 data-space word address + type code). All addresses come from one source the host enumerates over the wire: **the descriptor table**, which holds the platform quantities (registered by L0/L1) plus the user's application variables (**baked into the table at build time from the firmware DWARF**; struct members / array elements expanded into named scalar entries; pairing guarded by build_hash). The names therefore travel with the device — the host needs no `.out`. Users/students write plain C: no registration code, no name strings, no mandated declaration style.
 - **The on-wire value is the real value**: the protocol carries no `min/max/scale/offset` display or guard-rail metadata. Both the DAQ block and the CAL value interpret the bit pattern by the variable's native type; the firmware does no quantization, no conversion, no parameter range clamping or range rejection.
 
 ## 3. Frame adapter
@@ -64,7 +64,7 @@ On-wire form: COBS(raw frame) + 0x00 delimiter
 - **Decoder discard rule**: COBS decode failure / `ver_magic` mismatch / length mismatch / CRC mismatch → silently drop the whole frame (a corrupt frame's content is untrustworthy, **no NAK**). Reliability is ensured by the host's timeout resend (all requests idempotent, see §5.4).
 - The frame `seq` and the block header's `block_seq` (v2k_scope.h) have different jobs and **must not be merged**: the former handles link-layer request-response pairing and resend dedup; the latter handles data-stream dropped-block detection, and a dropped block isn't refilled by the link layer (rule 1), the host draws a gap.
 
-### 3.2 EtherCAT mapping plan (executed in Phase 6, principle fixed here)
+### 3.2 EtherCAT mapping plan
 
 | This protocol's element | EtherCAT carrier | Note |
 |---|---|---|
@@ -92,7 +92,7 @@ The timestamp is always the ISR tick in the block header, unrelated to the Ether
 | 0x21 | BLOCK_REQ | H→F | 2 | 0xA1 BLOCK_DATA |
 | 0x22 | DAQ_BIND | H→F | 2+8k | 0xA2 ACK (data=bind_seq) |
 | 0x30 | CMD | H→F | 8 | 0xB0 ACK (data=ack_seq) |
-| 0x60–0x6F | (reserved) firmware update | — | — | finalized in Phase 6+ |
+| 0x60–0x6F | (reserved) firmware update | — | — | finalized with the mature high-bandwidth transport |
 | 0x70 | (reserved) LOG pull | — | — | CPU2 diagnostic log |
 
 Convention: response code = request code | 0x80. A request with no typed response uniformly returns the **generic ACK**:
@@ -167,12 +167,12 @@ Request payload empty. Response 84 octets; doubles as the link heartbeat (host p
 38  2  cmd_result     V2K_CMDR_* (corresponding to cmd_ack_seq)
 40  2  reserved
 42  4  prof_seq       runtime-load snapshot sequence, sampled before the profiler fields
-46  4  cycle_budget   V2K_EPWMCLK_HZ / V2K_ISR_HZ
+46  4  cycle_budget   V2K_CPUTIMER_HZ / V2K_ISR_HZ
 50  4  load_avg       mean ADC/EOC latency + ISR cycles in the completed one-second window
 54  4  load_peak      peak ADC/EOC latency + ISR cycles in the completed one-second window
 58  4  ctrl_at_peak   user control() body cycles on the peak tick
 62  4  scope_at_peak  scope epilogue cycles on the peak tick
-66  2  lat_at_peak    ADC/EOC entry latency on the peak tick
+66  2  lat_at_peak    ADC/EOC entry latency on the peak tick, in CPUTIMER cycles
 68  4  peak_tick      hidden bring-up correlation tick for the peak record
 72  4  budget_violations  lifetime ISR budget violations
 76  4  isr_overflows  lifetime ADC interrupt overflows
@@ -191,12 +191,12 @@ System-command codes are append-only for platform commands:
 System-command results are append-only: `0=OK`, `1=BAD_CMD`,
 `2=BAD_STATE`, `3=NOT_READY` (power-stage readiness failed), and
 `4=START_FAILED` (user-state restore or setup preparation failed). Detailed
-diagnostics are enumerated Variables: `start_block` for power-stage/DRV
-readiness and `user_reset_err` for user-state restoration.
+diagnostics are enumerated Variables: `start_block` for board-owned
+power-stage preconditions and `user_reset_err` for user-state restoration.
 
-Fault codes are append-only: `0=NONE`, `1=TZ1_EXT` (DRV8323RS nFAULT in the
-Phase 5 power-stage configuration), and `2=OVERCURRENT` (CMPSS or ADC PPB
-current-window hardware trip). `start_block` bit `0x0020` means the current
+Fault codes are append-only: `0=NONE`, `1=TZ1_EXT` (external trip-zone source),
+and `2=OVERCURRENT` (CMPSS or ADC PPB current-window hardware trip).
+`start_block` bit `0x0020` means the current
 protection route failed register read-back, a current sample was outside its
 startup window, or DCAEVT1 asserted while START attempted to release OST.
 Detailed current-source bits are available through the enumerated
@@ -204,7 +204,7 @@ Detailed current-source bits are available through the enumerated
 
 ### 4.3 ENUM (0x03 / 0x83)
 
-The enumeration object = the descriptor table = the platform quantities L1/L0 register (physical quantities/duty/state/platform parameters) plus the user's application variables baked in at build time from the firmware DWARF (Phase 4.5, §2 convention) — so a host with no `.out` still enumerates everything by name.
+The enumeration object = the descriptor table = the platform quantities L1/L0 register (physical quantities/duty/state/platform parameters) plus the user's application variables baked in at build time from the firmware DWARF, so a host with no `.out` still enumerates everything by name.
 
 Request (4 octets): `{0:2 start_idx, 2:1 max_count(≤8), 3:1 reserved}`
 Response (6 + 28×count octets):
@@ -317,7 +317,7 @@ block = the scope-plane memory layout on the wire verbatim (**zero re-encoding o
 
 The host detects dropped blocks by `block_seq` jumps → draws a gap, **there is no retransmission** (rule 1).
 
-Bandwidth reference (ISR period 20–100 kHz TBD): 20kHz×8ch×f32 = 640 KB/s; 100kHz×8ch×f32 = 3.2 MB/s — both within EtherCAT practical throughput, the physical-layer conclusion unchanged. The EtherCAT-tier N is fixed in Phase 6 by the single-frame process-data ceiling (~1486 octets) (f32 8ch: on the order of N=20×2 blocks or N=40×1 block).
+Bandwidth reference (ISR period 20-100 kHz TBD): 20 kHz x 8 ch x f32 = 640 KB/s; 100 kHz x 8 ch x f32 = 3.2 MB/s. Both are within EtherCAT practical throughput, so the physical-layer conclusion is unchanged. The EtherCAT-tier N is fixed by the single-frame process-data ceiling, about 1486 octets.
 
 ### 4.7 CMD (0x30)
 
@@ -341,9 +341,9 @@ host                                                     firmware(CPU2)
  │ (then periodic STATUS polling, suggested 2–10 Hz)         │
 ```
 
-The host caches the descriptor table, keyed by `build_hash`. The Phase 4.5 baker computes this value from the final ELF with the patch section normalized, plus the generated descriptor records. It therefore changes when linked code, addresses, or the baked variable set changes, including dirty-tree builds. At any time (in HELLO or STATUS), detecting a `build_hash` change → **invalidate the entire cache and re-enumerate**. Prevents reading new firmware with an old table.
+The host caches the descriptor table, keyed by `build_hash`. The descriptor baker computes this value from the final ELF with the patch section normalized, plus the generated descriptor records. It therefore changes when linked code, addresses, or the baked variable set changes, including dirty-tree builds. At any time (in HELLO or STATUS), detecting a `build_hash` change means **invalidate the entire cache and re-enumerate**. This prevents reading new firmware with an old table.
 
-User application-variable discovery (build-time baking, Phase 4.5): a build tool reads the firmware `.out` DWARF and bakes each user variable's `name→addr→type` into the descriptor table (struct members / array elements expanded into named scalar entries). The host enumerates them over ENUM like any platform quantity — no `.out` on the host, no stale-ELF risk (the addresses come from the same build that is flashed; build_hash still guards the host cache). The student writes plain C.
+User application-variable discovery: a build tool reads the firmware `.out` DWARF and bakes each user variable's `name→addr→type` into the descriptor table (struct members / array elements expanded into named scalar entries). The host enumerates them over ENUM like any platform quantity — no `.out` on the host, no stale-ELF risk (the addresses come from the same build that is flashed; build_hash still guards the host cache). The student writes plain C.
 
 ### 5.2 Parameter transaction (two-stage + async reconcile)
 
@@ -363,7 +363,7 @@ Key points: within a batch **all valid or all rejected** (takes effect on the sa
 
 ### 5.3 Scope flow
 
-Channel selection (before any mode starts): `DAQ_CTRL(OFF)` → `DAQ_BIND(channel list)` → only after ACK(OK) may you start. (Phase 3 wrote a boot default binding of the first 8 platform observables; Phase 4 removes it — binding is on-demand.)
+Channel selection (before any mode starts): `DAQ_CTRL(OFF)` -> `DAQ_BIND(channel list)` -> only after ACK(OK) may you start. Binding is on-demand; the device does not rely on a boot default binding.
 
 **Stream entry**: `DAQ_CTRL(mode=STREAM, prescaler, record_points=0)` → the host continuously `BLOCK_REQ` polls (a "soft PDO" in the SCI phase; frequency adapts by `remain_hint`). When the ring fills the producer drops new blocks + overrun_cnt++, the flow doesn't stop, and the host draws a gap by block_seq.
 
@@ -417,15 +417,15 @@ The "watch window" of an application variable = after selecting variables, run S
 
 ### ADR-2: variable-discovery architecture (finalized 2026-06-11)
 
-**Decision (revised 2026-06-19, see [Phase 4.5](../docs/phase4.5-symbol-baking.md))**: the descriptor table carries platform quantities (registered by L0/L1) **plus user application variables baked in at build time from the firmware DWARF** — so the names travel with the device and the host needs no `.out`. Discovery is over ENUM; scoping via DAQ_BIND, parameter writing via CAL_WRITE, both keyed by (addr,type).
+**Decision (revised 2026-06-19)**: the descriptor table carries platform quantities (registered by L0/L1) **plus user application variables baked in at build time from the firmware DWARF** — so the names travel with the device and the host needs no `.out`. Discovery is over ENUM; scoping via DAQ_BIND, parameter writing via CAL_WRITE, both keyed by (addr,type).
 
 **Rejected forms**: ① L2-component init self-registration (`pi_init(&pi, "vel")`) and ② user-side stringified registration macros — both force a second name string or a mandated declaration style; the C symbol is the only acceptable name source. ③ **Host-side runtime `.out`/DWARF parsing** (the original 2026-06-11 plan) — rejected 2026-06-19 because it ties Scope2000 to the project directory and risks a stale/wrong ELF writing to the wrong address. The C symbol is still the only name source, but it is harvested **at build time** and baked into the device.
 
-**Cost and countermeasure**: the Phase 4.5 build tool runs TI `ofd2000 --xml --dwarf` on the firmware `.out` and bakes a compact `name→addr→type` table into the reserved image blob; the `.out`-to-device pairing is automatic (same build) and build_hash guards the host cache. The protocol carries no `min/max/scale/offset`: the value itself must already be the real quantity to display, log, and write back. In exchange: zero registration code and zero naming burden for students, any supported struct member / array element observable, fully runtime channel selection (no reflash), and **names that travel with the device — no `.out` on the host**.
+**Cost and countermeasure**: the descriptor build tool runs TI `ofd2000 --xml --dwarf` on the firmware `.out` and bakes a compact `name→addr→type` table into the reserved image blob; the `.out`-to-device pairing is automatic (same build) and build_hash guards the host cache. The protocol carries no `min/max/scale/offset`: the value itself must already be the real quantity to display, log, and write back. In exchange: zero registration code and zero naming burden for students, any supported struct member / array element observable, fully runtime channel selection (no reflash), and **names that travel with the device — no `.out` on the host**.
 
-## Appendix B: Scope2000 `DataSource` boundary (Phase 3.5)
+## Appendix B: Scope2000 `DataSource` Boundary
 
-Scope2000's native implementation is `V2kSource`, internally split strictly into three layers: service semantics, message codec, and byte-stream transport. The Phase 3.5 transport = SCI; when adding the EtherCAT transport in Phase 6, the GUI data model and service commands don't change.
+Scope2000's native implementation is `V2kSource`, internally split strictly into three layers: service semantics, message codec, and byte-stream transport. SCI is the initial byte-stream transport; when adding the EtherCAT transport, the GUI data model and service commands do not change.
 
 ```rust
 pub enum SourceCommand {

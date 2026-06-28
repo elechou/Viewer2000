@@ -1,6 +1,6 @@
 # vector: block_req
-# BLOCK_REQ：最多取 2 块
-# raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
-# wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
+# BLOCK_REQ: request at most 2 blocks
+# raw  = frame before COBS (ver|type|flags|seq|len|payload|crc32c, all LE)
+# wire = COBS(raw) + 0x00 delimiter, the actual SCI-link octets
 raw: 5721000900020002003c74648b
 wire: 035721020902020202053c74648b00

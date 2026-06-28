@@ -21,7 +21,7 @@
 // Channel membership is pushed by the host at runtime via DAQ_BIND
 // (v2k_scope_bind_t); a channel = an (addr, type) pair:
 //   * addr source = the descriptor table (platform quantities + user variables
-//     baked in from DWARF at Phase 4.5 build time); the firmware neither
+//     baked in from DWARF at build time); the firmware neither
 //     distinguishes nor needs to "recognize" them;
 //   * samples are copied losslessly at native width: I16/U16 take 2 octets,
 //     I32/U32/F32 take 4 octets (the bit pattern goes on the wire as-is; the

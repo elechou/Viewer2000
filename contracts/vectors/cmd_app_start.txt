@@ -1,6 +1,6 @@
 # vector: cmd_app_start
-# CMD：APP_START
-# raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
-# wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
+# CMD: APP_START
+# raw  = frame before COBS (ver|type|flags|seq|len|payload|crc32c, all LE)
+# wire = COBS(raw) + 0x00 delimiter, the actual SCI-link octets
 raw: 5730000b00080001000000000000000e6f54b7
 wire: 035730020b02080201010101010101050e6f54b700

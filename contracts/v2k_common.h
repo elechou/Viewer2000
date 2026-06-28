@@ -1,28 +1,34 @@
 //=============================================================================
-// v2k_common.h — Viewer2000 共享接口基础定义
+// v2k_common.h - Viewer2000 shared-interface base definitions
 //
-// 本文件与 contracts/ 下其余头文件构成四个共享内存接口的唯一基准，
-// 必须同时被以下三方编译/理解：
+// This file and the other headers under contracts/ are the only authority for
+// the four shared-memory interfaces. They must be compiled or understood by:
 //   1. CPU1 (cl2000, C28x, CHAR_BIT=16)
-//   2. CPU2 (cl2000, 同 ISA, 共享 struct 无 ABI 问题)
-//   3. PC 端单元测试 (gcc/clang, CHAR_BIT=8) —— 仅用于序列化器测试，
-//      PC 不直接访问片上内存布局，跨平台只需"线上格式"一致。
+//   2. CPU2 (cl2000, same ISA, shared structs have no ABI mismatch)
+//   3. PC-side unit tests (gcc/clang, CHAR_BIT=8). These are serializer tests;
+//      the PC does not directly access on-chip memory layout. Only the on-wire
+//      format must match across platforms.
 //
-// ---- struct 定义规则（保证三方读出同一布局）----
-// 1. 共享 struct 只允许下列成员类型：
-//      int16_t / uint16_t / int32_t / uint32_t / float (32-bit) / char[]（仅限名字）
-//    禁止: uint8_t（C28x 上不存在）、uint64_t/double（两平台对齐规则不同）、
-//          位域、enum 直接做成员（宽度由实现定义，用 uint16_t + #define 代替）、指针。
-// 2. 32-bit 成员必须落在 32-bit 边界上（按声明顺序手工排布，禁止依赖隐式填充）。
-// 3. 字符串字段：C28x 上每个 16-bit char 存一个 ASCII 字符（自然 C 字符串），
-//    线上序列化为每字符 1 octet。因此含 char[] 的 struct 在两平台 bit 尺寸不同，
-//    这是预期行为——内存布局只需 CPU1/CPU2 一致，线上布局由 wire-spec 钉死。
-// 4. 序列化禁止 struct memcpy（CLAUDE.md 明文规定），必须显式逐字段序列化。
+// ---- Struct definition rules ----
+// 1. Shared structs may contain only these member types:
+//      int16_t / uint16_t / int32_t / uint32_t / float (32-bit) / char[] (names only)
+//    Forbidden: uint8_t (not available on C28x), uint64_t/double (different
+//    alignment rules across platforms), bitfields, enum members directly
+//    (width is implementation-defined; use uint16_t + #define), and pointers.
+// 2. 32-bit members must land on 32-bit boundaries. Arrange fields manually by
+//    declaration order; do not rely on implicit padding.
+// 3. String fields: on C28x, each 16-bit char stores one ASCII character as a
+//    natural C string. The wire serializer emits one octet per character.
+//    Structs containing char[] therefore have different bit sizes on C28x and
+//    PC. That is expected: memory layout only has to match between CPU1/CPU2,
+//    while the on-wire layout is fixed by docs/wire-spec.md.
+// 4. Serialization must never memcpy a struct. Serialize every field explicitly.
 //
-// ---- 单位约定 ----
-// * "word"  = C28x 16-bit 可寻址单元（片上地址、sizeof 的单位）
-// * "octet" = 线上 8-bit 字节（wire-spec、SCI/EtherCAT 载荷的单位）
-// 两者出现在注释/字段名中时必须显式写明，禁止裸用 "byte"。
+// ---- Unit convention ----
+// * "word"  = C28x 16-bit addressable unit (on-chip addresses and sizeof unit)
+// * "octet" = on-wire 8-bit byte (wire spec and SCI/EtherCAT payload unit)
+// Use the explicit word or octet term in comments and field names. Avoid bare
+// "byte" where the width would be ambiguous.
 //=============================================================================
 #ifndef V2K_COMMON_H
 #define V2K_COMMON_H
@@ -31,7 +37,7 @@
 #include <limits.h>
 
 //-----------------------------------------------------------------------------
-// 平台检测
+// Platform detection
 //-----------------------------------------------------------------------------
 #if defined(__TMS320C28XX__)
 #define V2K_PLATFORM_C28X 1
@@ -40,40 +46,45 @@
 #endif
 
 //-----------------------------------------------------------------------------
-// 静态断言（C99 兼容：负数组尺寸技巧；cl2000 与 gcc/clang 均可用）
-// 用 extern 声明而非 typedef：不同头文件撞 __LINE__ 时，同名同类型的
-// 重复 extern 声明在 C99 合法（typedef 重定义则非法）；不占存储。
+// Static assert, C99-compatible negative-array-size trick. Works with cl2000
+// and gcc/clang. Use extern declarations instead of typedefs: if different
+// headers collide on __LINE__, repeated same-name same-type extern declarations
+// are legal C99 and allocate no storage, while typedef redefinition is illegal.
 //-----------------------------------------------------------------------------
 #define V2K_CONCAT_(a, b) a##b
 #define V2K_CONCAT(a, b)  V2K_CONCAT_(a, b)
 #define V2K_STATIC_ASSERT(cond) \
     extern char V2K_CONCAT(v2k_static_assert_, __LINE__)[(cond) ? 1 : -1]
 
-// 跨平台尺寸断言：以 bit 为单位表达。
-// C28x: sizeof 计 16-bit word，CHAR_BIT=16；PC: sizeof 计 octet，CHAR_BIT=8。
-// sizeof(t) * CHAR_BIT 在两边都得到 bit 数，因此同一断言双平台通用。
-// 含 char[] 的 struct 用 V2K_NAME_BITS(n) 表达名字部分（随平台变化）。
+// Cross-platform size asserts expressed in bits.
+// C28x: sizeof counts 16-bit words, CHAR_BIT=16.
+// PC: sizeof counts octets, CHAR_BIT=8.
+// sizeof(t) * CHAR_BIT gives the bit count on both platforms, so one assert can
+// cover both. Structs with char[] use V2K_NAME_BITS(n) for the name field,
+// because that part varies by platform.
 #define V2K_SIZEOF_BITS(t)        ((uint32_t)sizeof(t) * (uint32_t)CHAR_BIT)
 #define V2K_ASSERT_SIZE_BITS(t, bits) V2K_STATIC_ASSERT(V2K_SIZEOF_BITS(t) == (bits))
 #define V2K_NAME_BITS(n)          ((uint32_t)(n) * (uint32_t)CHAR_BIT)
 
-// 基础类型宽度自检（C28x 上 int16_t == char 宽度 == 16 bit）
+// Base type width self-checks. On C28x, int16_t and char are both 16 bits.
 V2K_ASSERT_SIZE_BITS(uint16_t, 16);
 V2K_ASSERT_SIZE_BITS(uint32_t, 32);
 V2K_ASSERT_SIZE_BITS(float, 32);
 
 //-----------------------------------------------------------------------------
-// 协议/接口版本
+// Protocol and interface versions
 //-----------------------------------------------------------------------------
-// 线上协议版本：帧头 ver_magic 低 nibble。高 nibble 固定 0x5 作 resync 校验。
-// 版本语义：不兼容的帧格式/消息布局变更才允许 +1（描述符表内容变化不算——
-// 那由 build_hash 强制重枚举机制覆盖）。
+// Wire protocol version: low nibble of frame header ver_magic. The high nibble
+// is fixed at 0x5 for resync checking. Increment only for incompatible frame or
+// message layout changes. Descriptor-table content changes are covered by
+// build_hash-triggered re-enumeration.
 #define V2K_WIRE_VER        0x7u
 #define V2K_WIRE_VER_MAGIC  (0x50u | V2K_WIRE_VER)   /* = 0x57, first frame octet */
 #define V2K_WIRE_MAX_PAYLOAD 1024u
 
-// 共享内存布局版本：任何共享 struct 字段变更必须 +1（CPU1/CPU2 固件不同期
-// 烧录时的握手自检用，见 v2k_command.h 握手流程）。
+// Shared-memory layout version. Increment for any shared-struct field change.
+// CPU1/CPU2 handshake checks this when firmware images are flashed out of sync.
+// See the handshake flow in v2k_command.h.
 #define V2K_CONTRACT_VER    13u
 
 //-----------------------------------------------------------------------------
@@ -85,7 +96,7 @@ V2K_ASSERT_SIZE_BITS(float, 32);
 #define V2K_MCU_MODEL_F28379D  2u
 
 //-----------------------------------------------------------------------------
-// 设备能力位（HELLO capabilities；只追加，不复用）
+// Device capability bits (HELLO capabilities). Append only; never reuse bits.
 //-----------------------------------------------------------------------------
 #define V2K_CAP_ENUM          (1uL << 0)
 #define V2K_CAP_CAL           (1uL << 1)
@@ -101,19 +112,22 @@ V2K_ASSERT_SIZE_BITS(float, 32);
      V2K_CAP_SYSTEM_CMD | V2K_CAP_NATIVE_BLOCK)
 
 //-----------------------------------------------------------------------------
-// 全平台公共类型
+// Shared platform types
 //-----------------------------------------------------------------------------
-// ISR tick：全平台唯一时间，由 CPU1 控制 ISR 递增（基本规则 5）。
-// uint32 @ 100 kHz 约 11.9 小时回绕；host 端须按无符号回绕差值处理，
-// 长时间录盘以 block 序号 + 回绕计数重建绝对时间。
+// ISR tick: the platform's sole control time, incremented by the CPU1 control
+// ISR. uint32 wraps after about 11.9 hours at 100 kHz. The host must process
+// unsigned wraparound deltas; long recordings reconstruct absolute time from
+// block sequence plus wrap count.
 typedef uint32_t v2k_tick_t;
 
-// firmware build hash：git 短哈希的 32-bit 截断，链接时注入。
-// host 重连后发现变更 → 强制重新枚举描述符表（见 v2k_descriptor.h）。
+// Firmware build hash: 32-bit truncation injected at link/bake time. If the
+// host sees it change after reconnect, it must force descriptor re-enumeration.
+// See v2k_descriptor.h.
 typedef uint32_t v2k_build_hash_t;
 
 //-----------------------------------------------------------------------------
-// 变量类型码（描述符表 type 字段；对齐 .def/inspector 的最小必要子集）
+// Variable type codes used by descriptor-table type fields. This is the
+// minimum subset shared with the descriptor baker and inspector.
 //-----------------------------------------------------------------------------
 #define V2K_TYPE_I16  0u
 #define V2K_TYPE_U16  1u
@@ -122,15 +136,17 @@ typedef uint32_t v2k_build_hash_t;
 #define V2K_TYPE_F32  4u
 #define V2K_TYPE_COUNT 5u
 
-// 类型的线上宽度（octet）。片上一律按 32-bit 槽位存取（见 value_bits 约定）。
-// 16-bit 类型占用 32-bit 槽位的低半，高半为 0（无符号）或符号扩展（有符号）。
+// On-wire type width in octets. On chip, all values are moved through 32-bit
+// slots. 16-bit types use the low half; the high half is zero for unsigned
+// values and sign-extended for signed values.
 
 //-----------------------------------------------------------------------------
-// value_bits 约定：参数/镜像值统一以 uint32_t 位模式搬运
+// value_bits convention: parameter and mirror values move as uint32_t bit patterns.
 //-----------------------------------------------------------------------------
-// * F32  : float 的 IEEE754 位模式
-// * I32/U32 : 原值位模式
-// * I16  : 符号扩展到 32 bit 后的位模式；U16: 零扩展
-// 写入目标变量时由 CPU1 按描述符 type 截断/转换——CPU2 与 host 不解释位模式。
+// * F32     : IEEE-754 bit pattern of float
+// * I32/U32 : original value bit pattern
+// * I16     : sign-extended to 32 bits; U16 is zero-extended
+// CPU1 truncates/converts when writing the target variable according to the
+// descriptor type. CPU2 and the host do not interpret the bit pattern.
 
 #endif // V2K_COMMON_H

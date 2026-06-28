@@ -1,6 +1,6 @@
 # vector: cal_commit
-# CAL_COMMIT：空 payload
-# raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
-# wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
+# CAL_COMMIT: empty payload
+# raw  = frame before COBS (ver|type|flags|seq|len|payload|crc32c, all LE)
+# wire = COBS(raw) + 0x00 delimiter, the actual SCI-link octets
 raw: 571100060000006d6e4eab
 wire: 03571102060101056d6e4eab00
