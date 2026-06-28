@@ -16,7 +16,7 @@
 #define V2K_RAW_MAX           (7u + V2K_MAX_PAYLOAD + 4u)
 #define V2K_WIRE_MAX          (V2K_RAW_MAX + (V2K_RAW_MAX / 254u) + 2u)
 #define V2K_RX_FRAME_WORDS    256u
-#define V2K_STATUS_PUSH_PERIOD_MS 100uL
+#define V2K_STATUS_PUSH_HZ        10uL
 
 #define V2K_MSG_HELLO         0x01u
 #define V2K_MSG_STATUS        0x02u
@@ -63,7 +63,7 @@ static uint16_t s_have_last_response;
 static uint16_t s_raw[V2K_RAW_MAX];
 static uint16_t s_frozen_state_seq;
 static uint32_t s_cal_staged_commit_seq;
-static uint32_t s_last_status_push_heartbeat;
+static uint32_t s_last_status_push_tick;
 static uint16_t s_push_frame_seq;
 static uint16_t s_drain_active;
 static uint16_t s_drain_start_pending;
@@ -100,19 +100,25 @@ static void v2k_put_u32(uint16_t *buf, uint16_t off, uint32_t value)
     v2k_put_u16(buf, (uint16_t)(off + 2u), (uint16_t)(value >> 16u));
 }
 
+#pragma CODE_SECTION(v2k_crc32c, ".TI.ramfunc")
+static const uint32_t s_crc32c_nibble[16] = {
+    0x00000000uL, 0x105EC76FuL, 0x20BD8EDEuL, 0x30E349B1uL,
+    0x417B1DBCuL, 0x5125DAD3uL, 0x61C69362uL, 0x7198540DuL,
+    0x82F63B78uL, 0x92A8FC17uL, 0xA24BB5A6uL, 0xB21572C9uL,
+    0xC38D26C4uL, 0xD3D3E1ABuL, 0xE330A81AuL, 0xF36E6F75uL,
+};
+
 static uint32_t v2k_crc32c(const uint16_t *buf, uint16_t len)
 {
     uint16_t i;
-    uint16_t bit;
     uint32_t crc = 0xFFFFFFFFuL;
     for (i = 0u; i < len; i++)
     {
-        crc ^= (uint32_t)(buf[i] & 0xFFu);
-        for (bit = 0u; bit < 8u; bit++)
-        {
-            crc = (crc >> 1u) ^
-                  ((crc & 1u) ? 0x82F63B78uL : 0uL);
-        }
+        uint16_t octet = buf[i] & 0xFFu;
+        crc = (crc >> 4u) ^
+              s_crc32c_nibble[(uint16_t)((crc ^ octet) & 0x0Fu)];
+        crc = (crc >> 4u) ^
+              s_crc32c_nibble[(uint16_t)((crc ^ (octet >> 4u)) & 0x0Fu)];
     }
     return crc ^ 0xFFFFFFFFuL;
 }
@@ -145,6 +151,7 @@ static uint16_t v2k_cobs_decode_in_place(uint16_t *buf, uint16_t len)
     return write;
 }
 
+#pragma CODE_SECTION(v2k_cobs_encode, ".TI.ramfunc")
 static uint16_t v2k_cobs_encode(const uint16_t *src, uint16_t len,
                                 uint16_t *dst, uint16_t cap)
 {
@@ -364,18 +371,21 @@ static void v2k_handle_status(uint16_t seq)
 
 static uint16_t v2k_start_status_push(void)
 {
-    uint32_t heartbeat = g_v2k_msg_2to1.cpu2_status.heartbeat;
+    const volatile v2k_cpu1_status_t *cpu1 =
+        &V2K_MSG_1TO2_RO->cpu1_status;
+    uint32_t tick = cpu1->tick;
+    uint32_t period_ticks = cpu1->tick_hz / V2K_STATUS_PUSH_HZ;
     uint16_t off;
 
-    if ((uint32_t)(heartbeat - s_last_status_push_heartbeat) <
-        V2K_STATUS_PUSH_PERIOD_MS)
+    if ((period_ticks == 0uL) ||
+        ((uint32_t)(tick - s_last_status_push_tick) < period_ticks))
     {
         return 0u;
     }
     off = v2k_frame_begin(V2K_MSG_STATUS_PUSH, 0u);
     if (v2k_start_push_frame(v2k_write_status_payload(off)))
     {
-        s_last_status_push_heartbeat = heartbeat;
+        s_last_status_push_tick = tick;
         return 1u;
     }
     return 0u;
@@ -705,6 +715,7 @@ static uint16_t v2k_scope_remaining(
     return (uint16_t)(end - cons->rd_idx);
 }
 
+#pragma CODE_SECTION(v2k_write_scope_batch_payload, ".TI.ramfunc")
 static uint16_t v2k_write_scope_batch_payload(
     uint16_t off,
     const volatile v2k_scope_prod_t *prod,
@@ -862,6 +873,10 @@ static uint16_t v2k_start_next_push(void)
     {
         return 1u;
     }
+    if (v2k_start_status_push())
+    {
+        return 1u;
+    }
     if (v2k_start_scope_block_push())
     {
         return 1u;
@@ -876,7 +891,7 @@ static uint16_t v2k_start_next_push(void)
             return 1u;
         }
     }
-    return v2k_start_status_push();
+    return 0u;
 }
 
 static void v2k_handle_cmd(uint16_t seq, const uint16_t *payload,

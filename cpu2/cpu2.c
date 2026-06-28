@@ -22,6 +22,15 @@
 #include "v2k_cpu2_board.h"
 #include "v2k_sci_service.h"
 
+#define V2K_CPU2_SERVICE_DELAY_US 20uL
+#define V2K_CPU2_HEARTBEAT_TICKS  (1000uL / V2K_CPU2_SERVICE_DELAY_US)
+#define V2K_CPU2_LED_TOGGLE_TICKS (250000uL / V2K_CPU2_SERVICE_DELAY_US)
+
+V2K_STATIC_ASSERT((1000uL % V2K_CPU2_SERVICE_DELAY_US) == 0uL);
+V2K_STATIC_ASSERT((250000uL % V2K_CPU2_SERVICE_DELAY_US) == 0uL);
+V2K_STATIC_ASSERT(V2K_CPU2_HEARTBEAT_TICKS <= 0xFFFFuL);
+V2K_STATIC_ASSERT(V2K_CPU2_LED_TOGGLE_TICKS <= 0xFFFFuL);
+
 //-----------------------------------------------------------------------------
 // Shared-memory entities. Section -> physical-region mapping is in the CPU2
 // 28p65x_generic_* linker command files.
@@ -41,6 +50,7 @@ uint16_t g_handshake_state;   // 0=sync, 1=descriptor, 2=bad contract, 3=running
 void main(void)
 {
     uint16_t led_count = 0u;
+    uint16_t heartbeat_count = 0u;
 
     v2k_cpu2_board_init_device();
     v2k_cpu2_board_assert_layout(&g_v2k_cpu2_plane, &g_v2k_msg_2to1);
@@ -90,16 +100,20 @@ void main(void)
         v2k_sci_service();
 
         // Local diagnostic heartbeat does not enter control time or scope
-        // timestamps.
-        v2k_cpu2_board_delay_us(100u);
-        led_count++;
-        if ((led_count % 10u) == 0u)
+        // timestamps. Keep the service cadence shorter than the SCI TX FIFO
+        // drain time at 3125000 baud so push frames do not inherit a forced
+        // 100 us gap between FIFO refills.
+        v2k_cpu2_board_delay_us((uint16_t)V2K_CPU2_SERVICE_DELAY_US);
+        heartbeat_count++;
+        if (heartbeat_count >= (uint16_t)V2K_CPU2_HEARTBEAT_TICKS)
         {
+            heartbeat_count = 0u;
             g_v2k_msg_2to1.cpu2_status.heartbeat++;
         }
 
-        // Toggle every 2500 x 100 us, roughly 2 Hz, for visual diagnostics only.
-        if (led_count >= 2500u)
+        // Toggle roughly every 250 ms, for visual diagnostics only.
+        led_count++;
+        if (led_count >= (uint16_t)V2K_CPU2_LED_TOGGLE_TICKS)
         {
             led_count = 0u;
             v2k_cpu2_board_toggle_status_led();
