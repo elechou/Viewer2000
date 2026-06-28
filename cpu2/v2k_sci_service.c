@@ -1,5 +1,5 @@
 //=============================================================================
-// v2k_sci_service.c - Viewer2000 wire v6 over the CPU2 board pipe
+// v2k_sci_service.c - Viewer2000 wire v7 over the CPU2 board pipe
 //
 // COBS/CRC, message handling, shared-plane service, and TX all run in the CPU2
 // super-loop. Every on-wire field is serialized explicitly. C28x uint16_t
@@ -252,7 +252,12 @@ static void v2k_handle_hello(uint16_t seq)
     }
     v2k_put_u32(s_raw, (uint16_t)(off + 68u),
                 V2K_CPU1_PLANE_RO->firmware_info.build_time_utc);
-    v2k_response_send(72u);
+    v2k_put_u16(s_raw, (uint16_t)(off + 72u), V2K_MCU_MODEL);
+    v2k_put_u16(s_raw, (uint16_t)(off + 74u), V2K_SCOPE_MAX_CH);
+    v2k_put_u16(s_raw, (uint16_t)(off + 76u), V2K_BLOCK_NTICKS_SCI);
+    v2k_put_u16(s_raw, (uint16_t)(off + 78u), 0u);
+    v2k_put_u32(s_raw, (uint16_t)(off + 80u), V2K_SCOPE_RING_WORDS);
+    v2k_response_send(84u);
 }
 
 static void v2k_handle_status(uint16_t seq)

@@ -46,6 +46,7 @@
 #define V2K_TARGET_MEMMAP_HEADER "../cpu1/board/v2k_board_memmap.h"
 #endif
 
+#include "v2k_common.h"
 #include V2K_TARGET_MEMMAP_HEADER
 
 #ifndef V2K_CPU1_PLANE_BASE
@@ -65,6 +66,9 @@
 #endif
 #ifndef V2K_MSGRAM_WORDS
 #error "Target memmap must define V2K_MSGRAM_WORDS"
+#endif
+#ifndef V2K_MCU_MODEL
+#error "Target memmap must define V2K_MCU_MODEL"
 #endif
 
 // Logical plane sizes, in C28x 16-bit words. A downstream target header may

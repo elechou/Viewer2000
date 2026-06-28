@@ -183,33 +183,29 @@ so the retuning stays mostly free:
 
 **Per-board-free — firmware-internal or self-described on the wire:**
 
-- Ring depth, block slot words, ring base, and target shared-RAM placement. The
-  host never sees these; CPU2 owns the drain and the host reads only
-  `overrun_cnt` and `remain_hint`. Tune freely.
+- Ring depth and block cadence are self-described by HELLO v7 as
+  `scope_ring_words` and `scope_block_ticks`, so the host can clamp Capture
+  settings to the active profile. Ring base, block slot words, and target
+  shared-RAM placement remain firmware-internal. Tune freely when HELLO reports
+  the resulting resource facts.
 - Block geometry — `n_ticks` (N), `n_ch` (M), and `stride_octets` — travels in
   every block header (`contracts/v2k_scope.h`), so a block is self-delimiting and
   a different N or channel count parses with no host change.
 - Control rate — HELLO carries `tick_hz`, so a different ISR frequency needs no
   host edit.
 
-**The single desync risk — capacity ceilings the host currently mirrors as
-contract constants:** `V2K_WIRE_MAX_PAYLOAD` (the frame-payload size the host
-sizes its reassembly buffer to) and `V2K_SCOPE_MAX_CH` (max channels per
-binding). These do not travel in HELLO today. The failure is asymmetric: a
-*smaller* board still degrades gracefully (blocks self-delimit; an over-capacity
-`DAQ_BIND` returns `NO_CAPACITY`), and it breaks only when the host assumes a
-*larger* ceiling than the device provides.
+**The remaining desync risk — frame payload ceiling the host still mirrors as a
+contract constant:** `V2K_WIRE_MAX_PAYLOAD` is the frame-payload size the host
+uses for reassembly. The channel ceiling now travels in HELLO v7 as
+`scope_max_ch`, so a profile with a different binding limit can be handled at
+runtime.
 
 The governing rule is therefore **parameters are negotiated, layout is
 versioned**: the block-header and batch-prefix field layout stays pinned to
-`V2K_WIRE_VER`, while sizing limits should be discoverable at runtime. The
-planned step is to advertise `V2K_WIRE_MAX_PAYLOAD` and `V2K_SCOPE_MAX_CH` (and,
-for full self-description, the header/prefix octet counts) as HELLO capability
-fields, so a tight-RAM board reports smaller numbers and the host sizes itself.
-That is a coordinated wire-version bump touching the CPU2 serializer,
-`docs/wire-spec.md`, the golden vectors, and Scope2000 together; until it lands
-these two ceilings are frozen contract constants and a profile must not shrink
-them below what a connected host build assumes.
+`V2K_WIRE_VER`, while sizing limits that affect user choices are reported at
+runtime. Future changes to frame payload size still require a coordinated
+wire-version bump touching the CPU2 serializer, `docs/wire-spec.md`, golden
+vectors, and Scope2000 together.
 
 ## Cleanups required to make the seam airtight
 

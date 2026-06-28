@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""gen_vectors.py — Viewer2000 线上协议 golden test vectors 生成器
+"""Generate Viewer2000 golden test vectors for the wire protocol.
 
-本脚本是 docs/wire-spec.md 的可执行伪码：COBS / CRC-32C / 帧构造 /
-全部 v6 消息的参考实现。生成的 contracts/vectors/*.txt 是协议的
-规范字节样本——固件 C 序列化器与上位机 Rust 解析器各自的 conformance
-test 必须对同一组样本通过。三方不一致时以 vectors 为准（见 spec 文首）。
+This script is executable pseudocode for docs/wire-spec.md: COBS, CRC-32C,
+frame construction, and every v7 message reference sample. The generated
+contracts/vectors/*.txt files are normative byte samples for firmware C
+serializer tests and host Rust parser conformance tests. When implementations
+disagree, the vectors are authoritative and the spec must be corrected.
 
-用法:
-    python gen_vectors.py            # （再）生成 contracts/vectors/
-    python gen_vectors.py --check    # 校验现存样本与本脚本逐字节一致
+Usage:
+    python gen_vectors.py            # regenerate contracts/vectors/
+    python gen_vectors.py --check    # verify existing vectors match this script
 """
 
 import struct
@@ -88,7 +89,7 @@ for _case in (b"", b"\x00\x00", b"\x01" * 300, bytes(range(256))):
 # ---------------------------------------------------------------------------
 # 帧构造（wire-spec §3.1）
 # ---------------------------------------------------------------------------
-VER_MAGIC = 0x56
+VER_MAGIC = 0x57
 
 
 def raw_frame(msg_type: int, seq: int, payload: bytes) -> bytes:
@@ -138,12 +139,13 @@ def build_cases():
         cases.append((name, desc, raw_frame(msg_type, seq, payload)))
 
     # ---- 4.1 HELLO ----
-    add("hello_req", "HELLO_REQ：空 payload", 0x01, 0x0001, b"")
-    add("hello_resp", "HELLO_RESP：版本、build_hash、固件名、tick_hz、能力位、项目名与构建时间",
+    add("hello_req", "HELLO_REQ: empty payload", 0x01, 0x0001, b"")
+    add("hello_resp", "HELLO_RESP: versions, build_hash, firmware name, tick_hz, capabilities, project metadata, MCU model, and Scope resources",
         0x81, 0x0001,
-        struct.pack("<HHIHH16sII32sI", 6, 13, BUILD_HASH, 10, 0,
+        struct.pack("<HHIHH16sII32sIHHHHI", 7, 13, BUILD_HASH, 10, 0,
                     b"viewer2000", 20000, 0x7F,
-                    b"phase4-demo", BUILD_TIME_UTC))
+                    b"phase4-demo", BUILD_TIME_UTC,
+                    1, 16, 10, 0, 0x7000))
 
     # ---- 4.2 STATUS ----
     add("status_req", "STATUS_REQ：空 payload（兼任链路心跳）", 0x02, 0x0002, b"")

@@ -2,5 +2,5 @@
 # BLOCK_REQ：最多取 2 块
 # raw  = COBS 编码前帧 (ver|type|flags|seq|len|payload|crc32c, 全 LE)
 # wire = COBS(raw) + 0x00 定界符（SCI 链路实际字节）
-raw: 56210009000200020074a25a7f
-wire: 0356210209020202020574a25a7f00
+raw: 5721000900020002003c74648b
+wire: 035721020902020202053c74648b00

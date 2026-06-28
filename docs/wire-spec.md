@@ -45,7 +45,7 @@ The service semantics keep the generic vocabulary CAL/DAQ/prescaler from XCP (AS
 Pre-encoding frame ("raw frame", CRC coverage = offset 0 .. 7+n-1):
 
 off  sz  field
-0    1   ver_magic   = 0x56 (high nibble 0x5 fixed magic, low nibble = V2K_WIRE_VER)
+0    1   ver_magic   = 0x57 (high nibble 0x5 fixed magic, low nibble = V2K_WIRE_VER)
 1    1   msg_type    (§4 catalog; response = request | 0x80)
 2    1   flags       = 0x00, reserved
 3    2   seq         host +1 per request (wraps); the response echoes it verbatim, the host pairs by it
@@ -108,7 +108,7 @@ off sz field
 
 ### 4.1 HELLO (0x01 / 0x81)
 
-Request payload empty. Response base prefix 28 octets, the current wire v6 response is 72 octets; new fields are only allowed appended at the tail:
+Request payload empty. The wire v7 response is 84 octets:
 
 ```
 0   2  proto_ver     = V2K_WIRE_VER (host disconnects on mismatch, hinting a firmware/host version mismatch)
@@ -121,6 +121,11 @@ Request payload empty. Response base prefix 28 octets, the current wire v6 respo
 32  4  capabilities  device capability bits
 36  32 project_name  CPU1-baked project name, printable ASCII, NUL-padded; max 32 visible chars
 68  4  build_time_utc CPU1 firmware build time as Unix UTC seconds; human-readable only, not a safety hash
+72  2  mcu_model     public MCU family identifier: 0=unknown, 1=F28P65x, 2=F28379D
+74  2  scope_max_ch  maximum accepted DAQ_BIND channel count for this firmware/profile
+76  2  scope_block_ticks nominal producer block tick count used by Scope capacity calculations
+78  2  reserved      set to 0
+80  4  scope_ring_words C28x 16-bit words in the Stream/Capture scope ring
 ```
 
 `capabilities` (append-only, no reuse):
@@ -135,7 +140,8 @@ Request payload empty. Response base prefix 28 octets, the current wire v6 respo
 | 5 | SYSTEM_CMD | Start / Stop / Clear Fault |
 | 6 | NATIVE_BLOCK | native-bit-width `ScopeBlock` |
 
-An old parser can read only the 28-octet prefix; if a new parser receives a shorter response, the absent tail fields are treated as 0/empty.
+The host rejects shorter HELLO responses because scope capacity and channel-count
+limits are part of the v7 connection contract.
 
 `project_name` is copied from CPU1's CCS/Eclipse `cpu1/.project` `<name>` field as-is, after only the wire-level printable-ASCII/32-character check. If the name is empty it becomes `untitled`. If it is `untitled`, the CPU1 post-link baker emits a build warning but does not fail the build. These HELLO fields are for human identification only. Machine safety and host cache invalidation still use `build_hash`.
 
@@ -271,7 +277,7 @@ Response (8 + 4×count):
 18 2  record_points Capture target sample count; set 0 and ignored in STREAM/OFF
 ```
 
-CPU2 writes cfg and publishes `cfg_seq`, waits for CPU1's `cfg_ack_seq/cfg_result` then returns ACK: OK=config applied; BAD_PARAM=field illegal or record_points exceeds the ring capacity under the current binding; BAD_STATE=the current state doesn't accept this config. The mode can also be re-checked via STATUS's `scope_mode`.
+CPU2 writes cfg and publishes `cfg_seq`, waits for CPU1's `cfg_ack_seq/cfg_result` then returns ACK: OK=config applied; BAD_PARAM=field illegal or record_points exceeds the exact Capture capacity under the current binding; BAD_STATE=the current state doesn't accept this config. The mode can also be re-checked via STATUS's `scope_mode`.
 
 `DAQ_BIND` request (2 + 8k octets) — **select channels at runtime, no reflash**:
 
@@ -362,6 +368,13 @@ Channel selection (before any mode starts): `DAQ_CTRL(OFF)` → `DAQ_BIND(channe
 **Stream entry**: `DAQ_CTRL(mode=STREAM, prescaler, record_points=0)` → the host continuously `BLOCK_REQ` polls (a "soft PDO" in the SCI phase; frequency adapts by `remain_hint`). When the ring fills the producer drops new blocks + overrun_cnt++, the flow doesn't stop, and the host draws a gap by block_seq.
 
 **Capture entry**: under the same channel binding, send `DAQ_CTRL(mode=CAPTURE_ARMED, trig…, pre_trig_pct, prescaler, record_points)` → CPU1 overwrites the ring in the same block format and evaluates the trigger each tick → after a hit it enters CAPTURE_POST to capture the post segment (depth = record_points×(100-pre_trig_pct)%) → CAPTURE_FROZEN (visible in STATUS.scope_mode) → the host `BLOCK_REQ` drains slowly (remain_hint decrements to 0) → the host re-ARMs or switches back to STREAM. The pre-trigger history is naturally preserved by the ring structure; the host reconstructs block order by `start_tick`.
+
+Capture freezes complete block slots plus one guard block so a trigger that
+lands in the middle of a block still contains enough samples for the host to
+trim an exact `record_points` window around `trigger_tick`. Therefore the host's
+maximum submitted record count is `(capacity_blocks - 1) * scope_block_ticks`
+for the active binding, where `capacity_blocks =
+floor_pow2(scope_ring_words / aligned_slot_words)`.
 
 The "watch window" of an application variable = after selecting variables, run STREAM with a larger `prescaler` — it carries tick timestamps and is lossless native bit pattern, replacing independent poll-style monitoring. When you need a per-tick waveform set prescaler to 1; when you need to reduce link pressure increase prescaler, reduce channels, or lower the block frequency.
 

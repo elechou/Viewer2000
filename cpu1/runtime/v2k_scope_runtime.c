@@ -65,6 +65,9 @@ static uint16_t s_bind_seen;
 static volatile uint16_t s_scope_active;
 static volatile uint16_t s_cons_rd_cache;
 
+static uint32_t v2k_capture_target_blocks(uint32_t total,
+                                          uint16_t block_n_ticks);
+
 static uint16_t v2k_addr_in_range(uint32_t addr, uint16_t words,
                                   const uint16_t *start, const uint16_t *end)
 {
@@ -267,8 +270,8 @@ static uint16_t v2k_validate_cfg(const v2k_scope_cfg_t *cfg)
         return V2K_SCOPE_RESULT_NO_CAPACITY;
     }
     if ((cfg->mode_req == V2K_SCOPE_CAPTURE_ARMED) &&
-        ((uint32_t)cfg->record_points >
-         ((uint32_t)capacity * (uint32_t)prod->block_n_ticks)))
+        (v2k_capture_target_blocks(cfg->record_points,
+                                   prod->block_n_ticks) > capacity))
     {
         return V2K_SCOPE_RESULT_BAD_PARAM;
     }
@@ -283,11 +286,12 @@ static uint32_t v2k_capture_post_samples(uint32_t total,
     return (post == 0u) ? 1u : post;
 }
 
-static uint16_t v2k_capture_target_blocks(uint32_t total,
+static uint32_t v2k_capture_target_blocks(uint32_t total,
                                           uint16_t block_n_ticks)
 {
-    return (uint16_t)((total + (uint32_t)block_n_ticks - 1u) /
-                      (uint32_t)block_n_ticks);
+    uint32_t blocks = (total + (uint32_t)block_n_ticks - 1u) /
+                      (uint32_t)block_n_ticks;
+    return blocks + 1u;
 }
 
 static void v2k_prepare_capture_window(v2k_scope_prod_t *prod,
@@ -298,7 +302,7 @@ static void v2k_prepare_capture_window(v2k_scope_prod_t *prod,
     s_scope.capture_total_samples = total;
     s_scope.capture_post_samples = post;
     s_scope.capture_required_pre = total - post;
-    s_scope.capture_target_blocks =
+    s_scope.capture_target_blocks = (uint16_t)
         v2k_capture_target_blocks(total, prod->block_n_ticks);
 }
 
