@@ -2,5 +2,5 @@
 # ACK(CAL_COMMIT): OK, data=commit_seq=8
 # raw  = frame before COBS (ver|type|flags|seq|len|payload|crc32c, all LE)
 # wire = COBS(raw) + 0x00 delimiter, the actual SCI-link octets
-raw: 5891000600080000110000080000006b826eed
-wire: 035891020602080102110102080101056b826eed00
+raw: 5991000600080000110000080000006a7fe08a
+wire: 035991020602080102110102080101056a7fe08a00

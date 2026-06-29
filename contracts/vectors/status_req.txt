@@ -2,5 +2,5 @@
 # STATUS_REQ: empty payload, optional explicit status read
 # raw  = frame before COBS (ver|type|flags|seq|len|payload|crc32c, all LE)
 # wire = COBS(raw) + 0x00 delimiter, the actual SCI-link octets
-raw: 58020002000000a0e91477
-wire: 0358020202010105a0e9147700
+raw: 5902000200000068c5171f
+wire: 035902020201010568c5171f00

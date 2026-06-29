@@ -47,8 +47,10 @@
 #define V2K_CMDR_NOT_READY 3u   // Power-stage preconditions did not pass
 #define V2K_CMDR_START_FAILED 4u // User-state restore/setup preparation failed
 
-// Status flags (cpu1_status.status_flags)
-#define V2K_SF_CPU2_LOST  0x0001u  // CPU2 heartbeat stopped; informational only
+// Status flags. CPU1 owns cpu1_status.status_flags; CPU2 may OR CPU1_STALE
+// into the serialized STATUS payload without writing back to CPU1 state.
+#define V2K_SF_CPU2_LOST   0x0001u  // CPU2 heartbeat stopped; informational only
+#define V2K_SF_CPU1_STALE  0x0002u  // CPU1 heartbeat/tick stopped from CPU2's view
 
 // Fault codes (cpu1_status.fault_code; 0=none, 1..255 platform-reserved,
 // 256+ L3-defined). Append new values; never reuse them because the host

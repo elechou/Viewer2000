@@ -2,5 +2,5 @@
 # HELLO_REQ: empty payload
 # raw  = frame before COBS (ver|type|flags|seq|len|payload|crc32c, all LE)
 # wire = COBS(raw) + 0x00 delimiter, the actual SCI-link octets
-raw: 5801000100000043ab8a21
-wire: 035801020101010543ab8a2100
+raw: 590100010000008b878949
+wire: 03590102010101058b87894900

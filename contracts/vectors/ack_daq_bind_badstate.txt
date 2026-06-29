@@ -2,5 +2,5 @@
 # ACK(DAQ_BIND) negative semantics: scope not OFF gives BAD_STATE; send DAQ_CTRL(OFF) first
 # raw  = frame before COBS (ver|type|flags|seq|len|payload|crc32c, all LE)
 # wire = COBS(raw) + 0x00 delimiter, the actual SCI-link octets
-raw: 58a2000d00080003220000040000004004c975
-wire: 0358a2020d02080303220102040101054004c97500
+raw: 59a2000d000800032200000400000041f94712
+wire: 0359a2020d020803032201020401010541f9471200

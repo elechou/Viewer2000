@@ -2,5 +2,5 @@
 # DAQ_CTRL: enter CAPTURE_ARMED, trigger source slot 1 rising across 2.5, hysteresis 0.05, pre-trigger 30%, prescaler 1, record 1000 pts
 # raw  = frame before COBS (ver|type|flags|seq|len|payload|crc32c, all LE)
 # wire = COBS(raw) + 0x00 delimiter, the actual SCI-link octets
-raw: 582000080014000200010000002040cdcc4c3d00001e000100e803dc71cb20
-wire: 03582002080214020202010101072040cdcc4c3d01021e020107e803dc71cb2000
+raw: 592000080018000200010000002040cdcc4c3d00001e000100e803ffff0000de96b8b4
+wire: 03592002080218020202010101072040cdcc4c3d01021e020105e803ffff0105de96b8b400

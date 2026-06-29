@@ -11,8 +11,9 @@
 //   * Stream: a continuous block stream; CPU2 pushes complete scope batches, and
 //     when the ring is full new blocks are dropped and overrun is reported;
 //   * Capture: a device-side triggered freeze window; CPU1 overwrites the ring,
-//     evaluates the trigger, fills the post segment, then the host drains it
-//     slowly after the freeze.
+//     evaluates the trigger, fills the post segment, then CPU2 pushes the frozen
+//     capture once and services selective replay requests while the freeze is
+//     held.
 // Both entry points reuse the same channel binding, ring, and block format, so
 // there is no longer a fixed 8-channel group exposed and no second scope hot
 // path to maintain.
@@ -36,9 +37,10 @@
 //   [v2k_block_hdr_t][sample area: tick-major interleave, within each tick laid
 //    out in binding order, each channel stored contiguously at native width,
 //    stride_octets per tick]
-// A block is the payload unit of the on-wire SCOPE_BLOCK_PUSH (wire-spec §4.6);
-// header + samples go on the wire as-is — this is "memory layout == on-wire format"
-// realized on the hot path; CPU2 does no re-encoding.
+// A block is the payload unit of on-wire SCOPE_BLOCK_PUSH and
+// CAPTURE_BATCH_PUSH (wire-spec §4.6); header + samples go on the wire as-is —
+// this is "memory layout == on-wire format" realized on the hot path; CPU2 does
+// no re-encoding.
 // The header bind_seq tags the binding generation that produced the block: after
 // a re-bind the host discards leftover old blocks by it; stride_octets makes the
 // block self-describing (it can be delimited without binding knowledge).
@@ -50,8 +52,8 @@
 // CAPTURE_ARMED/CAPTURE_POST/CAPTURE_FROZEN: the Capture entry. CAPTURE_ARMED
 //   overwrites the ring (ignoring rd_idx) and evaluates the trigger tick by
 //   tick; on a hit it enters CAPTURE_POST to sample the post segment; after
-//   CAPTURE_FROZEN, CPU2 drains by directly indexing the frozen_* fields, not
-//   via rd_idx. Once drained the host re-ARMs or switches back to STREAM.
+//   CAPTURE_FROZEN, CPU2 pushes batches by directly indexing the frozen_* fields,
+//   not via rd_idx. Once received, the host re-ARMs or switches back to STREAM.
 //
 // ---- SPSC index protocol ----
 // wr_idx/rd_idx are free-running uint16, addressed modulo ring_capacity (a power
@@ -86,7 +88,7 @@
 #define V2K_SCOPE_STREAM  1u   // Stream entry: continuous stream, no trigger freeze
 #define V2K_SCOPE_CAPTURE_ARMED  2u   // Capture: overwrite the ring + per-tick trigger evaluation
 #define V2K_SCOPE_CAPTURE_POST   3u   // Capture: triggered, sampling the post-trigger segment
-#define V2K_SCOPE_CAPTURE_FROZEN 4u   // Capture: frozen, awaiting CPU2 drain + host restart
+#define V2K_SCOPE_CAPTURE_FROZEN 4u   // Capture: frozen, awaiting CPU2 push/replay + host restart
 
 // Trigger edge (cfg.trig_edge; 2/3 reserved for >threshold / <threshold)
 #define V2K_TRIG_RISE 0u
@@ -149,7 +151,7 @@ V2K_ASSERT_SIZE_BITS(v2k_scope_prod_t, 320u);
 // Consumer control block (CPU2-owned region, CPU1 read-only)
 //-----------------------------------------------------------------------------
 typedef struct {
-    uint16_t rd_idx;          // Free-running read index (used by STREAM; reset before CAPTURE_FROZEN drain)
+    uint16_t rd_idx;          // Free-running read index used by STREAM only.
     uint16_t reserved;
 } v2k_scope_cons_t;
 

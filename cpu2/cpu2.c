@@ -38,9 +38,13 @@ v2k_msg_2to1_t g_v2k_msg_2to1;
 uint32_t g_pong_cnt;          // Completed ping acknowledgements.
 uint16_t g_handshake_state;   // 0=sync, 1=descriptor, 2=bad contract, 3=running.
 
+#define V2K_CPU2_HEARTBEAT_PERIOD_MS 1uL
+#define V2K_CPU2_LED_TOGGLE_PERIOD_MS 250uL
+
 void main(void)
 {
-    uint16_t led_count = 0u;
+    uint32_t last_heartbeat_ms;
+    uint32_t last_led_ms;
 
     v2k_cpu2_board_init_device();
     v2k_cpu2_board_assert_layout(&g_v2k_cpu2_plane, &g_v2k_msg_2to1);
@@ -76,9 +80,14 @@ void main(void)
     }
     g_handshake_state = 3u;
     v2k_sci_init();
+    last_heartbeat_ms = v2k_cpu2_board_millis();
+    last_led_ms = last_heartbeat_ms;
 
     for (;;)
     {
+        uint32_t now_ms;
+        uint32_t elapsed_ms;
+
         // Ping-pong acknowledgement: acknowledge each observed ping.
         if (v2k_cpu2_board_ipc_pong_ack())
         {
@@ -91,18 +100,21 @@ void main(void)
 
         // Local diagnostic heartbeat does not enter control time or scope
         // timestamps.
-        v2k_cpu2_board_delay_us(100u);
-        led_count++;
-        if ((led_count % 10u) == 0u)
+        now_ms = v2k_cpu2_board_millis();
+        elapsed_ms = now_ms - last_heartbeat_ms;
+        if (elapsed_ms >= V2K_CPU2_HEARTBEAT_PERIOD_MS)
         {
-            g_v2k_msg_2to1.cpu2_status.heartbeat++;
+            g_v2k_msg_2to1.cpu2_status.heartbeat += elapsed_ms;
+            last_heartbeat_ms = now_ms;
         }
 
-        // Toggle every 2500 x 100 us, roughly 2 Hz, for visual diagnostics only.
-        if (led_count >= 2500u)
+        // Toggle every 250 ms, roughly 2 Hz, for visual diagnostics only.
+        if ((uint32_t)(now_ms - last_led_ms) >= V2K_CPU2_LED_TOGGLE_PERIOD_MS)
         {
-            led_count = 0u;
+            last_led_ms = now_ms;
             v2k_cpu2_board_toggle_status_led();
         }
+
+        v2k_cpu2_board_delay_us(100u);
     }
 }

@@ -1,6 +1,0 @@
-# vector: drain_end
-# DRAIN_END: capture-frozen drain complete
-# raw  = frame before COBS (ver|type|flags|seq|len|payload|crc32c, all LE)
-# wire = COBS(raw) + 0x00 delimiter, the actual SCI-link octets
-raw: 584400000000007e060eaf
-wire: 03584401010101057e060eaf00

@@ -78,8 +78,8 @@ V2K_ASSERT_SIZE_BITS(float, 32);
 // is fixed at 0x5 for resync checking. Increment only for incompatible frame or
 // message layout changes. Descriptor-table content changes are covered by
 // build_hash-triggered re-enumeration.
-#define V2K_WIRE_VER        0x8u
-#define V2K_WIRE_VER_MAGIC  (0x50u | V2K_WIRE_VER)   /* = 0x58, first frame octet */
+#define V2K_WIRE_VER        0x9u
+#define V2K_WIRE_VER_MAGIC  (0x50u | V2K_WIRE_VER)   /* = 0x59, first frame octet */
 #define V2K_WIRE_MAX_PAYLOAD 1024u
 
 // Shared-memory layout version. Increment for any shared-struct field change.

@@ -25,8 +25,16 @@ uint16_t v2k_cpu2_board_ipc_pong_ack(void);
 void v2k_cpu2_board_pipe_init(void);
 void v2k_cpu2_board_pipe_service(void);
 uint16_t v2k_cpu2_board_pipe_read_octet(uint16_t *octet);
-uint16_t v2k_cpu2_board_pipe_can_write(void);
-void v2k_cpu2_board_pipe_write_octet(uint16_t octet);
+
+#define V2K_CPU2_BOARD_PIPE_TX_PRIO_NORMAL 0u
+#define V2K_CPU2_BOARD_PIPE_TX_PRIO_HIGH   1u
+
+uint16_t v2k_cpu2_board_pipe_tx_can_submit(uint16_t prio);
+uint16_t v2k_cpu2_board_pipe_tx_submit_frame(const uint16_t *buf,
+                                             uint16_t len,
+                                             uint16_t prio);
+uint16_t v2k_cpu2_board_pipe_tx_idle(void);
+uint32_t v2k_cpu2_board_millis(void);
 void v2k_cpu2_board_delay_us(uint16_t delay_us);
 void v2k_cpu2_board_toggle_status_led(void);
 void v2k_cpu2_board_panic_halt(void);

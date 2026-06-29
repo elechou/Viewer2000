@@ -1,0 +1,6 @@
+# vector: capture_batch_replay
+# CAPTURE_BATCH_PUSH: replay batch, capture_id=22, total=4, first_index=2, replay flag set
+# raw  = frame before COBS (ver|type|flags|seq|len|payload|crc32c, all LE)
+# wire = COBS(raw) + 0x00 delimiter, the actual SCI-link octets
+raw: 59450004002c00160004000200010100000000d2040000ce0400000b00000003000100020004000000803f0000c03f00000040556d4221
+wire: 0359450204022c02160204020203010101010103d2040103ce0401020b01010203020102020204010103803f0103c03f01010640556d422100

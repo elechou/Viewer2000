@@ -2,5 +2,5 @@
 # ACK(DAQ_BIND): OK, data=bind_seq=3
 # raw  = frame before COBS (ver|type|flags|seq|len|payload|crc32c, all LE)
 # wire = COBS(raw) + 0x00 delimiter, the actual SCI-link octets
-raw: 58a2000c0008000022000003000000d3effc86
-wire: 0358a2020c0208010222010203010105d3effc8600
+raw: 59a2000c0008000022000003000000d21272e1
+wire: 0359a2020c0208010222010203010105d21272e100

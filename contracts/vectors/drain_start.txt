@@ -1,6 +1,0 @@
-# vector: drain_start
-# DRAIN_START: capture-frozen drain announces 256 frozen blocks
-# raw  = frame before COBS (ver|type|flags|seq|len|payload|crc32c, all LE)
-# wire = COBS(raw) + 0x00 delimiter, the actual SCI-link octets
-raw: 58430000000400000100008d077c5a
-wire: 0358430101020401020101058d077c5a00

@@ -1,5 +1,5 @@
 //=============================================================================
-// v2k_sci_service.c - Viewer2000 wire v8 push transport over the CPU2 board pipe
+// v2k_sci_service.c - Viewer2000 wire v9 push transport over the CPU2 board pipe
 //
 // COBS/CRC, message handling, shared-plane service, and TX all run in the CPU2
 // super-loop. Every on-wire field is serialized explicitly. C28x uint16_t
@@ -16,7 +16,8 @@
 #define V2K_RAW_MAX           (7u + V2K_MAX_PAYLOAD + 4u)
 #define V2K_WIRE_MAX          (V2K_RAW_MAX + (V2K_RAW_MAX / 254u) + 2u)
 #define V2K_RX_FRAME_WORDS    256u
-#define V2K_STATUS_PUSH_PERIOD_MS 100uL
+#define V2K_STATUS_PUSH_PERIOD_MS 250uL
+#define V2K_CPU1_STALE_TIMEOUT_MS 1000uL
 
 #define V2K_MSG_HELLO         0x01u
 #define V2K_MSG_STATUS        0x02u
@@ -25,13 +26,12 @@
 #define V2K_MSG_CAL_COMMIT    0x11u
 #define V2K_MSG_CAL_READ      0x12u
 #define V2K_MSG_DAQ_CTRL      0x20u
-#define V2K_MSG_BLOCK_REQ     0x21u
+#define V2K_MSG_CAPTURE_REPLAY_REQ 0x21u
 #define V2K_MSG_DAQ_BIND      0x22u
 #define V2K_MSG_CMD           0x30u
 #define V2K_MSG_STATUS_PUSH   0x41u
 #define V2K_MSG_SCOPE_BLOCK_PUSH 0x42u
-#define V2K_MSG_DRAIN_START   0x43u
-#define V2K_MSG_DRAIN_END     0x44u
+#define V2K_MSG_CAPTURE_BATCH_PUSH 0x45u
 
 #define V2K_ACK_OK            0u
 #define V2K_ACK_BAD_PARAM     1u
@@ -39,6 +39,8 @@
 #define V2K_ACK_BAD_STATE     3u
 #define V2K_ACK_UNSUPPORTED   4u
 #define V2K_ACK_INTERNAL      5u
+
+#define V2K_CAPTURE_REPLAY_FLAG 0x01u
 
 extern v2k_cpu2_plane_t g_v2k_cpu2_plane;
 extern v2k_msg_2to1_t g_v2k_msg_2to1;
@@ -51,8 +53,6 @@ static uint16_t s_rx_frame_len;
 static uint16_t s_rx_discard;
 
 static uint16_t s_tx_frame[V2K_WIRE_MAX];
-static uint16_t s_tx_len;
-static uint16_t s_tx_pos;
 static uint16_t s_response_frame[V2K_WIRE_MAX];
 static uint16_t s_response_len;
 static uint16_t s_response_pending;
@@ -61,19 +61,35 @@ static uint16_t s_last_response_seq;
 static uint16_t s_have_last_response;
 
 static uint16_t s_raw[V2K_RAW_MAX];
-static uint16_t s_frozen_state_seq;
+static uint16_t s_capture_state_seq;
+static uint16_t s_capture_seen_valid;
+static uint16_t s_capture_id;
+static uint16_t s_capture_total_blocks;
+static uint16_t s_capture_initial_next_index;
+static uint16_t s_capture_initial_active;
+static uint16_t s_capture_replay_next_index;
+static uint16_t s_capture_replay_end_index;
+static uint16_t s_capture_replay_active;
+static uint16_t s_scope_seen_state_seq;
+static uint16_t s_scope_seen_valid;
 static uint32_t s_cal_staged_commit_seq;
-static uint32_t s_last_status_push_heartbeat;
+static uint32_t s_last_status_push_ms;
 static uint16_t s_push_frame_seq;
-static uint16_t s_drain_active;
-static uint16_t s_drain_start_pending;
-static uint16_t s_drain_end_pending;
+static uint32_t s_cpu1_seen_heartbeat;
+static uint32_t s_cpu1_seen_tick;
+static uint32_t s_cpu1_last_change_ms;
+static uint16_t s_cpu1_stale;
 
 volatile uint32_t g_v2k_sci_rx_octets;
 volatile uint32_t g_v2k_sci_tx_octets;
 volatile uint32_t g_v2k_sci_rx_overflow;
 volatile uint32_t g_v2k_sci_bad_frames;
 volatile uint32_t g_v2k_sci_good_frames;
+volatile uint32_t g_v2k_sci_tx_frames;
+volatile uint32_t g_v2k_sci_tx_queue_full;
+volatile uint32_t g_v2k_sci_tx_refill_isr;
+volatile uint32_t g_v2k_sci_tx_refill_kick;
+volatile uint32_t g_v2k_sci_tx_fifo_empty_refills;
 
 static uint16_t v2k_get_u16(const uint16_t *buf, uint16_t off)
 {
@@ -205,11 +221,6 @@ static uint16_t v2k_response_begin(uint16_t msg_type, uint16_t seq)
     return v2k_frame_begin((uint16_t)(msg_type | 0x80u), seq);
 }
 
-static uint16_t v2k_active_tx_idle(void)
-{
-    return (s_tx_pos == s_tx_len) ? 1u : 0u;
-}
-
 static uint16_t v2k_finish_frame(uint16_t payload_len,
                                  uint16_t *wire_buf,
                                  uint16_t *wire_len)
@@ -245,28 +256,29 @@ static void v2k_response_send(uint16_t payload_len)
     }
 }
 
-static uint16_t v2k_start_push_frame(uint16_t payload_len)
+static uint16_t v2k_start_push_frame(uint16_t payload_len, uint16_t prio)
 {
-    if (!v2k_active_tx_idle())
+    uint16_t wire_len;
+
+    if (!v2k_cpu2_board_pipe_tx_can_submit(prio))
     {
         return 0u;
     }
-    if (v2k_finish_frame(payload_len, s_tx_frame, &s_tx_len))
+    if (v2k_finish_frame(payload_len, s_tx_frame, &wire_len))
     {
-        s_tx_pos = 0u;
-        return 1u;
+        return v2k_cpu2_board_pipe_tx_submit_frame(
+            s_tx_frame, wire_len, prio);
     }
     return 0u;
 }
 
 static void v2k_start_pending_response(void)
 {
-    if (s_response_pending && v2k_active_tx_idle())
+    if (s_response_pending &&
+        v2k_cpu2_board_pipe_tx_can_submit(V2K_CPU2_BOARD_PIPE_TX_PRIO_HIGH) &&
+        v2k_cpu2_board_pipe_tx_submit_frame(
+            s_response_frame, s_response_len, V2K_CPU2_BOARD_PIPE_TX_PRIO_HIGH))
     {
-        memcpy(s_tx_frame, s_response_frame,
-               (uint32_t)s_response_len * sizeof(s_response_frame[0]));
-        s_tx_len = s_response_len;
-        s_tx_pos = 0u;
         s_response_pending = 0u;
     }
 }
@@ -324,9 +336,17 @@ static uint16_t v2k_write_status_payload(uint16_t off)
     const volatile v2k_cpu1_status_t *cpu1 =
         &V2K_MSG_1TO2_RO->cpu1_status;
     const volatile v2k_param_status_t *cal = &V2K_CPU1_PLANE_RO->param_status;
+    const volatile v2k_scope_prod_t *prod = &V2K_CPU1_PLANE_RO->scope_prod;
+    uint16_t status_flags = cpu1->status_flags;
+
+    if (s_cpu1_stale)
+    {
+        status_flags |= V2K_SF_CPU1_STALE;
+    }
+
     v2k_put_u16(s_raw, off, cpu1->sys_state);
     v2k_put_u16(s_raw, (uint16_t)(off + 2u), cpu1->fault_code);
-    v2k_put_u16(s_raw, (uint16_t)(off + 4u), cpu1->status_flags);
+    v2k_put_u16(s_raw, (uint16_t)(off + 4u), status_flags);
     v2k_put_u32(s_raw, (uint16_t)(off + 6u), cpu1->tick);
     v2k_put_u32(s_raw, (uint16_t)(off + 10u), cpu1->heartbeat);
     v2k_put_u32(s_raw, (uint16_t)(off + 14u),
@@ -336,8 +356,8 @@ static uint16_t v2k_write_status_payload(uint16_t off)
     v2k_put_u16(s_raw, (uint16_t)(off + 24u), cal->fail_idx);
     v2k_put_u32(s_raw, (uint16_t)(off + 26u),
                 V2K_CPU1_PLANE_RO->desc_table.hdr.build_hash);
-    s_raw[(uint16_t)(off + 30u)] = V2K_CPU1_PLANE_RO->scope_prod.mode & 0xFFu;
-    s_raw[(uint16_t)(off + 31u)] = V2K_CPU1_PLANE_RO->scope_prod.flags & 0xFFu;
+    s_raw[(uint16_t)(off + 30u)] = prod->mode & 0xFFu;
+    s_raw[(uint16_t)(off + 31u)] = prod->flags & 0xFFu;
     v2k_put_u16(s_raw, (uint16_t)(off + 32u), 0u);
     v2k_put_u32(s_raw, (uint16_t)(off + 34u), cpu1->ack_seq);
     v2k_put_u16(s_raw, (uint16_t)(off + 38u), cpu1->cmd_result);
@@ -353,7 +373,12 @@ static uint16_t v2k_write_status_payload(uint16_t off)
     v2k_put_u32(s_raw, (uint16_t)(off + 72u), cpu1->budget_violations);
     v2k_put_u32(s_raw, (uint16_t)(off + 76u), cpu1->isr_overflows);
     v2k_put_u32(s_raw, (uint16_t)(off + 80u), cpu1->prof_seq);
-    return 84u;
+    v2k_put_u16(s_raw, (uint16_t)(off + 84u), prod->state_seq);
+    v2k_put_u16(s_raw, (uint16_t)(off + 86u), prod->frozen_count);
+    v2k_put_u32(s_raw, (uint16_t)(off + 88u), prod->trig_tick);
+    v2k_put_u16(s_raw, (uint16_t)(off + 92u), prod->bind_ack_seq);
+    v2k_put_u16(s_raw, (uint16_t)(off + 94u), 0u);
+    return 96u;
 }
 
 static void v2k_handle_status(uint16_t seq)
@@ -364,21 +389,45 @@ static void v2k_handle_status(uint16_t seq)
 
 static uint16_t v2k_start_status_push(void)
 {
-    uint32_t heartbeat = g_v2k_msg_2to1.cpu2_status.heartbeat;
+    uint32_t now_ms = v2k_cpu2_board_millis();
     uint16_t off;
 
-    if ((uint32_t)(heartbeat - s_last_status_push_heartbeat) <
+    if ((uint32_t)(now_ms - s_last_status_push_ms) <
         V2K_STATUS_PUSH_PERIOD_MS)
     {
         return 0u;
     }
     off = v2k_frame_begin(V2K_MSG_STATUS_PUSH, 0u);
-    if (v2k_start_push_frame(v2k_write_status_payload(off)))
+    if (v2k_start_push_frame(v2k_write_status_payload(off),
+                             V2K_CPU2_BOARD_PIPE_TX_PRIO_NORMAL))
     {
-        s_last_status_push_heartbeat = heartbeat;
+        s_last_status_push_ms = now_ms;
         return 1u;
     }
     return 0u;
+}
+
+static void v2k_update_cpu1_stale_monitor(void)
+{
+    const volatile v2k_cpu1_status_t *cpu1 =
+        &V2K_MSG_1TO2_RO->cpu1_status;
+    uint32_t now_ms = v2k_cpu2_board_millis();
+    uint32_t cpu1_heartbeat = cpu1->heartbeat;
+    uint32_t cpu1_tick = cpu1->tick;
+
+    if ((cpu1_heartbeat != s_cpu1_seen_heartbeat) ||
+        (cpu1_tick != s_cpu1_seen_tick))
+    {
+        s_cpu1_seen_heartbeat = cpu1_heartbeat;
+        s_cpu1_seen_tick = cpu1_tick;
+        s_cpu1_last_change_ms = now_ms;
+        s_cpu1_stale = 0u;
+    }
+    else if ((uint32_t)(now_ms - s_cpu1_last_change_ms) >=
+             V2K_CPU1_STALE_TIMEOUT_MS)
+    {
+        s_cpu1_stale = 1u;
+    }
 }
 
 static void v2k_handle_enum(uint16_t seq, const uint16_t *payload,
@@ -601,12 +650,22 @@ static void v2k_handle_daq_ctrl(uint16_t seq, const uint16_t *payload,
     uint16_t cfg_seq;
     uint16_t result;
     uint16_t ack;
+    uint16_t ack_capture_id;
+    uint16_t flags;
     volatile v2k_scope_cfg_t *cfg;
-    if (payload_len != 20u)
+    if (payload_len != 24u)
     {
         v2k_send_ack(V2K_MSG_DAQ_CTRL, seq, V2K_ACK_BAD_PARAM, 0uL);
         return;
     }
+    ack_capture_id = v2k_get_u16(payload, 20u);
+    flags = v2k_get_u16(payload, 22u);
+    if (flags != 0u)
+    {
+        v2k_send_ack(V2K_MSG_DAQ_CTRL, seq, V2K_ACK_BAD_PARAM, 0uL);
+        return;
+    }
+    (void)ack_capture_id;
     cfg = &g_v2k_cpu2_plane.scope_cfg;
     cfg_seq = (uint16_t)(cfg->cfg_seq + 1u);
     cfg->mode_req = v2k_get_u16(payload, 0u);
@@ -696,16 +755,41 @@ static void v2k_handle_daq_bind(uint16_t seq, const uint16_t *payload,
     v2k_send_ack(V2K_MSG_DAQ_BIND, seq, V2K_ACK_INTERNAL, bind_seq);
 }
 
-static uint16_t v2k_scope_remaining(
+static uint16_t v2k_stream_remaining(
     const volatile v2k_scope_prod_t *prod,
     const volatile v2k_scope_cons_t *cons)
 {
-    uint16_t end = (prod->mode == V2K_SCOPE_CAPTURE_FROZEN) ?
-                   prod->frozen_end_idx : prod->wr_idx;
-    return (uint16_t)(end - cons->rd_idx);
+    return (uint16_t)(prod->wr_idx - cons->rd_idx);
 }
 
-static uint16_t v2k_write_scope_batch_payload(
+static uint16_t v2k_scope_frozen_block_view(
+    const volatile v2k_scope_prod_t *prod,
+    uint16_t block_index,
+    v2k_scope_block_view_t *view)
+{
+    uint16_t ring_index;
+    const volatile v2k_block_hdr_t *hdr;
+
+    if ((prod->mode != V2K_SCOPE_CAPTURE_FROZEN) ||
+        (prod->ring_capacity == 0u) ||
+        (prod->block_slot_words == 0u) ||
+        (block_index >= prod->frozen_count))
+    {
+        return 0u;
+    }
+    ring_index = (uint16_t)(prod->frozen_end_idx - prod->frozen_count +
+                            block_index);
+    view->block_index = block_index;
+    view->words = (const volatile uint16_t *)prod->ring_base +
+                  ((uint32_t)(ring_index & (prod->ring_capacity - 1u)) *
+                   prod->block_slot_words);
+    hdr = (const volatile v2k_block_hdr_t *)view->words;
+    view->word_count = (uint16_t)(8u +
+        ((uint32_t)hdr->n_ticks * ((uint32_t)hdr->stride_octets / 2u)));
+    return 1u;
+}
+
+static uint16_t v2k_write_stream_batch_payload(
     uint16_t off,
     const volatile v2k_scope_prod_t *prod,
     volatile v2k_scope_cons_t *cons,
@@ -716,20 +800,15 @@ static uint16_t v2k_write_scope_batch_payload(
 
     count_off = off;
     s_raw[off++] = 0u;
-    s_raw[off++] = prod->mode & 0xFFu;
-    s_raw[off++] = 0u;
     s_raw[off++] = 0u;
     v2k_put_u16(s_raw, off, prod->overrun_cnt);
     off = (uint16_t)(off + 2u);
     v2k_put_u16(s_raw, off, 0u);
     off = (uint16_t)(off + 2u);
-    v2k_put_u32(s_raw, off,
-                (prod->mode == V2K_SCOPE_CAPTURE_FROZEN) ?
-                prod->trig_tick : 0uL);
-    off = (uint16_t)(off + 4u);
+    v2k_put_u16(s_raw, off, 0u);
+    off = (uint16_t)(off + 2u);
 
-    if ((prod->mode != V2K_SCOPE_STREAM) &&
-        (prod->mode != V2K_SCOPE_CAPTURE_FROZEN))
+    if (prod->mode != V2K_SCOPE_STREAM)
     {
         *count_out = 0u;
         return off;
@@ -758,89 +837,268 @@ static uint16_t v2k_write_scope_batch_payload(
         count++;
     }
     s_raw[count_off] = count;
-    v2k_put_u16(s_raw, (uint16_t)(count_off + 6u),
-                v2k_scope_remaining(prod, cons));
+    v2k_put_u16(s_raw, (uint16_t)(count_off + 4u),
+                v2k_stream_remaining(prod, cons));
     *count_out = count;
     return off;
 }
 
-static void v2k_handle_block_req(uint16_t seq)
+static uint16_t v2k_write_capture_batch_payload(
+    uint16_t off,
+    const volatile v2k_scope_prod_t *prod,
+    uint16_t first_index,
+    uint16_t end_index,
+    uint16_t flags,
+    uint16_t *count_out,
+    uint16_t *next_index_out)
 {
-    v2k_send_ack(V2K_MSG_BLOCK_REQ, seq, V2K_ACK_UNSUPPORTED, 0uL);
+    uint16_t count = 0u;
+    uint16_t count_off;
+    uint16_t remaining_off;
+    uint16_t index = first_index;
+
+    v2k_put_u16(s_raw, off, s_capture_id);
+    off = (uint16_t)(off + 2u);
+    v2k_put_u16(s_raw, off, s_capture_total_blocks);
+    off = (uint16_t)(off + 2u);
+    v2k_put_u16(s_raw, off, first_index);
+    off = (uint16_t)(off + 2u);
+    count_off = off;
+    s_raw[off++] = 0u;
+    s_raw[off++] = flags & 0xFFu;
+    remaining_off = off;
+    v2k_put_u16(s_raw, off, 0u);
+    off = (uint16_t)(off + 2u);
+    v2k_put_u16(s_raw, off, 0u);
+    off = (uint16_t)(off + 2u);
+    v2k_put_u32(s_raw, off, prod->trig_tick);
+    off = (uint16_t)(off + 4u);
+
+    while ((index < end_index) &&
+           ((uint32_t)(off - 7u) < V2K_MAX_PAYLOAD))
+    {
+        v2k_scope_block_view_t view;
+        uint16_t block_octets;
+        uint16_t word;
+        if (!v2k_scope_frozen_block_view(prod, index, &view))
+        {
+            break;
+        }
+        block_octets = (uint16_t)(view.word_count * 2u);
+        if ((uint32_t)(off - 7u) + block_octets > V2K_MAX_PAYLOAD)
+        {
+            break;
+        }
+        for (word = 0u; word < view.word_count; word++)
+        {
+            uint16_t value = view.words[word];
+            s_raw[off++] = value & 0xFFu;
+            s_raw[off++] = (value >> 8u) & 0xFFu;
+        }
+        count++;
+        index++;
+    }
+
+    s_raw[count_off] = count;
+    v2k_put_u16(s_raw, remaining_off, (uint16_t)(end_index - index));
+    *count_out = count;
+    *next_index_out = index;
+    return off;
 }
 
-static void v2k_update_capture_drain(void)
+static void v2k_handle_capture_replay_req(uint16_t seq,
+                                           const uint16_t *payload,
+                                           uint16_t payload_len)
+{
+    const volatile v2k_scope_prod_t *prod = &V2K_CPU1_PLANE_RO->scope_prod;
+    uint16_t capture_id;
+    uint16_t first_index;
+    uint16_t max_blocks;
+    uint16_t available;
+    uint16_t count;
+
+    if ((payload_len != 8u) ||
+        ((payload[5u] & 0xFFu) != 0u) ||
+        ((payload[6u] & 0xFFu) != 0u) ||
+        ((payload[7u] & 0xFFu) != 0u))
+    {
+        v2k_send_ack(V2K_MSG_CAPTURE_REPLAY_REQ, seq, V2K_ACK_BAD_PARAM, 0uL);
+        return;
+    }
+    capture_id = v2k_get_u16(payload, 0u);
+    first_index = v2k_get_u16(payload, 2u);
+    max_blocks = payload[4u] & 0xFFu;
+    if (max_blocks == 0u)
+    {
+        v2k_send_ack(V2K_MSG_CAPTURE_REPLAY_REQ, seq, V2K_ACK_BAD_PARAM, 0uL);
+        return;
+    }
+    if ((prod->mode != V2K_SCOPE_CAPTURE_FROZEN) ||
+        !s_capture_seen_valid ||
+        (capture_id != s_capture_id) ||
+        (s_capture_state_seq != prod->state_seq))
+    {
+        v2k_send_ack(V2K_MSG_CAPTURE_REPLAY_REQ, seq, V2K_ACK_BAD_STATE, 0uL);
+        return;
+    }
+    if (first_index >= prod->frozen_count)
+    {
+        v2k_send_ack(V2K_MSG_CAPTURE_REPLAY_REQ, seq, V2K_ACK_BAD_PARAM, 0uL);
+        return;
+    }
+    available = (uint16_t)(prod->frozen_count - first_index);
+    count = (max_blocks < available) ? max_blocks : available;
+    s_capture_replay_next_index = first_index;
+    s_capture_replay_end_index = (uint16_t)(first_index + count);
+    s_capture_replay_active = 1u;
+    v2k_send_ack(V2K_MSG_CAPTURE_REPLAY_REQ, seq, V2K_ACK_OK, capture_id);
+}
+
+static void v2k_update_scope_state(void)
 {
     const volatile v2k_scope_prod_t *prod = &V2K_CPU1_PLANE_RO->scope_prod;
     volatile v2k_scope_cons_t *cons = &g_v2k_cpu2_plane.scope_cons;
 
+    if (!s_scope_seen_valid || (s_scope_seen_state_seq != prod->state_seq))
+    {
+        s_scope_seen_valid = 1u;
+        s_scope_seen_state_seq = prod->state_seq;
+        if (prod->mode == V2K_SCOPE_STREAM)
+        {
+            cons->rd_idx = prod->wr_idx;
+        }
+    }
+
     if (prod->mode == V2K_SCOPE_CAPTURE_FROZEN)
     {
-        if (s_frozen_state_seq != prod->state_seq)
+        if (!s_capture_seen_valid || (s_capture_state_seq != prod->state_seq))
         {
-            v2k_scope_consumer_begin_frozen(prod, cons);
-            s_frozen_state_seq = prod->state_seq;
-            s_drain_active = 1u;
-            s_drain_start_pending = 1u;
-            s_drain_end_pending = 0u;
+            s_capture_seen_valid = 1u;
+            s_capture_state_seq = prod->state_seq;
+            s_capture_id = prod->state_seq;
+            s_capture_total_blocks = prod->frozen_count;
+            s_capture_initial_next_index = 0u;
+            s_capture_initial_active = (prod->frozen_count != 0u) ? 1u : 0u;
+            s_capture_replay_active = 0u;
         }
     }
     else
     {
-        s_drain_active = 0u;
-        s_drain_start_pending = 0u;
-        s_drain_end_pending = 0u;
+        s_capture_initial_active = 0u;
+        s_capture_replay_active = 0u;
+        s_capture_total_blocks = 0u;
+        s_capture_seen_valid = 0u;
     }
 }
 
-static uint16_t v2k_start_drain_marker(void)
+static uint16_t v2k_start_capture_batch_push(uint16_t replay)
 {
     const volatile v2k_scope_prod_t *prod = &V2K_CPU1_PLANE_RO->scope_prod;
     uint16_t off;
+    uint16_t count;
+    uint16_t first_index;
+    uint16_t end_index;
+    uint16_t next_index;
+    uint16_t prio;
+    uint16_t flags;
 
-    if (s_drain_start_pending)
+    if (prod->mode != V2K_SCOPE_CAPTURE_FROZEN)
     {
-        off = v2k_frame_begin(V2K_MSG_DRAIN_START, 0u);
-        v2k_put_u16(s_raw, off, prod->frozen_count);
-        v2k_put_u16(s_raw, (uint16_t)(off + 2u), 0u);
-        if (v2k_start_push_frame(4u))
-        {
-            s_drain_start_pending = 0u;
-            return 1u;
-        }
+        return 0u;
     }
-    if (s_drain_end_pending)
+    if (replay)
     {
-        (void)v2k_frame_begin(V2K_MSG_DRAIN_END, 0u);
-        if (v2k_start_push_frame(0u))
+        if (!s_capture_replay_active)
         {
-            s_drain_end_pending = 0u;
-            s_drain_active = 0u;
-            return 1u;
+            return 0u;
         }
+        first_index = s_capture_replay_next_index;
+        end_index = s_capture_replay_end_index;
+        prio = V2K_CPU2_BOARD_PIPE_TX_PRIO_HIGH;
+        flags = V2K_CAPTURE_REPLAY_FLAG;
+    }
+    else
+    {
+        if (!s_capture_initial_active)
+        {
+            return 0u;
+        }
+        first_index = s_capture_initial_next_index;
+        end_index = s_capture_total_blocks;
+        prio = V2K_CPU2_BOARD_PIPE_TX_PRIO_NORMAL;
+        flags = 0u;
+    }
+    if (first_index >= end_index)
+    {
+        if (replay)
+        {
+            s_capture_replay_active = 0u;
+        }
+        else
+        {
+            s_capture_initial_active = 0u;
+        }
+        return 0u;
+    }
+    if (!v2k_cpu2_board_pipe_tx_can_submit(prio))
+    {
+        return 0u;
+    }
+    off = v2k_frame_begin(V2K_MSG_CAPTURE_BATCH_PUSH, s_push_frame_seq);
+    off = v2k_write_capture_batch_payload(off, prod, first_index, end_index,
+                                          flags, &count, &next_index);
+    if (count == 0u)
+    {
+        return 0u;
+    }
+    if (v2k_start_push_frame((uint16_t)(off - 7u), prio))
+    {
+        s_push_frame_seq++;
+        if (replay)
+        {
+            s_capture_replay_next_index = next_index;
+            if (next_index >= end_index)
+            {
+                s_capture_replay_active = 0u;
+            }
+        }
+        else
+        {
+            s_capture_initial_next_index = next_index;
+            if (next_index >= end_index)
+            {
+                s_capture_initial_active = 0u;
+            }
+        }
+        return 1u;
     }
     return 0u;
 }
 
-static uint16_t v2k_start_scope_block_push(void)
+static uint16_t v2k_start_scope_stream_push(void)
 {
     const volatile v2k_scope_prod_t *prod = &V2K_CPU1_PLANE_RO->scope_prod;
     volatile v2k_scope_cons_t *cons = &g_v2k_cpu2_plane.scope_cons;
     uint16_t off;
     uint16_t count;
 
-    if ((prod->mode != V2K_SCOPE_STREAM) &&
-        (prod->mode != V2K_SCOPE_CAPTURE_FROZEN))
+    if (prod->mode != V2K_SCOPE_STREAM)
+    {
+        return 0u;
+    }
+    if (!v2k_cpu2_board_pipe_tx_can_submit(
+            V2K_CPU2_BOARD_PIPE_TX_PRIO_NORMAL))
     {
         return 0u;
     }
     off = v2k_frame_begin(V2K_MSG_SCOPE_BLOCK_PUSH, s_push_frame_seq);
-    off = v2k_write_scope_batch_payload(off, prod, cons, &count);
+    off = v2k_write_stream_batch_payload(off, prod, cons, &count);
     if (count == 0u)
     {
         return 0u;
     }
-    if (v2k_start_push_frame((uint16_t)(off - 7u)))
+    if (v2k_start_push_frame((uint16_t)(off - 7u),
+                             V2K_CPU2_BOARD_PIPE_TX_PRIO_NORMAL))
     {
         s_push_frame_seq++;
         return 1u;
@@ -850,33 +1108,24 @@ static uint16_t v2k_start_scope_block_push(void)
 
 static uint16_t v2k_start_next_push(void)
 {
-    const volatile v2k_scope_prod_t *prod = &V2K_CPU1_PLANE_RO->scope_prod;
-    volatile v2k_scope_cons_t *cons = &g_v2k_cpu2_plane.scope_cons;
-
     if ((g_v2k_msg_2to1.cpu2_status.link_state == 0u) ||
-        s_response_pending || !v2k_active_tx_idle())
+        s_response_pending)
     {
         return 0u;
     }
-    if (v2k_start_drain_marker())
+    if (v2k_start_capture_batch_push(1u))
     {
         return 1u;
     }
-    if (v2k_start_scope_block_push())
+    if (v2k_start_capture_batch_push(0u))
     {
         return 1u;
     }
-    if (s_drain_active &&
-        (prod->mode == V2K_SCOPE_CAPTURE_FROZEN) &&
-        (v2k_scope_remaining(prod, cons) == 0u))
+    if (v2k_start_status_push())
     {
-        s_drain_end_pending = 1u;
-        if (v2k_start_drain_marker())
-        {
-            return 1u;
-        }
+        return 1u;
     }
-    return v2k_start_status_push();
+    return v2k_start_scope_stream_push();
 }
 
 static void v2k_handle_cmd(uint16_t seq, const uint16_t *payload,
@@ -930,8 +1179,8 @@ static void v2k_dispatch(uint16_t msg_type, uint16_t seq,
         case V2K_MSG_DAQ_CTRL:
             v2k_handle_daq_ctrl(seq, payload, payload_len);
             break;
-        case V2K_MSG_BLOCK_REQ:
-            v2k_handle_block_req(seq);
+        case V2K_MSG_CAPTURE_REPLAY_REQ:
+            v2k_handle_capture_replay_req(seq, payload, payload_len);
             break;
         case V2K_MSG_DAQ_BIND:
             v2k_handle_daq_bind(seq, payload, payload_len);
@@ -1000,16 +1249,6 @@ static void v2k_process_encoded_frame(void)
                  &s_rx_frame[7], payload_len);
 }
 
-static void v2k_tx_service(void)
-{
-    while ((s_tx_pos < s_tx_len) && v2k_cpu2_board_pipe_can_write())
-    {
-        v2k_cpu2_board_pipe_write_octet(s_tx_frame[s_tx_pos++]);
-    }
-    // The active frame remains intact after completion. Request-response replay
-    // is cached separately in s_response_frame.
-}
-
 static void v2k_rx_service(void)
 {
     uint16_t value;
@@ -1047,35 +1286,51 @@ void v2k_sci_init(void)
     memset(s_tx_frame, 0, sizeof(s_tx_frame));
     memset(s_response_frame, 0, sizeof(s_response_frame));
     memset(s_raw, 0, sizeof(s_raw));
-    s_frozen_state_seq = 0u;
+    s_capture_state_seq = 0u;
+    s_capture_seen_valid = 0u;
+    s_capture_id = 0u;
+    s_capture_total_blocks = 0u;
+    s_capture_initial_next_index = 0u;
+    s_capture_initial_active = 0u;
+    s_capture_replay_next_index = 0u;
+    s_capture_replay_end_index = 0u;
+    s_capture_replay_active = 0u;
+    s_scope_seen_state_seq = 0u;
+    s_scope_seen_valid = 0u;
     s_cal_staged_commit_seq = 0xFFFFFFFFuL;
-    s_last_status_push_heartbeat = 0uL;
+    s_last_status_push_ms = 0uL;
     s_rx_frame_len = 0u;
     s_rx_discard = 0u;
-    s_tx_len = 0u;
-    s_tx_pos = 0u;
     s_response_len = 0u;
     s_response_pending = 0u;
     s_last_response_req_type = 0u;
     s_last_response_seq = 0u;
     s_have_last_response = 0u;
     s_push_frame_seq = 0u;
-    s_drain_active = 0u;
-    s_drain_start_pending = 0u;
-    s_drain_end_pending = 0u;
+    s_cpu1_seen_heartbeat = V2K_MSG_1TO2_RO->cpu1_status.heartbeat;
+    s_cpu1_seen_tick = V2K_MSG_1TO2_RO->cpu1_status.tick;
+    s_cpu1_stale = 0u;
 
     v2k_cpu2_board_pipe_init();
+    s_cpu1_last_change_ms = v2k_cpu2_board_millis();
 }
 
 void v2k_sci_service(void)
 {
     v2k_cpu2_board_pipe_service();
     v2k_start_pending_response();
-    v2k_tx_service();
     v2k_rx_service();
-    v2k_update_capture_drain();
+    v2k_update_cpu1_stale_monitor();
+    v2k_update_scope_state();
     v2k_start_pending_response();
-    (void)v2k_start_next_push();
-    v2k_tx_service();
+    while (v2k_start_next_push())
+    {
+        v2k_start_pending_response();
+        if (s_response_pending)
+        {
+            break;
+        }
+    }
+    v2k_start_pending_response();
     v2k_cpu2_board_pipe_service();
 }

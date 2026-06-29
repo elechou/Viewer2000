@@ -3,5 +3,5 @@
 # raw  = frame before COBS (ver|type|flags|seq|len|payload|crc32c, all LE)
 # wire = COBS(raw) + 0x00 delimiter, the actual SCI-link octets
 # CRC is intentionally corrupted; wire is encoded from the corrupted raw frame
-raw: 580200ff0000006322701f
-wire: 03580202ff0101056322701f00
+raw: 590200ff000000ab0e7377
+wire: 03590202ff010105ab0e737700

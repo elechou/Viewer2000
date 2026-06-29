@@ -2,5 +2,5 @@
 # CAL_COMMIT: empty payload
 # raw  = frame before COBS (ver|type|flags|seq|len|payload|crc32c, all LE)
 # wire = COBS(raw) + 0x00 delimiter, the actual SCI-link octets
-raw: 58110006000000b72386f8
-wire: 0358110206010105b72386f800
+raw: 591100060000007f0f8590
+wire: 03591102060101057f0f859000

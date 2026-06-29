@@ -1,0 +1,6 @@
+# vector: capture_replay_req
+# CAPTURE_REPLAY_REQ: request up to 4 frozen blocks from capture_id=22 starting at capture index 2
+# raw  = frame before COBS (ver|type|flags|seq|len|payload|crc32c, all LE)
+# wire = COBS(raw) + 0x00 delimiter, the actual SCI-link octets
+raw: 59210009000800160002000400000011fd906b
+wire: 0359210209020802160202020401010511fd906b00
