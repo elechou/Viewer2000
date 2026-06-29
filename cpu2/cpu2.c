@@ -1,13 +1,13 @@
 //#############################################################################
-// cpu2.c - CPU2 comms core (Phase 3.5 SCI data pump)
+// cpu2.c - CPU2 communications core
 //
 // Current responsibilities:
 //   1. Rendezvous with CPU1 through IPC_sync, wait for descriptor magic, then
 //      verify the contract version handshake (v2k_command.h).
 //   2. Own the CPU2 plane and CPU2->CPU1 MSGRAM; service the parameter, scope,
 //      and command planes.
-//   3. Let the board pipe collect octets; run COBS/CRC/message services and TX
-//      in the super-loop.
+//   3. Poll communication endpoints and run transport-neutral protocol/shared-
+//      plane services in the super-loop.
 //   4. Acknowledge IPC ping-pong and blink the local status LED. Pad config and
 //      CSEL ownership are assigned by CPU1; CPU2 only writes the data register.
 //
@@ -19,8 +19,8 @@
 
 #include <string.h>
 #include "../common/v2k_planes.h"
+#include "v2k_comms_service.h"
 #include "v2k_cpu2_board.h"
-#include "v2k_sci_service.h"
 
 //-----------------------------------------------------------------------------
 // Shared-memory entities. Section -> physical-region mapping is in the CPU2
@@ -79,7 +79,7 @@ void main(void)
         v2k_cpu2_board_panic_halt();
     }
     g_handshake_state = 3u;
-    v2k_sci_init();
+    v2k_comms_init();
     last_heartbeat_ms = v2k_cpu2_board_millis();
     last_led_ms = last_heartbeat_ms;
 
@@ -94,9 +94,8 @@ void main(void)
             g_pong_cnt++;
         }
 
-        // The board pipe only collects octets. Protocol parsing, shared-plane
-        // services, and TX all run in the super-loop.
-        v2k_sci_service();
+        // Endpoint polling, protocol services, and TX run in the super-loop.
+        v2k_comms_service();
 
         // Local diagnostic heartbeat does not enter control time or scope
         // timestamps.

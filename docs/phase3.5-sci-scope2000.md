@@ -28,8 +28,11 @@ This phase's acceptance target is the **interfaces, the isolation boundary, and 
 | `contracts/v2k_common.h`, `v2k_command.h` | contract v11; HELLO's `tick_hz/capabilities/project metadata`; STATUS's `cmd_ack_seq/cmd_result`; native capability bits |
 | `docs/wire-spec.md` | wire v6 messages, Stream/Capture shared Scope, retry idempotency, build-hash re-enumeration, independent compatibility-bridge boundary |
 | `contracts/vectors/`, `tools/gen_vectors.py` | HELLO/STATUS/ENUM/CAL/DAQ/CMD/BLOCK golden vectors and negative cases |
-| `cpu2/v2k_sci_service.c/.h` | SCIA send/receive, COBS, CRC-32C, request dispatch, response replay, shared-plane service and diagnostic counts |
-| `cpu2/cpu2.c` | CPU2 super-loop wires in the SCI service; the local heartbeat does not enter control time |
+| `cpu2/v2k_comms_service.c/.h` | CPU2 endpoint orchestration and push-endpoint selection |
+| `cpu2/v2k_sci_service.c/.h` | SCI octet stream, COBS/CRC-32C, response replay, queue backpressure, and diagnostics |
+| `cpu2/v2k_protocol.c/.h` | Transport-neutral HELLO/STATUS/ENUM/CAL/CMD message services |
+| `cpu2/v2k_scope_protocol.c/.h` | DAQ configuration, stream/capture state, replay, and push production |
+| `cpu2/cpu2.c` | CPU2 super-loop wires in the communication orchestrator; the local heartbeat does not enter control time |
 | `cpu1/runtime/v2k_main.c` | publishes `tick_hz`, for HELLO and the host time axis |
 | sibling `Scope2000` repo | Rust 2024 + egui; codec/transport/service layering; SCI transport; variables, parameters, Stream/Capture shared Scope, CSV, console |
 

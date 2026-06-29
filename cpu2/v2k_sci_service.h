@@ -1,22 +1,27 @@
 //=============================================================================
-// v2k_sci_service.h - Phase 3.5 Viewer2000 protocol data pump
+// v2k_sci_service.h - Viewer2000 SCI frame and byte-stream adapter
 //=============================================================================
 #ifndef V2K_SCI_SERVICE_H
 #define V2K_SCI_SERVICE_H
 
 #include <stdint.h>
-
-// Baud rate, frame format, FIFO enable, and the physical pipe instance are
-// board-profile configuration. This service owns only the Viewer2000 wire
-// protocol and shared-plane transactions.
+#include "v2k_protocol.h"
 
 extern volatile uint32_t g_v2k_sci_rx_octets;
 extern volatile uint32_t g_v2k_sci_tx_octets;
 extern volatile uint32_t g_v2k_sci_rx_overflow;
 extern volatile uint32_t g_v2k_sci_bad_frames;
 extern volatile uint32_t g_v2k_sci_good_frames;
+extern volatile uint32_t g_v2k_sci_tx_frames;
+extern volatile uint32_t g_v2k_sci_tx_queue_full;
+extern volatile uint32_t g_v2k_sci_tx_refill_isr;
+extern volatile uint32_t g_v2k_sci_tx_refill_kick;
+extern volatile uint32_t g_v2k_sci_tx_fifo_empty_refills;
 
 void v2k_sci_init(void);
-void v2k_sci_service(void);
+void v2k_sci_poll(void);
+void v2k_sci_flush(void);
+uint16_t v2k_sci_response_pending(void);
+const v2k_protocol_endpoint_t *v2k_sci_endpoint(void);
 
 #endif // V2K_SCI_SERVICE_H
