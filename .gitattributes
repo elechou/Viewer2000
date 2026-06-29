@@ -11,9 +11,12 @@
 #
 # Git intentionally keeps filter commands in local config, so run the setup
 # script once per clone. The filter strips only the generated header before
-# content is staged. If an old index already contains the CCS header, run:
+# content is staged. The setup script also marks these two files
+# assume-unchanged locally, because CCS rewrites the working-tree bytes on
+# startup/exit even when the filtered Git content is unchanged. Before editing
+# these files intentionally, clear that local bit with:
 #
-#   git add --renormalize AGENTS.md CLAUDE.md
+#   git update-index --no-assume-unchanged AGENTS.md CLAUDE.md
 /AGENTS.md filter=ccs-agent-header
 /CLAUDE.md filter=ccs-agent-header
 
