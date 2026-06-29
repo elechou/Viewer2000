@@ -116,20 +116,26 @@ static void v2k_put_u32(uint16_t *buf, uint16_t off, uint32_t value)
     v2k_put_u16(buf, (uint16_t)(off + 2u), (uint16_t)(value >> 16u));
 }
 
+#pragma CODE_SECTION(v2k_crc32c, ".TI.ramfunc")
+static const uint32_t s_crc32c_nibble[16] = {
+    0x00000000uL, 0x105EC76FuL, 0x20BD8EDEuL, 0x30E349B1uL,
+    0x417B1DBCuL, 0x5125DAD3uL, 0x61C69362uL, 0x7198540DuL,
+    0x82F63B78uL, 0x92A8FC17uL, 0xA24BB5A6uL, 0xB21572C9uL,
+    0xC38D26C4uL, 0xD3D3E1ABuL, 0xE330A81AuL, 0xF36E6F75uL,
+};
+
 static uint32_t v2k_crc32c(const uint16_t *buf, uint16_t len)
 {
     uint16_t i;
-    uint16_t bit;
     uint32_t crc = 0xFFFFFFFFuL;
+
     for (i = 0u; i < len; i++)
     {
-        crc ^= (uint32_t)(buf[i] & 0xFFu);
-        for (bit = 0u; bit < 8u; bit++)
-        {
-            crc = (crc >> 1u) ^
-                  ((crc & 1u) ? 0x82F63B78uL : 0uL);
-        }
+        uint16_t octet = buf[i] & 0xFFu;
+        crc = s_crc32c_nibble[(crc ^ octet) & 0x0Fu] ^ (crc >> 4u);
+        crc = s_crc32c_nibble[(crc ^ (octet >> 4u)) & 0x0Fu] ^ (crc >> 4u);
     }
+
     return crc ^ 0xFFFFFFFFuL;
 }
 
