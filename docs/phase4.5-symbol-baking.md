@@ -7,6 +7,13 @@
 > A (`0x521C2BA6`) → B (`0xF057F5F0`, `flash_probe`) → A transitions. See
 > [BRINGUP.md](../BRINGUP.md).
 >
+> **2026-06-30 v10 catalog update**: the original accepted implementation
+> baked fixed-name descriptor records into a shared-RAM table. The current
+> contract keeps the same build-time DWARF discovery idea, but moves the full
+> user dictionary into CPU1 Flash and exposes it through a CPU1-owned variable
+> catalog. CPU2 is only an ENUM proxy, so after the one-time v10 CPU2 upgrade,
+> ordinary user-variable/name changes require rebuilding/flashing CPU1 only.
+>
 > **Why it's "4.5"**: it serves the same user-facing layer as [Phase 4](phase4-user-interface.md) — the L2/L3 experience — but it is a **build-tooling** effort (host/build side). It consumes the user-object ownership contract established by [Phase 4.1](phase4.1-user-code-boundary.md), while remaining independent of the runtime reset mechanism.
 
 ## Goal
@@ -31,7 +38,7 @@ This is the same pattern professional RCP toolchains use (A2L generated from ELF
 | names travel with device | no (PC needs `.out`) | yes | **yes (in flash, via ENUM)** |
 | stale/wrong ELF risk | yes | n/a | **none (same build)** |
 | struct / array | auto-expand | awkward | **auto-expand to per-member scalars** |
-| host (Scope2000) changes | a whole DWARF parser | none | **none — it already enumerates the descriptor table** |
+| host (Scope2000) changes | a whole DWARF parser | none | **only v10 ENUM parsing — it already enumerates the device catalog** |
 | cost | host parser + `.out` shipping | trivial | **a build tool + a link/patch step (the price)** |
 
 The decisive win: Scope2000 needs no DWARF parser or project file. It reads user-visible names from the existing ENUM service; descriptor `kind` bit 2 marks baked user entries so the UI can keep platform/system diagnostics outside its main "All Variables" tree.
@@ -53,23 +60,36 @@ The decisive win: Scope2000 needs no DWARF parser or project file. It reads user
      - reads CPU1's CCS/Eclipse `cpu1/.project` `<name>` and bakes the human-readable project name/build time;
      - patches v2k_user_desc in cpu1.out and decodes it back for verification;
      - emits v2k_user_desc_report.json.
-⑥ v2k_registry_init registers platform descriptors, appends the baked records,
-   then publishes V2K_DESC_MAGIC. ENUM and Scope2000 remain unchanged.
+⑥ v2k_registry_init registers the platform catalog in CPU1-local storage,
+   validates the baked user Flash catalog, then publishes V2K_CATALOG_MAGIC.
+   CPU2 forwards ENUM requests to CPU1 and never parses or owns names.
 ```
 
 The tracked `makefile.init` and `makefile.targets` hooks implement this order without editing CCS `.cproject`. Binary patching is deliberate: the fixed-size section does not move any linked symbol and needs no second link.
 
 ## Implemented policy
 
-- **Capacity**: `V2K_DESC_MAX=176`; 64 slots are reserved for platform descriptors and the baked blob holds at most 112 user leaves. The GS0 plane is 4006 C28x words, below its 4096-word allocation.
-- **Names**: `V2K_NAME_LEN` remains 16. The tool uses source-level names, never linker-name fallback, and fails rather than truncating names longer than 15 visible ASCII characters. Function statics use the source variable name and therefore collide explicitly when ambiguous.
+- **Capacity guardrails**: the shared realtime plane no longer grows with names.
+  The user Flash catalog allows `V2K_USER_DESC_MAX=512` user leaves, the
+  platform catalog allows `V2K_PLATFORM_DESC_MAX=96`, and the user name pool is
+  `V2K_USER_NAME_POOL_OCTETS=16384`. These are deliberately generous guardrails:
+  a too-large catalog fails the build clearly instead of silently exhausting
+  Flash.
+- **Names**: `V2K_NAME_MAX=128` visible printable-ASCII octets. The tool uses
+  source-level names, never linker-name fallback, and fails rather than
+  truncating names. Function statics use the source variable name and therefore
+  collide explicitly when ambiguous.
 - **Types**: I16/U16/I32/U32/F32 are accepted. Pointers, unions, enums, doubles, 64-bit leaves, bitfields, and other unsupported forms are omitted and listed in the JSON report.
 - **Kinds**: user data/BSS leaves are `PARAM|SCOPE`; user const leaves are `SCOPE` only. Runtime write validation excludes const while read/scope validation includes it.
 - **Addresses**: TI OFD reports C28x word addresses. A 32-bit leaf must be even-aligned and fully contained in one authoritative user range.
 - **ELF**: the patcher requires ELF32 little-endian, an exact-size `SHT_PROGBITS` section, matching blob magic/version/capacity, and a successful decode after patching.
 - **Build hash**: the blob carries a nonzero 32-bit hash derived from the normalized final ELF and baked records. Re-baking an unchanged image is stable; changing code, linked addresses, or the variable set changes the hash even before commit.
 - **Project info**: the project name comes from CPU1's CCS/Eclipse `.project` `<name>` as-is. Empty names become `untitled`; `untitled` only emits a post-link warning. Overlong or non-printable names fail because HELLO carries a fixed 32-octet printable ASCII field. Project name and build time are excluded from `build_hash` and exist only for human identification in HELLO.
-- **Runtime diagnostics**: the platform reserves exactly 64 descriptors and appends the user set only after validating every entry and total capacity. The platform descriptor `desc_error` reports 0=OK, 1=bad blob header, 2=platform capacity, 3=combined table capacity, or 4=invalid user entry.
+- **Runtime diagnostics**: the platform catalog is built first, then the user
+  Flash catalog is included only after validating every entry and total
+  capacity. The platform variable `desc_error` reports 0=OK, 1=bad blob header,
+  2=platform capacity, 3=combined catalog capacity, 4=invalid user entry, or
+  5=name-pool/capacity error.
 
 ## Verification
 
@@ -80,7 +100,7 @@ The tracked `makefile.init` and `makefile.targets` hooks implement this order wi
 | C | names travel | flash the patched `.out`; on a **clean PC without the project**, open Scope2000, ENUM | the user's plain-C variable names appear by name; bind + plot one |
 | D | tune a baked var | CAL_WRITE to a baked PARAM var | takes effect; `applied_seq` reconciles (no descriptor-table-membership special-casing needed) |
 | E | stale guard | flash a different build (changed vars) | `build_hash` changes → Scope2000 re-enumerates; old names gone, new names present |
-| F | capacity | unit-test overflow and build the 176-entry shared layout | overflow fails; GS0 RAM fits; ENUM paging returns all on hardware |
+| F | capacity | unit-test descriptor/name-pool overflow and build the v10 catalog layout | overflow fails; GS0 RAM fits; ENUM paging returns all on hardware |
 
 ## Acceptance and exit
 
@@ -92,10 +112,19 @@ The tracked `makefile.init` and `makefile.targets` hooks implement this order wi
 | travels with device | clean-PC test (C) passes — names visible without the project or any `.out` |
 | guards | `build_hash` re-enumeration (E); capacity within budget (F) |
 
-Record into BRINGUP.md: tool version, the `.out` parsed, the scoping rule, capacity used vs `V2K_DESC_MAX`, the clean-PC screenshot, and the build_hash re-enumeration trace.
+Record into BRINGUP.md: tool version, the `.out` parsed, the scoping rule,
+capacity used vs `V2K_USER_DESC_MAX` and `V2K_USER_NAME_POOL_OCTETS`, the
+clean-PC screenshot, and the build_hash re-enumeration trace.
 
 ## Relationship to the other layers
 
-- Phase 4.5 changes **how the descriptor table gets filled** and increases its shared-memory capacity. The 28-octet descriptor wire layout is unchanged; contract version 11 introduced descriptor `kind` bit 2 as the USER origin flag and CPU1-baked HELLO project metadata.
+- Phase 4.5 changes **where the user-variable dictionary lives and how it is
+  discovered**. In v10, shared RAM carries only compact catalog metadata and an
+  ENUM staging buffer; CPU1 Flash carries the full baked user dictionary. ENUM
+  responses are variable-length records (`addr,type,kind,prescaler,name_len,name`)
+  and realtime CAL/DAQ paths remain keyed only by `(addr,type)`.
 - Phase 4.1 remains authoritative for which mutable storage resets. A variable still resets if it is not bakeable, not visible, or unsupported by the descriptor type system; descriptor capacity overflow fails the build instead of weakening reset coverage.
-- It supersedes the earlier "application variables are discovered host-side via `.out` (DWARF)" wording in `wire-spec.md` / `contracts/v2k_descriptor.h`: discovery is now **build-time baking into the descriptor table**, so the host needs no `.out`.
+- It supersedes the earlier "application variables are discovered host-side via
+  `.out` (DWARF)" wording in `wire-spec.md` / `contracts/v2k_descriptor.h`:
+  discovery is now **build-time baking into the CPU1 Flash catalog**, so the
+  host needs no `.out`.

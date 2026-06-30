@@ -28,20 +28,27 @@
 
 // ---- Aggregate plane sizes. The CPU1 plane contains char[] fields, so PC and
 // C28x char width differences prevent a cross-platform total-size assertion. ----
-V2K_ASSERT_SIZE_BITS(v2k_cpu2_plane_t, 312u * 16u);
+V2K_ASSERT_SIZE_BITS(v2k_cpu2_plane_t, 316u * 16u);
 
-// ---- Descriptor entry; no implicit padding may follow name. ----
-V2K_ASSERT_OFFSET_BITS(v2k_desc_entry_t, type,      V2K_NAME_BITS(V2K_NAME_LEN));
-V2K_ASSERT_OFFSET_BITS(v2k_desc_entry_t, addr,      V2K_NAME_BITS(V2K_NAME_LEN) + 32u);
-V2K_ASSERT_OFFSET_BITS(v2k_desc_entry_t, prescaler, V2K_NAME_BITS(V2K_NAME_LEN) + 64u);
+// ---- Compact catalog metadata and staging. ----
+V2K_ASSERT_OFFSET_BITS(v2k_desc_entry_t, type,      32u);
+V2K_ASSERT_OFFSET_BITS(v2k_desc_entry_t, kind,      48u);
+V2K_ASSERT_OFFSET_BITS(v2k_desc_entry_t, prescaler, 64u);
+V2K_ASSERT_OFFSET_BITS(v2k_desc_entry_t, reserved,  80u);
 
-// ---- Descriptor table header. ----
-V2K_ASSERT_OFFSET_BITS(v2k_desc_table_hdr_t, build_hash, 64u);
+V2K_ASSERT_OFFSET_BITS(v2k_catalog_hdr_t, build_hash, 32u);
+V2K_ASSERT_OFFSET_BITS(v2k_catalog_hdr_t, total_count, 80u);
+V2K_ASSERT_OFFSET_BITS(v2k_catalog_req_t, req_seq, 48u);
+V2K_ASSERT_OFFSET_BITS(v2k_catalog_resp_t, payload, 64u);
 V2K_ASSERT_OFFSET_BITS(v2k_firmware_info_t, build_time_utc,
                        V2K_NAME_BITS(V2K_PROJECT_NAME_LEN));
 V2K_ASSERT_OFFSET_BITS(v2k_user_desc_blob_t, firmware_info, 128u);
-V2K_ASSERT_OFFSET_BITS(v2k_user_desc_blob_t, entries,
+V2K_ASSERT_OFFSET_BITS(v2k_user_desc_blob_t, name_pool_octets,
                        128u + V2K_NAME_BITS(V2K_PROJECT_NAME_LEN) + 32u);
+V2K_ASSERT_OFFSET_BITS(v2k_user_desc_blob_t, entries,
+                       128u + V2K_NAME_BITS(V2K_PROJECT_NAME_LEN) + 96u);
+V2K_ASSERT_OFFSET_BITS(v2k_user_desc_entry_t, name_offset, 96u);
+V2K_ASSERT_OFFSET_BITS(v2k_user_desc_entry_t, name_len, 128u);
 
 // ---- Scope block header and control blocks. ----
 V2K_ASSERT_OFFSET_BITS(v2k_block_hdr_t, block_seq, 32u);

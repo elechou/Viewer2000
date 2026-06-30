@@ -14,7 +14,7 @@
 // Logical allocation:
 //
 //   CPU1-owned front plane:
-//     v2k_desc_table_t
+//     v2k_catalog_shared_t
 //     v2k_param_status_t
 //     v2k_param_read_resp_t
 //     v2k_scope_prod_t
@@ -24,6 +24,7 @@
 //     shared Stream/Capture scope ring
 //
 //   CPU2-owned front plane:
+//     v2k_catalog_req_t
 //     v2k_param_shadow_t
 //     v2k_param_read_req_t
 //     v2k_scope_cfg_t

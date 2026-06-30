@@ -18,17 +18,22 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 
-NAME_LEN = 16
+NAME_MAX = 128
 PROJECT_NAME_LEN = 32
 DEFAULT_PROJECT_NAME = "untitled"
-USER_CAPACITY = 112
-PLATFORM_CAPACITY = 64
-USER_MAGIC = 0x564B5544
-USER_VERSION = 4
+USER_CAPACITY = 512
+PLATFORM_CAPACITY = 96
+USER_NAME_POOL_OCTETS = 16 * 1024
+PLATFORM_NAME_POOL_OCTETS = 4 * 1024
+USER_MAGIC = 0x564B5543
+USER_VERSION = 5
 BLOB_HEADER_FORMAT = "<IHHHHI"
 BLOB_HEADER_SIZE = struct.calcsize(BLOB_HEADER_FORMAT)
 FIRMWARE_INFO_SIZE = PROJECT_NAME_LEN * 2 + 4
-ENTRY_SIZE = 44
+POOL_HEADER_FORMAT = "<HHHH"
+POOL_HEADER_SIZE = struct.calcsize(POOL_HEADER_FORMAT)
+ENTRY_FORMAT = "<IHHHHIHH"
+ENTRY_SIZE = struct.calcsize(ENTRY_FORMAT)
 KIND_PARAM = 1
 KIND_SCOPE = 2
 KIND_USER = 4
@@ -465,18 +470,44 @@ def collect_entries(root: ET.Element, ranges: list[AddressRange], capacity: int 
 
     names: set[str] = set()
     for entry in entries:
-        try:
-            encoded = entry.name.encode("ascii")
-        except UnicodeEncodeError as exc:
-            raise BakeError(f"{entry.name!r}: descriptor name must be ASCII") from exc
-        if len(encoded) >= NAME_LEN:
-            raise BakeError(f"{entry.name}: descriptor name exceeds 15 visible characters")
+        encoded = encode_name(entry.name)
         if entry.name in names:
             raise BakeError(f"duplicate descriptor name: {entry.name}")
         names.add(entry.name)
     if len(entries) > capacity:
         raise BakeError(f"user descriptor capacity exceeded: {len(entries)} > {capacity}")
     return entries, skipped
+
+
+def encode_name(name: str) -> bytes:
+    try:
+        encoded = name.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise BakeError(f"{name!r}: descriptor name must be printable ASCII") from exc
+    if not encoded:
+        raise BakeError("descriptor name must not be empty")
+    if len(encoded) > NAME_MAX:
+        raise BakeError(
+            f"{name}: descriptor name exceeds {NAME_MAX} visible characters"
+        )
+    if any(value < 0x20 or value > 0x7E for value in encoded):
+        raise BakeError(f"{name!r}: descriptor name must be printable ASCII")
+    return encoded
+
+
+def build_name_pool(entries: list[Descriptor]) -> tuple[bytes, list[tuple[int, int]]]:
+    pool = bytearray()
+    offsets: list[tuple[int, int]] = []
+    for entry in entries:
+        encoded = encode_name(entry.name)
+        offsets.append((len(pool), len(encoded)))
+        pool.extend(encoded)
+    if len(pool) > USER_NAME_POOL_OCTETS:
+        raise BakeError(
+            f"user descriptor name pool exceeded: {len(pool)} > "
+            f"{USER_NAME_POOL_OCTETS} octets"
+        )
+    return bytes(pool), offsets
 
 
 def encode_blob(
@@ -487,6 +518,7 @@ def encode_blob(
 ) -> bytes:
     if len(entries) > capacity:
         raise BakeError(f"user descriptor capacity exceeded: {len(entries)} > {capacity}")
+    name_pool, name_offsets = build_name_pool(entries)
     info = firmware_info or FirmwareInfo()
     project_name = validate_project_name(info.project_name)
     if not 0 <= info.build_time_utc <= 0xFFFF_FFFF:
@@ -505,19 +537,47 @@ def encode_blob(
     encoded_project = project_name.encode("ascii").ljust(PROJECT_NAME_LEN, b"\0")
     output.extend(b"".join(struct.pack("<H", value) for value in encoded_project))
     output.extend(struct.pack("<I", info.build_time_utc))
+    output.extend(
+        struct.pack(
+            POOL_HEADER_FORMAT,
+            len(name_pool),
+            USER_NAME_POOL_OCTETS,
+            0,
+            0,
+        )
+    )
     for index in range(capacity):
         if index < len(entries):
             entry = entries[index]
-            encoded = entry.name.encode("ascii")
-            output.extend(b"".join(struct.pack("<H", value) for value in encoded.ljust(NAME_LEN, b"\0")))
-            output.extend(struct.pack("<HHIHH", entry.type, entry.kind, entry.addr, entry.prescaler, entry.reserved))
+            name_offset, name_len = name_offsets[index]
+            output.extend(
+                struct.pack(
+                    ENTRY_FORMAT,
+                    entry.addr,
+                    entry.type,
+                    entry.kind,
+                    entry.prescaler,
+                    entry.reserved,
+                    name_offset,
+                    name_len,
+                    0,
+                )
+            )
         else:
             output.extend(b"\0" * ENTRY_SIZE)
+    output.extend(name_pool)
+    output.extend(b"\0" * (USER_NAME_POOL_OCTETS - len(name_pool)))
     return bytes(output)
 
 
 def decode_blob(data: bytes) -> tuple[int, FirmwareInfo, list[Descriptor]]:
-    expected_size = BLOB_HEADER_SIZE + FIRMWARE_INFO_SIZE + USER_CAPACITY * ENTRY_SIZE
+    expected_size = (
+        BLOB_HEADER_SIZE
+        + FIRMWARE_INFO_SIZE
+        + POOL_HEADER_SIZE
+        + USER_CAPACITY * ENTRY_SIZE
+        + USER_NAME_POOL_OCTETS
+    )
     if len(data) != expected_size:
         raise BakeError(f"user descriptor section size is {len(data)}, expected {expected_size}")
     magic, version, count, capacity, reserved, build_hash = struct.unpack_from(
@@ -533,13 +593,43 @@ def decode_blob(data: bytes) -> tuple[int, FirmwareInfo, list[Descriptor]]:
         "<I", data, BLOB_HEADER_SIZE + PROJECT_NAME_LEN * 2
     )[0]
     firmware_info = FirmwareInfo(project_name, build_time_utc)
+    pool_header_offset = BLOB_HEADER_SIZE + FIRMWARE_INFO_SIZE
+    name_pool_octets, name_pool_capacity, pool_reserved, pool_reserved2 = (
+        struct.unpack_from(POOL_HEADER_FORMAT, data, pool_header_offset)
+    )
+    if (
+        name_pool_capacity != USER_NAME_POOL_OCTETS
+        or name_pool_octets > name_pool_capacity
+        or pool_reserved != 0
+        or pool_reserved2 != 0
+    ):
+        raise BakeError("invalid user descriptor name-pool header")
     result: list[Descriptor] = []
-    offset = BLOB_HEADER_SIZE + FIRMWARE_INFO_SIZE
+    offset = pool_header_offset + POOL_HEADER_SIZE
+    pool_offset = offset + USER_CAPACITY * ENTRY_SIZE
+    pool = data[pool_offset : pool_offset + USER_NAME_POOL_OCTETS]
     for index in range(capacity):
-        name_words = struct.unpack_from("<16H", data, offset)
-        name = bytes(value & 0xFF for value in name_words).split(b"\0", 1)[0].decode("ascii")
-        type_code, kind, address, prescaler, entry_reserved = struct.unpack_from("<HHIHH", data, offset + 32)
+        (
+            address,
+            type_code,
+            kind,
+            prescaler,
+            entry_reserved,
+            name_offset,
+            name_len,
+            record_reserved,
+        ) = struct.unpack_from(ENTRY_FORMAT, data, offset)
         if index < count:
+            if (
+                entry_reserved != 0
+                or record_reserved != 0
+                or name_len == 0
+                or name_len > NAME_MAX
+                or name_offset + name_len > name_pool_octets
+            ):
+                raise BakeError("invalid user descriptor entry")
+            name = pool[name_offset : name_offset + name_len].decode("ascii")
+            encode_name(name)
             result.append(Descriptor(name, type_code, kind, address, prescaler, entry_reserved))
         offset += ENTRY_SIZE
     return build_hash, firmware_info, result
@@ -641,6 +731,7 @@ def command_bake(args: argparse.Namespace) -> None:
     ofd = args.ofd or find_ofd()
     root, banner = run_ofd(args.elf, ofd)
     entries, skipped = collect_entries(root, ranges)
+    name_pool, _ = build_name_pool(entries)
     blob, build_hash, firmware_info = prepare_blob(args.elf, entries, project_name)
     patch_elf(args.elf, blob, args.dry_run)
     report = {
@@ -662,6 +753,14 @@ def command_bake(args: argparse.Namespace) -> None:
         "entry_count": len(entries),
         "capacity": USER_CAPACITY,
         "platform_reserved": PLATFORM_CAPACITY,
+        "limits": {
+            "name_max": NAME_MAX,
+            "user_capacity": USER_CAPACITY,
+            "platform_capacity": PLATFORM_CAPACITY,
+            "user_name_pool_octets": USER_NAME_POOL_OCTETS,
+            "platform_name_pool_octets": PLATFORM_NAME_POOL_OCTETS,
+        },
+        "name_pool_octets": len(name_pool),
         "entries": [report_entry(entry) for entry in entries],
         "skipped": [asdict(item) for item in skipped],
     }
@@ -669,6 +768,7 @@ def command_bake(args: argparse.Namespace) -> None:
     action = "validated" if args.dry_run else "patched"
     print(
         f"user descriptors {action}: {len(entries)}/{USER_CAPACITY}, "
+        f"name_pool={len(name_pool)}/{USER_NAME_POOL_OCTETS}, "
         f"skipped={len(skipped)}, project={firmware_info.project_name}, "
         f"build_time_utc={firmware_info.build_time_utc}"
     )

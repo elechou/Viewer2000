@@ -76,16 +76,16 @@ V2K_ASSERT_SIZE_BITS(float, 32);
 //-----------------------------------------------------------------------------
 // Wire protocol version: low nibble of frame header ver_magic. The high nibble
 // is fixed at 0x5 for resync checking. Increment only for incompatible frame or
-// message layout changes. Descriptor-table content changes are covered by
+// message layout changes. Variable-catalog content changes are covered by
 // build_hash-triggered re-enumeration.
-#define V2K_WIRE_VER        0x9u
-#define V2K_WIRE_VER_MAGIC  (0x50u | V2K_WIRE_VER)   /* = 0x59, first frame octet */
+#define V2K_WIRE_VER        0xAu
+#define V2K_WIRE_VER_MAGIC  (0x50u | V2K_WIRE_VER)   /* = 0x5A, first frame octet */
 #define V2K_WIRE_MAX_PAYLOAD 1024u
 
 // Shared-memory layout version. Increment for any shared-struct field change.
 // CPU1/CPU2 handshake checks this when firmware images are flashed out of sync.
 // See the handshake flow in v2k_command.h.
-#define V2K_CONTRACT_VER    13u
+#define V2K_CONTRACT_VER    14u
 
 //-----------------------------------------------------------------------------
 // Public MCU family identifiers reported by HELLO. These identify only the MCU
@@ -126,7 +126,7 @@ typedef uint32_t v2k_tick_t;
 typedef uint32_t v2k_build_hash_t;
 
 //-----------------------------------------------------------------------------
-// Variable type codes used by descriptor-table type fields. This is the
+// Variable type codes used by catalog entry type fields. This is the
 // minimum subset shared with the descriptor baker and inspector.
 //-----------------------------------------------------------------------------
 #define V2K_TYPE_I16  0u

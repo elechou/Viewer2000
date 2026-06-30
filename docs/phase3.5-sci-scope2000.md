@@ -2,7 +2,15 @@
 
 > This document is the **Phase 3.5 bring-up procedure to be executed**, not a measurement record. Firmware commit, Scope2000 commit, baud rate, continuous run time, error counts, and waveform screenshots all go into the Phase 3.5 area of [BRINGUP.md](../BRINGUP.md).
 >
-> Phase 3 already proved CPU1 can produce descriptors, parameter status, and native scope blocks; Phase 3.5 must prove CPU2 and a real PC program can consume these interfaces **without disturbing the control core**.
+> **Current protocol note (2026-06-30)**: the SCI bring-up shape still matters,
+> but the message details in this historical checklist are superseded by
+> [wire-spec.md](wire-spec.md) v10. In particular, ENUM now proxies CPU1's
+> Flash-backed variable catalog, CPU2 no longer owns a descriptor/name table,
+> and realtime CAL/DAQ paths use only `(addr,type)`.
+>
+> Phase 3 already proved CPU1 can produce a variable catalog, parameter status,
+> and native scope blocks; Phase 3.5 must prove CPU2 and a real PC program can
+> consume these interfaces **without disturbing the control core**.
 
 Phase 3's CCS Graph reads CPU1 memory directly, bypassing CPU2, the CPU2-plane consumer index, IPC command forwarding, and the wire protocol. Phase 3.5 closes the full path for the first time:
 

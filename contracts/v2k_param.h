@@ -9,14 +9,14 @@
 //
 // Write targets are addressed by address (same philosophy as scope channel
 // binding: platform quantities and user application variables both come from
-// descriptor-table enumeration; user variables are baked in from DWARF at build
-// time, and the firmware does not distinguish the source).
+// CPU1 catalog enumeration; user variables are baked into CPU1 Flash from DWARF
+// at build time, and realtime write/read paths use only (addr,type).
 //
 // ---- Write validation (mechanical consistency, no range/unit semantics) ----
 // Before applying each write CPU1 does only mechanical checks:
 //   * type is legal;
 //   * addr lies in a writable CPU1 data region, with 32-bit types aligned;
-//   * on a descriptor-table hit, kind&PARAM must be set and type must match.
+//   * on a catalog hit, kind&PARAM must be set and type must match.
 // The firmware does no min/max range check, no clamp, no scale/offset inverse.
 // The on-wire value is the target variable's true native bit pattern.
 //
@@ -49,7 +49,7 @@
 #define V2K_CAL_READ_MAX    32u   // Max entries per CAL_READ
 
 typedef struct {
-    uint32_t addr;         // Target CPU1 data-space word address (source: descriptor table, including build-baked user variables)
+    uint32_t addr;         // Target CPU1 data-space word address (source: CPU1 catalog or explicit RAM address)
     uint32_t value_bits;   // New value bit pattern (convention in v2k_common.h)
     uint16_t type;         // V2K_TYPE_* (determines write width and conversion)
     uint16_t reserved;     // Set to 0

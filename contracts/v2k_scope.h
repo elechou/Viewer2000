@@ -21,9 +21,9 @@
 // ---- Channel binding (host selects channels at runtime, no re-flash) ----
 // Channel membership is pushed by the host at runtime via DAQ_BIND
 // (v2k_scope_bind_t); a channel = an (addr, type) pair:
-//   * addr source = the descriptor table (platform quantities + user variables
-//     baked in from DWARF at build time); the firmware neither
-//     distinguishes nor needs to "recognize" them;
+//   * addr source = the CPU1 catalog (platform quantities + user variables
+//     baked into CPU1 Flash from DWARF at build time); the hot path neither
+//     carries nor recognizes names;
 //   * samples are copied losslessly at native width: I16/U16 take 2 octets,
 //     I32/U32/F32 take 4 octets (the bit pattern goes on the wire as-is; the
 //     firmware does no quantization/conversion — physical-quantity scaling is
@@ -186,7 +186,7 @@ V2K_ASSERT_SIZE_BITS(v2k_scope_cfg_t, 192u);
 // Constraint: CPU1 applies it only while mode==OFF, otherwise bind_result=BAD_STATE.
 //-----------------------------------------------------------------------------
 typedef struct {
-    uint32_t addr;            // CPU1 data-space word address from the enumerated descriptor table
+    uint32_t addr;            // CPU1 data-space word address from the enumerated catalog
     uint16_t type;            // V2K_TYPE_* (determines sample width, see V2K_TYPE_SAMPLE_OCTETS)
     uint16_t reserved;        // Set to 0
 } v2k_scope_ch_bind_t;

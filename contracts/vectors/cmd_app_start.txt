@@ -2,5 +2,5 @@
 # CMD: APP_START
 # raw  = frame before COBS (ver|type|flags|seq|len|payload|crc32c, all LE)
 # wire = COBS(raw) + 0x00 delimiter, the actual SCI-link octets
-raw: 5930000b0008000100000000000000e264ddd1
-wire: 035930020b0208020101010101010105e264ddd100
+raw: 5a30000b0008000100000000000000e1634e79
+wire: 035a30020b0208020101010101010105e1634e7900

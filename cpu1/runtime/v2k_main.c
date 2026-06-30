@@ -167,6 +167,7 @@ void main(void)
             // immediately, never waiting on the comms core or a peripheral.
             // Grouped at a ~1 ms poll point to avoid an idle control core
             // continuously reading CPU2-plane/MSGRAM data.
+            v2k_catalog_service();
             v2k_param_service();
             v2k_param_read_service();
             v2k_profile_service();

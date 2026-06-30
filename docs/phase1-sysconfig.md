@@ -6,7 +6,7 @@ The parts I've already done (for reference only, you don't need to touch them):
 
 | Artifact | Content |
 |---|---|
-| `cpu1/runtime/v2k_main.c` | boot master: CPU2 shared-RAM handover, descriptor-table publish, boot CPU2, IPC ping-pong, heartbeat monitor, red LED 1 Hz |
+| `cpu1/runtime/v2k_main.c` | boot master: CPU2 shared-RAM handover, catalog publish, boot CPU2, IPC ping-pong, heartbeat monitor, red LED 1 Hz |
 | `cpu2/cpu2.c` | sync rendezvous, contract-version handshake, heartbeat, pong reply, green LED 2 Hz |
 | `common/v2k_planes.h` | CPU1/CPU2/MSGRAM plane aggregate structs + read-only pointer to the other side |
 | four `*_lnk_*.cmd` | after Phase 3: `v2k_cpu1_plane`→first half of GS0, `v2k_scope_ring`→second half of GS0 + GS1-3; GS4 carves out a 0x200-word `v2k_cpu2_plane` |
@@ -70,7 +70,7 @@ iteration path.
 | CPU1 | `g_ping_cnt` | keeps incrementing (≈1 kHz) |
 | CPU1 | `g_cpu2_alive` | 1; becomes 0 within ~1 s after halting CPU2 (incidentally verifies the heartbeat monitor) |
 | CPU1 | `g_v2k_msg_1to2.cpu1_status.heartbeat` | keeps incrementing |
-| CPU1 | `g_v2k_cpu1_plane.desc_table.hdr.magic` | `0x564B4454` ("VKDT") |
+| CPU1 | `g_v2k_cpu1_plane.catalog.hdr.magic` | `0x564B4341` ("VKCA") |
 | CPU2 | `g_pong_cnt` | keeps incrementing, in sync with g_ping_cnt |
 | CPU2 | `g_handshake_state` | 3 (running) |
 | CPU2 | `g_v2k_msg_2to1.cpu2_status.heartbeat` | keeps incrementing |

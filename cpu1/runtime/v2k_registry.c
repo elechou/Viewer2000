@@ -1,5 +1,5 @@
 //=============================================================================
-// v2k_registry.c - descriptor table + background validation / ISR-applied parameter batches
+// v2k_registry.c - CPU1 catalog + background validation / ISR-applied parameter batches
 //=============================================================================
 
 #include <string.h>
@@ -41,10 +41,21 @@ typedef struct {
     v2k_param_write_t writes[V2K_PARAM_BATCH_MAX];
 } v2k_param_ready_t;
 
+typedef struct {
+    const char *name;
+    uint16_t name_len;
+    v2k_desc_entry_t desc;
+} v2k_platform_catalog_entry_t;
+
 static v2k_param_ready_t s_ready;
 static volatile uint16_t s_ready_valid;
 static uint32_t s_shadow_seen;
 static v2k_param_read_ref_t s_read_refs[V2K_CAL_READ_MAX];
+static v2k_platform_catalog_entry_t s_platform_catalog[V2K_PLATFORM_DESC_MAX];
+static uint16_t s_platform_count;
+static uint16_t s_platform_name_pool_octets;
+static uint16_t s_user_catalog_valid;
+static uint16_t s_catalog_req_seen;
 volatile uint16_t g_v2k_desc_error;
 
 // Fixed-size post-link patch target; its initialized header is validated before baking.
@@ -57,7 +68,12 @@ const v2k_user_desc_blob_t g_v2k_user_desc_blob = {
     0u,
     0uL,
     { V2K_DEFAULT_PROJECT_NAME, 0uL },
-    {{0}}
+    0u,
+    V2K_USER_NAME_POOL_OCTETS,
+    0u,
+    0u,
+    {{0}},
+    {0}
 };
 
 static uint32_t v2k_addr(const volatile void *ptr)
@@ -119,23 +135,38 @@ static uint16_t v2k_addr_is_readable(uint32_t addr, uint16_t type)
         v2k_addr_in_range(addr, words, &V2K_UserConstStart, &V2K_UserConstEnd));
 }
 
-static void v2k_desc_name(char dst[V2K_NAME_LEN], const char *src)
+static void v2k_put_u16(uint16_t *buf, uint16_t off, uint16_t value)
+{
+    buf[off] = value & 0xFFu;
+    buf[(uint16_t)(off + 1u)] = (value >> 8u) & 0xFFu;
+}
+
+static void v2k_put_u32(uint16_t *buf, uint16_t off, uint32_t value)
+{
+    v2k_put_u16(buf, off, (uint16_t)value);
+    v2k_put_u16(buf, (uint16_t)(off + 2u), (uint16_t)(value >> 16u));
+}
+
+static uint16_t v2k_name_len(const char *name, uint16_t max_len,
+                             uint16_t *len)
 {
     uint16_t i;
-    for (i = 0u; i < V2K_NAME_LEN; i++)
+
+    for (i = 0u; i <= max_len; i++)
     {
-        char c = src[i];
-        dst[i] = c;
-        if (c == '\0')
+        uint16_t c = (uint16_t)name[i];
+
+        if (c == 0u)
         {
-            i++;
-            break;
+            *len = i;
+            return (i > 0u) ? 1u : 0u;
+        }
+        if ((i == max_len) || (c < 0x20u) || (c > 0x7Eu))
+        {
+            return 0u;
         }
     }
-    while (i < V2K_NAME_LEN)
-    {
-        dst[i++] = '\0';
-    }
+    return 0u;
 }
 
 static uint16_t v2k_project_name_valid(const char name[V2K_PROJECT_NAME_LEN])
@@ -188,24 +219,36 @@ static void v2k_publish_firmware_info(void)
 void v2k_registry_add(const char *name, uint16_t type, uint16_t kind,
                       volatile void *addr, uint16_t prescaler)
 {
-    v2k_desc_table_t *table = &g_v2k_cpu1_plane.desc_table;
-    uint16_t idx = table->hdr.entry_count;
-    v2k_desc_entry_t *entry;
+    uint16_t idx = s_platform_count;
+    uint16_t len = 0u;
+    v2k_platform_catalog_entry_t *entry;
 
     if (idx >= V2K_PLATFORM_DESC_MAX)
     {
         g_v2k_desc_error = V2K_DESC_ERROR_PLATFORM_CAPACITY;
         return;
     }
-    entry = &table->entries[idx];
+    if (!v2k_name_len(name, V2K_NAME_MAX, &len) ||
+        ((uint32_t)s_platform_name_pool_octets + (uint32_t)len >
+         V2K_PLATFORM_NAME_POOL_OCTETS) ||
+        (v2k_type_words(type) == 0u) ||
+        (prescaler == 0u))
+    {
+        g_v2k_desc_error = V2K_DESC_ERROR_NAME_POOL;
+        return;
+    }
+    entry = &s_platform_catalog[idx];
     memset(entry, 0, sizeof(*entry));
-    v2k_desc_name(entry->name, name);
-    entry->type = type;
-    entry->kind = kind;
-    entry->addr = v2k_addr(addr);
-    entry->prescaler = prescaler;
-    entry->reserved = 0u;
-    table->hdr.entry_count = (uint16_t)(idx + 1u);
+    entry->name = name;
+    entry->name_len = len;
+    entry->desc.addr = v2k_addr(addr);
+    entry->desc.type = type;
+    entry->desc.kind = kind;
+    entry->desc.prescaler = prescaler;
+    entry->desc.reserved = 0u;
+    s_platform_name_pool_octets =
+        (uint16_t)(s_platform_name_pool_octets + len);
+    s_platform_count = (uint16_t)(idx + 1u);
 }
 
 static uint16_t v2k_user_desc_blob_valid(void)
@@ -217,63 +260,77 @@ static uint16_t v2k_user_desc_blob_valid(void)
         (blob->version == V2K_USER_DESC_VERSION) &&
         (blob->capacity == V2K_USER_DESC_MAX) &&
         (blob->count <= blob->capacity) &&
+        (blob->reserved == 0u) &&
         (blob->build_hash != 0uL) &&
+        (blob->name_pool_capacity == V2K_USER_NAME_POOL_OCTETS) &&
+        (blob->name_pool_octets <= blob->name_pool_capacity) &&
+        (blob->reserved2 == 0u) &&
+        (blob->reserved3 == 0u) &&
         v2k_project_name_valid(blob->firmware_info.project_name));
 }
 
-static uint16_t v2k_user_desc_entry_valid(const v2k_desc_entry_t *entry)
+static uint16_t v2k_user_name_octet(uint32_t offset)
+{
+    uint16_t word = g_v2k_user_desc_blob.name_pool_words[offset >> 1u];
+
+    if ((offset & 1u) == 0u)
+    {
+        return word & 0xFFu;
+    }
+    return (word >> 8u) & 0xFFu;
+}
+
+static uint16_t v2k_user_desc_entry_valid(const v2k_user_desc_entry_t *entry)
 {
     uint16_t i;
     uint16_t words;
-    uint16_t terminated = 0u;
+    const v2k_desc_entry_t *desc = &entry->desc;
 
-    words = v2k_type_words(entry->type);
+    words = v2k_type_words(desc->type);
     if ((words == 0u) ||
-        ((words == 2u) && ((entry->addr & 1u) != 0u)) ||
-        (entry->prescaler == 0u) ||
-        (entry->reserved != 0u))
+        ((words == 2u) && ((desc->addr & 1u) != 0u)) ||
+        (desc->prescaler == 0u) ||
+        (desc->reserved != 0u) ||
+        (entry->reserved != 0u) ||
+        (entry->name_len == 0u) ||
+        (entry->name_len > V2K_NAME_MAX) ||
+        ((entry->name_offset + entry->name_len) >
+         g_v2k_user_desc_blob.name_pool_octets))
     {
         return 0u;
     }
-    for (i = 0u; i < V2K_NAME_LEN; i++)
+    for (i = 0u; i < entry->name_len; i++)
     {
-        if (entry->name[i] == '\0')
-        {
-            terminated = (i > 0u) ? 1u : 0u;
-            break;
-        }
-        if ((uint16_t)entry->name[i] > 0x7Fu)
+        uint16_t c = v2k_user_name_octet(entry->name_offset + i);
+
+        if ((c < 0x20u) || (c > 0x7Eu))
         {
             return 0u;
         }
     }
-    if (!terminated)
-    {
-        return 0u;
-    }
-    if (entry->kind ==
+    if (desc->kind ==
         (V2K_KIND_USER | V2K_KIND_PARAM | V2K_KIND_SCOPE))
     {
         return (uint16_t)(
-            v2k_addr_in_range(entry->addr, words,
+            v2k_addr_in_range(desc->addr, words,
                               &V2K_UserDataStart, &V2K_UserDataEnd) ||
-            v2k_addr_in_range(entry->addr, words,
+            v2k_addr_in_range(desc->addr, words,
                               &V2K_UserBssStart, &V2K_UserBssEnd));
     }
-    if (entry->kind == (V2K_KIND_USER | V2K_KIND_SCOPE))
+    if (desc->kind == (V2K_KIND_USER | V2K_KIND_SCOPE))
     {
-        return v2k_addr_in_range(entry->addr, words,
+        return v2k_addr_in_range(desc->addr, words,
                                  &V2K_UserConstStart, &V2K_UserConstEnd);
     }
     return 0u;
 }
 
-static void v2k_registry_add_baked_user(void)
+static void v2k_registry_validate_baked_user(void)
 {
     const v2k_user_desc_blob_t *blob = &g_v2k_user_desc_blob;
-    v2k_desc_table_t *table = &g_v2k_cpu1_plane.desc_table;
     uint16_t i;
 
+    s_user_catalog_valid = 0u;
     if (!v2k_user_desc_blob_valid())
     {
         g_v2k_desc_error = V2K_DESC_ERROR_BLOB_HEADER;
@@ -287,36 +344,55 @@ static void v2k_registry_add_baked_user(void)
             return;
         }
     }
-    if (blob->count > (V2K_DESC_MAX - table->hdr.entry_count))
+    if (blob->count > (V2K_DESC_MAX - s_platform_count))
     {
         g_v2k_desc_error = V2K_DESC_ERROR_TABLE_CAPACITY;
         return;
     }
-    for (i = 0u; i < blob->count; i++)
-    {
-        table->entries[table->hdr.entry_count] = blob->entries[i];
-        table->hdr.entry_count++;
-    }
+    s_user_catalog_valid = 1u;
+}
+
+static uint16_t v2k_user_count(void)
+{
+    return s_user_catalog_valid ? g_v2k_user_desc_blob.count : 0u;
+}
+
+static uint16_t v2k_catalog_total_count(void)
+{
+    return (uint16_t)(s_platform_count + v2k_user_count());
+}
+
+static void v2k_publish_catalog_header(void)
+{
+    v2k_catalog_hdr_t *hdr = &g_v2k_cpu1_plane.catalog.hdr;
+
+    hdr->build_hash = s_user_catalog_valid ?
+        g_v2k_user_desc_blob.build_hash : 0uL;
+    hdr->contract_ver = V2K_CONTRACT_VER;
+    hdr->total_count = v2k_catalog_total_count();
+    hdr->platform_count = s_platform_count;
+    hdr->user_count = v2k_user_count();
+    hdr->max_name_len = V2K_NAME_MAX;
+    hdr->user_capacity = V2K_USER_DESC_MAX;
+    hdr->platform_capacity = V2K_PLATFORM_DESC_MAX;
+    hdr->user_name_pool_octets = V2K_USER_NAME_POOL_OCTETS;
+    hdr->platform_name_pool_octets = V2K_PLATFORM_NAME_POOL_OCTETS;
+    hdr->reserved = 0u;
+    hdr->magic = V2K_CATALOG_MAGIC;
 }
 
 void v2k_registry_init(void)
 {
-    v2k_desc_table_t *table = &g_v2k_cpu1_plane.desc_table;
     uint16_t slow_div = (uint16_t)(V2K_ISR_HZ / 1000u);
 
     g_v2k_desc_error = V2K_DESC_ERROR_NONE;
-    memset(table, 0, sizeof(*table));
+    memset(&g_v2k_cpu1_plane.catalog, 0, sizeof(g_v2k_cpu1_plane.catalog));
+    memset(s_platform_catalog, 0, sizeof(s_platform_catalog));
+    s_platform_count = 0u;
+    s_platform_name_pool_octets = 0u;
+    s_user_catalog_valid = 0u;
+    s_catalog_req_seen = 0u;
     v2k_publish_firmware_info();
-    table->hdr.contract_ver = V2K_CONTRACT_VER;
-    if (v2k_user_desc_blob_valid())
-    {
-        table->hdr.build_hash = g_v2k_user_desc_blob.build_hash;
-    }
-    else
-    {
-        g_v2k_desc_error = V2K_DESC_ERROR_BLOB_HEADER;
-    }
-    table->hdr.entry_stride_words = (uint16_t)sizeof(v2k_desc_entry_t);
 
     v2k_registry_add("desc_error", V2K_TYPE_U16, V2K_KIND_SCOPE,
                      &g_v2k_desc_error, 1u);
@@ -382,21 +458,176 @@ void v2k_registry_init(void)
     v2k_registry_add("tz_trip_cnt", V2K_TYPE_U32, V2K_KIND_SCOPE,
                      &g_v2k_tz_int_cnt, slow_div);
     v2k_board_register_diagnostics(slow_div);
-    v2k_registry_add_baked_user();
+    v2k_registry_validate_baked_user();
+    v2k_publish_catalog_header();
+}
 
-    table->hdr.magic = V2K_DESC_MAGIC;
+static const v2k_desc_entry_t *v2k_catalog_desc_at(uint16_t idx)
+{
+    uint16_t user_idx;
+
+    if (idx < s_platform_count)
+    {
+        return &s_platform_catalog[idx].desc;
+    }
+    user_idx = (uint16_t)(idx - s_platform_count);
+    if (s_user_catalog_valid && (user_idx < g_v2k_user_desc_blob.count))
+    {
+        return &g_v2k_user_desc_blob.entries[user_idx].desc;
+    }
+    return (const v2k_desc_entry_t *)0;
+}
+
+static uint16_t v2k_catalog_name_len_at(uint16_t idx)
+{
+    uint16_t user_idx;
+
+    if (idx < s_platform_count)
+    {
+        return s_platform_catalog[idx].name_len;
+    }
+    user_idx = (uint16_t)(idx - s_platform_count);
+    if (s_user_catalog_valid && (user_idx < g_v2k_user_desc_blob.count))
+    {
+        return g_v2k_user_desc_blob.entries[user_idx].name_len;
+    }
+    return 0u;
+}
+
+static uint16_t v2k_catalog_name_octet_at(uint16_t idx, uint16_t name_pos)
+{
+    uint16_t user_idx;
+
+    if (idx < s_platform_count)
+    {
+        return ((uint16_t)s_platform_catalog[idx].name[name_pos]) & 0xFFu;
+    }
+    user_idx = (uint16_t)(idx - s_platform_count);
+    if (s_user_catalog_valid && (user_idx < g_v2k_user_desc_blob.count))
+    {
+        return v2k_user_name_octet(
+            g_v2k_user_desc_blob.entries[user_idx].name_offset + name_pos);
+    }
+    return 0u;
+}
+
+static uint16_t v2k_catalog_pack_entry(uint16_t idx, uint16_t *payload,
+                                       uint16_t *off)
+{
+    const v2k_desc_entry_t *desc = v2k_catalog_desc_at(idx);
+    uint16_t name_len = v2k_catalog_name_len_at(idx);
+    uint16_t i;
+
+    if ((desc == (const v2k_desc_entry_t *)0) ||
+        ((*off + V2K_ENUM_ENTRY_FIXED_OCTETS + name_len) >
+         V2K_CATALOG_PAYLOAD_OCTETS))
+    {
+        return 0u;
+    }
+    v2k_put_u32(payload, *off, desc->addr);
+    v2k_put_u16(payload, (uint16_t)(*off + 4u), desc->type);
+    v2k_put_u16(payload, (uint16_t)(*off + 6u), desc->kind);
+    v2k_put_u16(payload, (uint16_t)(*off + 8u), desc->prescaler);
+    payload[(uint16_t)(*off + 10u)] = name_len & 0xFFu;
+    payload[(uint16_t)(*off + 11u)] = 0u;
+    *off = (uint16_t)(*off + V2K_ENUM_ENTRY_FIXED_OCTETS);
+    for (i = 0u; i < name_len; i++)
+    {
+        payload[*off] = v2k_catalog_name_octet_at(idx, i);
+        *off = (uint16_t)(*off + 1u);
+    }
+    return 1u;
+}
+
+void v2k_catalog_service(void)
+{
+    const volatile v2k_catalog_req_t *req = &V2K_CPU2_PLANE_RO->catalog_req;
+    v2k_catalog_resp_t *resp = &g_v2k_cpu1_plane.catalog.enum_resp;
+    uint16_t seq_before = req->req_seq;
+    uint16_t seq_after;
+    uint16_t start;
+    uint16_t max_count;
+    uint16_t total;
+    uint16_t count = 0u;
+    uint16_t off = 6u;
+    uint16_t idx;
+    uint16_t result = V2K_CATALOG_RESULT_OK;
+
+    if ((seq_before == s_catalog_req_seen) ||
+        (seq_before == resp->ack_seq))
+    {
+        return;
+    }
+    start = req->start_idx;
+    max_count = req->max_count;
+    seq_after = req->req_seq;
+    if (seq_before != seq_after)
+    {
+        return;
+    }
+    s_catalog_req_seen = seq_after;
+    total = v2k_catalog_total_count();
+
+    if ((max_count == 0u) || (max_count > V2K_ENUM_MAX_COUNT))
+    {
+        result = V2K_CATALOG_RESULT_BAD_PARAM;
+        off = 0u;
+    }
+    else
+    {
+        v2k_put_u16(resp->payload, 0u, total);
+        v2k_put_u16(resp->payload, 2u, start);
+        resp->payload[4] = 0u;
+        resp->payload[5] = 0u;
+
+        idx = start;
+        while ((idx < total) && (count < max_count))
+        {
+            uint16_t before = off;
+
+            if (!v2k_catalog_pack_entry(idx, resp->payload, &off))
+            {
+                if (count == 0u)
+                {
+                    result = V2K_CATALOG_RESULT_INTERNAL;
+                    off = 0u;
+                }
+                break;
+            }
+            if (off == before)
+            {
+                result = V2K_CATALOG_RESULT_INTERNAL;
+                off = 0u;
+                break;
+            }
+            count++;
+            idx++;
+        }
+        if (result == V2K_CATALOG_RESULT_OK)
+        {
+            resp->payload[4] = count & 0xFFu;
+        }
+    }
+
+    resp->result = result;
+    resp->payload_len = (result == V2K_CATALOG_RESULT_OK) ? off : 0u;
+    resp->reserved = 0u;
+    resp->ack_seq = seq_before;
 }
 
 static const v2k_desc_entry_t *v2k_desc_find(uint32_t addr)
 {
-    const v2k_desc_table_t *table = &g_v2k_cpu1_plane.desc_table;
     uint16_t i;
+    uint16_t total = v2k_catalog_total_count();
 
-    for (i = 0u; i < table->hdr.entry_count; i++)
+    for (i = 0u; i < total; i++)
     {
-        if (table->entries[i].addr == addr)
+        const v2k_desc_entry_t *entry = v2k_catalog_desc_at(i);
+
+        if ((entry != (const v2k_desc_entry_t *)0) &&
+            (entry->addr == addr))
         {
-            return &table->entries[i];
+            return entry;
         }
     }
     return (const v2k_desc_entry_t *)0;

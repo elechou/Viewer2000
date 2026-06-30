@@ -138,8 +138,11 @@ class CollectionTests(unittest.TestCase):
                 root(scalar, variable("v1", "same", 0x1000, "u16"), variable("v2", "same", 0x1001, "u16")),
                 RANGES,
             )
-        with self.assertRaisesRegex(bake.BakeError, "15 visible"):
-            bake.collect_entries(root(scalar, variable("v3", "sixteen_char_len", 0x1000, "u16")), RANGES)
+        exact = "x" * bake.NAME_MAX
+        entries, _ = bake.collect_entries(root(scalar, variable("v3", exact, 0x1000, "u16")), RANGES)
+        self.assertEqual(entries[0].name, exact)
+        with self.assertRaisesRegex(bake.BakeError, str(bake.NAME_MAX)):
+            bake.collect_entries(root(scalar, variable("v4", "x" * (bake.NAME_MAX + 1), 0x1000, "u16")), RANGES)
 
     def test_capacity_and_alignment_fail(self) -> None:
         records = [base("u16", "unsigned int", 1, 7)]
@@ -151,24 +154,38 @@ class CollectionTests(unittest.TestCase):
 
 
 class BlobTests(unittest.TestCase):
-    def test_round_trip_uses_c28x_wide_chars(self) -> None:
+    def test_round_trip_uses_packed_name_pool(self) -> None:
         entries = [bake.Descriptor("pi.Kp", bake.TYPE_F32, 7, 0x1000)]
         firmware_info = bake.FirmwareInfo("phase4-demo", 0x6A4DE800)
         blob = bake.encode_blob(entries, build_hash=0x12345678, firmware_info=firmware_info)
         self.assertEqual(
             len(blob),
-            bake.BLOB_HEADER_SIZE + bake.FIRMWARE_INFO_SIZE + bake.USER_CAPACITY * 44,
+            bake.BLOB_HEADER_SIZE
+            + bake.FIRMWARE_INFO_SIZE
+            + bake.POOL_HEADER_SIZE
+            + bake.USER_CAPACITY * bake.ENTRY_SIZE
+            + bake.USER_NAME_POOL_OCTETS,
         )
         self.assertEqual(
             blob[bake.BLOB_HEADER_SIZE : bake.BLOB_HEADER_SIZE + 22],
             b"p\0h\0a\0s\0e\0" b"4\0-\0d\0e\0m\0o\0",
         )
-        entry_offset = bake.BLOB_HEADER_SIZE + bake.FIRMWARE_INFO_SIZE
-        self.assertEqual(
-            blob[entry_offset : entry_offset + 12],
-            b"p\0i\0.\0K\0p\0\0\0",
+        pool_offset = (
+            bake.BLOB_HEADER_SIZE
+            + bake.FIRMWARE_INFO_SIZE
+            + bake.POOL_HEADER_SIZE
+            + bake.USER_CAPACITY * bake.ENTRY_SIZE
         )
+        self.assertEqual(blob[pool_offset : pool_offset + 5], b"pi.Kp")
         self.assertEqual(bake.decode_blob(blob), (0x12345678, firmware_info, entries))
+
+    def test_name_pool_limit_fails_clearly(self) -> None:
+        entries = [
+            bake.Descriptor(f"{i:03d}" + ("x" * (bake.NAME_MAX - 3)), bake.TYPE_U16, 7, 0x1000 + i)
+            for i in range((bake.USER_NAME_POOL_OCTETS // bake.NAME_MAX) + 1)
+        ]
+        with self.assertRaisesRegex(bake.BakeError, "name pool"):
+            bake.build_name_pool(entries)
 
     def test_rejects_bad_blob_version(self) -> None:
         blob = bytearray(bake.encode_blob([]))

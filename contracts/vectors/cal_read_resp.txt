@@ -2,5 +2,5 @@
 # CAL_READ_RESP: 3 value_bits for read_seq=42
 # raw  = frame before COBS (ver|type|flags|seq|len|payload|crc32c, all LE)
 # wire = COBS(raw) + 0x00 delimiter, the actual SCI-link octets
-raw: 599200070014002a000000030000000000604064000000f9ffffffdcca176a
-wire: 03599202070214022a010102030101010104604064010109f9ffffffdcca176a00
+raw: 5a9200070014002a000000030000000000604064000000f9ffffff3c7d5488
+wire: 035a9202070214022a010102030101010104604064010109f9ffffff3c7d548800

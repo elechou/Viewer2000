@@ -2,7 +2,7 @@
 """Generate Viewer2000 golden test vectors for the wire protocol.
 
 This script is executable pseudocode for docs/wire-spec.md: COBS, CRC-32C,
-frame construction, and every v9 message reference sample. The generated
+frame construction, and every v10 message reference sample. The generated
 contracts/vectors/*.txt files are normative byte samples for firmware C
 serializer tests and host Rust parser conformance tests. When implementations
 disagree, the vectors are authoritative and the spec must be corrected.
@@ -89,7 +89,7 @@ for _case in (b"", b"\x00\x00", b"\x01" * 300, bytes(range(256))):
 # ---------------------------------------------------------------------------
 # Frame construction, docs/wire-spec.md section 3.1.
 # ---------------------------------------------------------------------------
-VER_MAGIC = 0x59
+VER_MAGIC = 0x5A
 
 
 def raw_frame(msg_type: int, seq: int, payload: bytes) -> bytes:
@@ -106,9 +106,10 @@ def wire_frame(raw: bytes) -> bytes:
 # Message payload construction, docs/wire-spec.md section 4.
 # Field order and offsets follow the spec.
 # ---------------------------------------------------------------------------
-def desc_entry(name, type_, kind, addr, presc, reserved=0):
-    return struct.pack("<16sHHIHH", name.encode("ascii"),
-                       type_, kind, addr, presc, reserved)
+def enum_entry(name, type_, kind, addr, presc):
+    encoded = name.encode("ascii")
+    assert 0 < len(encoded) <= 128
+    return struct.pack("<IHHHBB", addr, type_, kind, presc, len(encoded), 0) + encoded
 
 
 # V2K_TYPE_* -> (struct format code, native sample width in octets).
@@ -144,7 +145,7 @@ def build_cases():
     add("hello_req", "HELLO_REQ: empty payload", 0x01, 0x0001, b"")
     add("hello_resp", "HELLO_RESP: versions, build_hash, firmware name, tick_hz, capabilities, project metadata, MCU model, and Scope resources",
         0x81, 0x0001,
-        struct.pack("<HHIHH16sII32sIHHHHI", 9, 13, BUILD_HASH, 10, 0,
+        struct.pack("<HHIHH16sII32sIHHHHI", 10, 14, BUILD_HASH, 10, 0,
                     b"viewer2000", 20000, 0x7F,
                     b"phase4-demo", BUILD_TIME_UTC,
                     1, 16, 10, 0, 0x7000))
@@ -195,11 +196,11 @@ def build_cases():
     add("enum_req", "ENUM_REQ: request 8 entries starting at index 0", 0x03, 0x0003,
         struct.pack("<HBB", 0, 8, 0))
     add("enum_resp_2entries",
-        "ENUM_RESP: total 10, page contains user vel_kp param/scope and system iq_meas scope",
+        "ENUM_RESP: total 10, page contains long user PI state and system iq_meas scope",
         0x83, 0x0003,
         struct.pack("<HHBB", 10, 0, 2, 0)
-        + desc_entry("vel_kp", 4, 0x0007, 0x0000A012, 1, 0)  # F32, USER|PARAM|SCOPE
-        + desc_entry("iq_meas", 0, 0x0002, 0x0000A044, 1))  # I16, system SCOPE
+        + enum_entry("controller.current_loop.pi_q.integrator_state", 4, 0x0007, 0x0000A012, 1)
+        + enum_entry("iq_meas", 0, 0x0002, 0x0000A044, 1))
     add("enum_resp_empty",
         "ENUM_RESP boundary: start_idx past total gives count=0, a legal done signal",
         0x83, 0x0004, struct.pack("<HHBB", 10, 10, 0, 0))

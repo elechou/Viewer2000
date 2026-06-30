@@ -28,6 +28,7 @@ static uint32_t s_cpu1_seen_heartbeat;
 static uint32_t s_cpu1_seen_tick;
 static uint32_t s_cpu1_last_change_ms;
 static uint16_t s_cpu1_stale;
+static uint16_t s_enum_req_seq;
 static const v2k_protocol_endpoint_t *s_request_endpoint;
 static const v2k_protocol_endpoint_t *s_push_endpoint;
 
@@ -96,9 +97,9 @@ static void v2k_handle_hello(uint16_t seq)
     v2k_message_put_u16(s_message, off, V2K_WIRE_VER);
     v2k_message_put_u16(s_message, (uint16_t)(off + 2u), V2K_CONTRACT_VER);
     v2k_message_put_u32(s_message, (uint16_t)(off + 4u),
-                V2K_CPU1_PLANE_RO->desc_table.hdr.build_hash);
+                V2K_CPU1_PLANE_RO->catalog.hdr.build_hash);
     v2k_message_put_u16(s_message, (uint16_t)(off + 8u),
-                V2K_CPU1_PLANE_RO->desc_table.hdr.entry_count);
+                V2K_CPU1_PLANE_RO->catalog.hdr.total_count);
     v2k_message_put_u16(s_message, (uint16_t)(off + 10u), 0u);
     for (i = 0u; i < 16u; i++)
     {
@@ -148,7 +149,7 @@ static uint16_t v2k_write_status_payload(uint16_t off)
     v2k_message_put_u16(s_message, (uint16_t)(off + 22u), cal->result);
     v2k_message_put_u16(s_message, (uint16_t)(off + 24u), cal->fail_idx);
     v2k_message_put_u32(s_message, (uint16_t)(off + 26u),
-                V2K_CPU1_PLANE_RO->desc_table.hdr.build_hash);
+                V2K_CPU1_PLANE_RO->catalog.hdr.build_hash);
     s_message[(uint16_t)(off + 30u)] = prod->mode & 0xFFu;
     s_message[(uint16_t)(off + 31u)] = prod->flags & 0xFFu;
     v2k_message_put_u16(s_message, (uint16_t)(off + 32u), 0u);
@@ -226,10 +227,12 @@ static void v2k_update_cpu1_stale_monitor(void)
 static void v2k_handle_enum(uint16_t seq, const uint16_t *payload,
                             uint16_t payload_len)
 {
-    const volatile v2k_desc_table_t *table = &V2K_CPU1_PLANE_RO->desc_table;
+    volatile v2k_catalog_req_t *req = &g_v2k_cpu2_plane.catalog_req;
+    const volatile v2k_catalog_resp_t *resp =
+        &V2K_CPU1_PLANE_RO->catalog.enum_resp;
     uint16_t start;
     uint16_t max_count;
-    uint16_t count;
+    uint16_t req_seq;
     uint16_t i;
     uint16_t off;
     if (payload_len != 4u)
@@ -239,40 +242,48 @@ static void v2k_handle_enum(uint16_t seq, const uint16_t *payload,
     }
     start = v2k_message_get_u16(payload, 0u);
     max_count = payload[2] & 0xFFu;
-    if ((max_count == 0u) || (max_count > 8u))
+
+    req_seq = (uint16_t)(s_enum_req_seq + 1u);
+    if (req_seq == 0u)
     {
-        v2k_protocol_send_ack(V2K_MSG_ENUM, seq, V2K_ACK_BAD_PARAM, 0uL);
+        req_seq = 1u;
+    }
+    s_enum_req_seq = req_seq;
+    req->start_idx = start;
+    req->max_count = max_count;
+    req->reserved = 0u;
+    req->req_seq = req_seq;
+
+    for (i = 0u; i < 6000u; i++)
+    {
+        if (resp->ack_seq == req_seq)
+        {
+            break;
+        }
+        v2k_cpu2_board_delay_us(1u);
+    }
+    if (resp->ack_seq != req_seq)
+    {
+        v2k_protocol_send_ack(V2K_MSG_ENUM, seq, V2K_ACK_INTERNAL, req_seq);
         return;
     }
-    count = (start < table->hdr.entry_count) ?
-            (uint16_t)(table->hdr.entry_count - start) : 0u;
-    if (count > max_count)
+    if (resp->result == V2K_CATALOG_RESULT_BAD_PARAM)
     {
-        count = max_count;
+        v2k_protocol_send_ack(V2K_MSG_ENUM, seq, V2K_ACK_BAD_PARAM, req_seq);
+        return;
+    }
+    if ((resp->result != V2K_CATALOG_RESULT_OK) ||
+        (resp->payload_len > V2K_WIRE_MAX_PAYLOAD))
+    {
+        v2k_protocol_send_ack(V2K_MSG_ENUM, seq, V2K_ACK_INTERNAL, req_seq);
+        return;
     }
     off = v2k_protocol_response_begin(V2K_MSG_ENUM, seq);
-    v2k_message_put_u16(s_message, off, table->hdr.entry_count);
-    v2k_message_put_u16(s_message, (uint16_t)(off + 2u), start);
-    s_message[(uint16_t)(off + 4u)] = count;
-    s_message[(uint16_t)(off + 5u)] = 0u;
-    off = (uint16_t)(off + 6u);
-    for (i = 0u; i < count; i++)
+    for (i = 0u; i < resp->payload_len; i++)
     {
-        const volatile v2k_desc_entry_t *entry =
-            &table->entries[(uint16_t)(start + i)];
-        uint16_t n;
-        for (n = 0u; n < V2K_NAME_LEN; n++)
-        {
-            s_message[off++] = ((uint16_t)entry->name[n]) & 0xFFu;
-        }
-        v2k_message_put_u16(s_message, off, entry->type);
-        v2k_message_put_u16(s_message, (uint16_t)(off + 2u), entry->kind);
-        v2k_message_put_u32(s_message, (uint16_t)(off + 4u), entry->addr);
-        v2k_message_put_u16(s_message, (uint16_t)(off + 8u), entry->prescaler);
-        v2k_message_put_u16(s_message, (uint16_t)(off + 10u), entry->reserved);
-        off = (uint16_t)(off + 12u);
+        s_message[(uint16_t)(off + i)] = resp->payload[i] & 0xFFu;
     }
-    v2k_protocol_finish_response((uint16_t)(off - 7u));
+    v2k_protocol_finish_response(resp->payload_len);
 }
 
 static int16_t v2k_find_staged(uint32_t addr)
@@ -539,6 +550,7 @@ void v2k_protocol_init(void)
     s_response_len = 0u;
     s_response_ready = 0u;
     s_cal_staged_commit_seq = 0xFFFFFFFFuL;
+    s_enum_req_seq = V2K_CPU1_PLANE_RO->catalog.enum_resp.ack_seq;
     s_last_status_push_ms = 0uL;
     s_cpu1_seen_heartbeat = V2K_MSG_1TO2_RO->cpu1_status.heartbeat;
     s_cpu1_seen_tick = V2K_MSG_1TO2_RO->cpu1_status.tick;

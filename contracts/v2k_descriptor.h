@@ -1,46 +1,16 @@
 //=============================================================================
-// v2k_descriptor.h — shared-memory interface: descriptor table
-//                    (platform-quantity enumeration + default sampling hints)
+// v2k_descriptor.h - shared-memory interface: CPU1-owned variable catalog
 //
-// Role (variable-discovery architecture; revised 2026-06-19):
-// This table registers **platform quantities** (registered by board/runtime:
-// grouped v2k_io diagnostics, applied duty cycles, status words, platform
-// parameters)
-// **plus user application variables** — the latter baked in at compile time by
-// the build tool from the firmware .out DWARF. The student writes
-// plain C: no registration API call, no hand-typed name strings, no mandated
-// declaration style (the C symbol is the sole naming source, collected at build
-// time, never hand-typed). Once the names are baked into the device the host
-// enumerates them all (platform + user) via ENUM, with no .out needed (and no
-// stale-ELF risk — the addresses come from the same build that was flashed, and
-// build_hash still backstops the host cache).
-// Responsibilities of this table:
-//   1. Works out of the box: the host enumerates platform + user names and
-//      immediately draws waveforms;
-//   2. Channel binding is on-demand; the device does not rely on a boot default
-//      binding of early observables.
-//
-// 2026-06-17 semantic fix:
-// * The on-wire value is the real value; the descriptor no longer carries
-//   min/max/scale/offset semantics.
-//
-// CPU1 writes the table at startup (CPU1-owned region, see v2k_memmap.h);
-// read-only thereafter.
-//
-// Key semantics:
-// * entry.addr is a word address in CPU1 data space and may point into CPU1
-//   private RAM. Only CPU1 may dereference it (sampling and parameter apply
-//   both happen on the CPU1 side); CPU2 / host treat addr as an opaque id,
-//   passing it through or ignoring it.
-// * Registration order is desc_idx (0..count-1), the index key of the value
-//   mirror.
-// * After the table is written CPU1 fills hdr.entry_count and writes hdr.magic
-//   last (publish barrier); CPU2 may read the table only once it sees magic
-//   valid.
-//
-// The descriptor "add" primitive is an L1-internal function; user variables are
-// baked into the table at build time and port names are registered by wire;
-// there is no registration API exposed to L3 user code.
+// v10 catalog model:
+// * CPU1 owns the complete variable catalog. Platform names live in CPU1
+//   firmware data, and baked user names live in the CPU1 Flash v2k_user_desc
+//   blob. CPU2 never reads CPU1 Flash directly and never stores the dictionary.
+// * Shared RAM carries only a small catalog header plus an ENUM request/response
+//   staging window. Realtime paths remain keyed by (addr,type) and never carry
+//   names.
+// * The user catalog has explicit build-time guardrails: many variables and long
+//   names are allowed, but over-budget catalogs fail in the baker with a clear
+//   message before the linker/Flash capacity is the first signal.
 //=============================================================================
 #ifndef V2K_DESCRIPTOR_H
 #define V2K_DESCRIPTOR_H
@@ -48,107 +18,154 @@
 #include "v2k_common.h"
 
 //-----------------------------------------------------------------------------
-// Capacity and size constants
+// Catalog capacity and resource guardrails
 //-----------------------------------------------------------------------------
-#define V2K_NAME_LEN   16u   // Fixed name length (incl. NUL padding); ASCII, 1 octet/char on the wire
-#define V2K_PROJECT_NAME_LEN 32u // HELLO project name length; ASCII, NUL-padded on the wire
+#define V2K_NAME_MAX 128u              // Max visible variable-name octets.
+#define V2K_PROJECT_NAME_LEN 32u       // HELLO project name length.
 #define V2K_DEFAULT_PROJECT_NAME "untitled"
-#define V2K_DESC_MAX   176u // Table cap: 8-word header + 176 × 22 words = 3880 words
-#define V2K_PLATFORM_DESC_MAX 64u  // Platform/system descriptor capacity
-#define V2K_USER_DESC_MAX 112u     // Build-time baked user-variable capacity
 
-// Octets per descriptor on the wire (wire-spec §4.3 ENUM_RESP; mirrors the struct fields one-to-one)
-#define V2K_DESC_WIRE_OCTETS 28u
+#define V2K_PLATFORM_DESC_MAX 96u
+#define V2K_USER_DESC_MAX 512u
+#define V2K_DESC_MAX (V2K_PLATFORM_DESC_MAX + V2K_USER_DESC_MAX)
+
+#define V2K_PLATFORM_NAME_POOL_OCTETS 4096u
+#define V2K_USER_NAME_POOL_OCTETS 16384u
+
+#define V2K_ENUM_MAX_COUNT 8u
+#define V2K_ENUM_ENTRY_FIXED_OCTETS 12u
+#define V2K_CATALOG_PAYLOAD_OCTETS V2K_WIRE_MAX_PAYLOAD
 
 //-----------------------------------------------------------------------------
-// kind flag bits (tunable and observable are not mutually exclusive; one variable can be both)
+// kind flag bits (tunable and observable are not mutually exclusive)
 //-----------------------------------------------------------------------------
-#define V2K_KIND_PARAM  0x0001u  // Tunable parameter: participates in the parameter-plane write path (v2k_param.h)
-#define V2K_KIND_SCOPE  0x0002u  // Observable signal: participates in the scope sampling path (v2k_scope.h); prescaler is the default sampling hint
-#define V2K_KIND_USER   0x0004u  // Origin: build-time-baked user variable; clear for platform/system descriptors
-// bit3..15 reserved, set to 0
+#define V2K_KIND_PARAM  0x0001u
+#define V2K_KIND_SCOPE  0x0002u
+#define V2K_KIND_USER   0x0004u
 
 #define V2K_DESC_ERROR_NONE              0u
 #define V2K_DESC_ERROR_BLOB_HEADER       1u
 #define V2K_DESC_ERROR_PLATFORM_CAPACITY 2u
 #define V2K_DESC_ERROR_TABLE_CAPACITY    3u
 #define V2K_DESC_ERROR_USER_ENTRY        4u
+#define V2K_DESC_ERROR_NAME_POOL         5u
+
+#define V2K_CATALOG_RESULT_OK        0u
+#define V2K_CATALOG_RESULT_BAD_PARAM 1u
+#define V2K_CATALOG_RESULT_NO_DATA   2u
+#define V2K_CATALOG_RESULT_INTERNAL  3u
 
 //-----------------------------------------------------------------------------
-// Descriptor entry
+// Compact descriptor metadata
 //
-// C28x layout (word offsets):
-//   name@0..15, type@16, kind@17, addr@18, prescaler@20, reserved@21
-//   → 22 words total, no padding
-// PC layout (octet offsets):
-//   name@0..15, type@16, kind@18, addr@20, prescaler@24, reserved@26
-//   → 28 octets total, no padding
+// This is the realtime-relevant identity of a variable. It deliberately has no
+// name field. Names are serialized only during ENUM from the CPU1-owned catalog
+// source.
 //-----------------------------------------------------------------------------
 typedef struct {
-    char     name[V2K_NAME_LEN]; // ASCII, NUL-padded; not guaranteed NUL-terminated (when exactly 16 chars)
-    uint16_t type;               // V2K_TYPE_*
-    uint16_t kind;               // V2K_KIND_* bit-or
-    uint32_t addr;               // CPU1 data-space word address (opaque to CPU2/host)
-    uint16_t prescaler;          // Default sampling-decimation hint; the actual runtime rate is governed by DAQ_CTRL
-    uint16_t reserved;           // Set to 0; keeps the 28-octet descriptor entry aligned
+    uint32_t addr;       // CPU1 data-space word address.
+    uint16_t type;       // V2K_TYPE_*
+    uint16_t kind;       // V2K_KIND_* bit-or
+    uint16_t prescaler;  // Default sampling-decimation hint.
+    uint16_t reserved;   // Set to 0; keeps array stride 32-bit aligned.
 } v2k_desc_entry_t;
 
-V2K_ASSERT_SIZE_BITS(v2k_desc_entry_t, V2K_NAME_BITS(V2K_NAME_LEN) + 96u);
+V2K_ASSERT_SIZE_BITS(v2k_desc_entry_t, 96u);
 
 //-----------------------------------------------------------------------------
-// Table header (precedes the entry array, in the same shared-RAM region)
-//
-// Publish protocol: CPU1 fills entries[] and the remaining header fields first,
-// then writes magic last; CPU2 polls magic == V2K_DESC_MAGIC and treats the
-// table as ready (single writer, one direction, no lock needed).
+// CPU1-published catalog header and ENUM staging
 //-----------------------------------------------------------------------------
-#define V2K_DESC_MAGIC 0x564B4454u   /* "VKDT" */
-#define V2K_USER_DESC_MAGIC 0x564B5544u /* "VKUD" */
-#define V2K_USER_DESC_VERSION 4u
+#define V2K_CATALOG_MAGIC 0x564B4341u       // "VKCA"
+#define V2K_USER_DESC_MAGIC 0x564B5543u     // "VKUC"
+#define V2K_USER_DESC_VERSION 5u
 
 typedef struct {
-    uint32_t magic;              // V2K_DESC_MAGIC; written last = publish
-    uint16_t contract_ver;       // = V2K_CONTRACT_VER, checked by CPU2 at handshake
-    uint16_t entry_count;        // Number of registered entries ≤ V2K_DESC_MAX
-    v2k_build_hash_t build_hash; // Firmware build hash (host re-enumeration trigger)
-    uint16_t entry_stride_words; // = sizeof(v2k_desc_entry_t) (C28x words),
-                                 //   lets CCS scripts/debug tools walk the table self-describingly
-    uint16_t reserved;           // Set to 0
-} v2k_desc_table_hdr_t;
+    uint32_t magic;       // V2K_CATALOG_MAGIC; written last = publish.
+    v2k_build_hash_t build_hash;
+    uint16_t contract_ver;
+    uint16_t total_count;
+    uint16_t platform_count;
+    uint16_t user_count;
+    uint16_t max_name_len;
+    uint16_t user_capacity;
+    uint16_t platform_capacity;
+    uint16_t user_name_pool_octets;
+    uint16_t platform_name_pool_octets;
+    uint16_t reserved;
+} v2k_catalog_hdr_t;
 
-V2K_ASSERT_SIZE_BITS(v2k_desc_table_hdr_t, 128u);
-
-//-----------------------------------------------------------------------------
-// Whole table (shared-RAM entity, CPU1-owned)
-//-----------------------------------------------------------------------------
-typedef struct {
-    v2k_desc_table_hdr_t hdr;
-    v2k_desc_entry_t     entries[V2K_DESC_MAX];
-} v2k_desc_table_t;
+V2K_ASSERT_SIZE_BITS(v2k_catalog_hdr_t, 224u);
 
 typedef struct {
-    char     project_name[V2K_PROJECT_NAME_LEN]; // ASCII, NUL-padded; exactly 32 visible chars need no NUL
-    uint32_t build_time_utc;                     // Unix UTC seconds; human-readable only, not a safety hash
+    uint16_t start_idx;
+    uint16_t max_count;
+    uint16_t reserved;
+    uint16_t req_seq;    // CPU2 writes this last to publish.
+} v2k_catalog_req_t;
+
+V2K_ASSERT_SIZE_BITS(v2k_catalog_req_t, 64u);
+
+typedef struct {
+    uint16_t ack_seq;     // CPU1 writes this last to publish.
+    uint16_t result;      // V2K_CATALOG_RESULT_*
+    uint16_t payload_len; // ENUM response payload octets in payload[].
+    uint16_t reserved;
+    uint16_t payload[V2K_CATALOG_PAYLOAD_OCTETS]; // One wire octet per word.
+} v2k_catalog_resp_t;
+
+V2K_ASSERT_SIZE_BITS(v2k_catalog_resp_t,
+                     64u + (V2K_CATALOG_PAYLOAD_OCTETS * 16u));
+
+typedef struct {
+    v2k_catalog_hdr_t hdr;
+    v2k_catalog_resp_t enum_resp;
+} v2k_catalog_shared_t;
+
+//-----------------------------------------------------------------------------
+// Firmware/project info
+//-----------------------------------------------------------------------------
+typedef struct {
+    char     project_name[V2K_PROJECT_NAME_LEN];
+    uint32_t build_time_utc;
 } v2k_firmware_info_t;
 
 V2K_ASSERT_SIZE_BITS(v2k_firmware_info_t,
                      V2K_NAME_BITS(V2K_PROJECT_NAME_LEN) + 32u);
 
+//-----------------------------------------------------------------------------
+// CPU1 Flash user catalog blob
+//
+// name_offset/name_len address bytes in name_pool_words as packed ASCII octets:
+// even offset -> low byte of the word, odd offset -> high byte.
+//-----------------------------------------------------------------------------
 typedef struct {
-    uint32_t magic;       // V2K_USER_DESC_MAGIC when the reserved blob is initialized/patched
-    uint16_t version;     // V2K_USER_DESC_VERSION
-    uint16_t count;       // Valid baked entries in entries[]
-    uint16_t capacity;    // = V2K_USER_DESC_MAX; checked by the baker and runtime
-    uint16_t reserved;    // Set to 0
-    v2k_build_hash_t build_hash; // Final linked image hash generated by the baker
-    v2k_firmware_info_t firmware_info; // Project metadata generated on CPU1 and forwarded by CPU2 HELLO
-    v2k_desc_entry_t entries[V2K_USER_DESC_MAX];
+    v2k_desc_entry_t desc;
+    uint32_t name_offset;
+    uint16_t name_len;
+    uint16_t reserved;
+} v2k_user_desc_entry_t;
+
+V2K_ASSERT_SIZE_BITS(v2k_user_desc_entry_t, 160u);
+
+typedef struct {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t count;
+    uint16_t capacity;
+    uint16_t reserved;
+    v2k_build_hash_t build_hash;
+    v2k_firmware_info_t firmware_info;
+    uint16_t name_pool_octets;
+    uint16_t name_pool_capacity;
+    uint16_t reserved2;
+    uint16_t reserved3;
+    v2k_user_desc_entry_t entries[V2K_USER_DESC_MAX];
+    uint16_t name_pool_words[(V2K_USER_NAME_POOL_OCTETS + 1u) / 2u];
 } v2k_user_desc_blob_t;
 
 V2K_ASSERT_SIZE_BITS(v2k_user_desc_blob_t,
-                     128u + V2K_NAME_BITS(V2K_PROJECT_NAME_LEN) + 32u +
-                            (V2K_USER_DESC_MAX *
-                            (V2K_NAME_BITS(V2K_NAME_LEN) + 96u)));
-V2K_STATIC_ASSERT(V2K_PLATFORM_DESC_MAX + V2K_USER_DESC_MAX == V2K_DESC_MAX);
+                     128uL + V2K_NAME_BITS(V2K_PROJECT_NAME_LEN) + 32uL +
+                     64uL + ((uint32_t)V2K_USER_DESC_MAX * 160uL) +
+                     (((uint32_t)((V2K_USER_NAME_POOL_OCTETS + 1uL) / 2uL)) *
+                      16uL));
 
 #endif // V2K_DESCRIPTOR_H

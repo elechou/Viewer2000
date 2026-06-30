@@ -2,5 +2,5 @@
 # ENUM_RESP boundary: start_idx past total gives count=0, a legal done signal
 # raw  = frame before COBS (ver|type|flags|seq|len|payload|crc32c, all LE)
 # wire = COBS(raw) + 0x00 delimiter, the actual SCI-link octets
-raw: 598300040006000a000a000000c009c2f8
-wire: 03598302040206020a020a010105c009c2f800
+raw: 5a8300040006000a000a0000006f41b4a9
+wire: 035a8302040206020a020a0101056f41b4a900

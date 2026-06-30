@@ -1,4 +1,4 @@
-# Viewer2000 wire protocol specification (wire spec) v9
+# Viewer2000 wire protocol specification (wire spec) v10
 
 > **Document status**: this document together with the `contracts/` headers forms the single source of truth for the protocol; the golden test vectors under `contracts/vectors/` are the executable form of this document. Both the firmware C serializer and the host Rust parser must pass the conformance test against the same set of vectors. When the three disagree, **the vectors are authoritative**, and the document is fixed immediately.
 >
@@ -12,7 +12,7 @@
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ Service-semantics layer  session/enum/param txn/DAQ stream/command (§5)     │ transport-agnostic
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ Message layer  message catalog v9, fixed-length little-endian layout (§4)   │ transport-agnostic
+│ Message layer  message catalog v10, fixed/var-length LE layout (§4)         │ transport-agnostic
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ Frame adapter  per-transport:                 (§3)                          │ transport-dependent
 │             SCI = COBS + frame header + CRC-32C                             │
@@ -30,13 +30,14 @@ The service semantics keep the generic vocabulary CAL/DAQ/prescaler from XCP (AS
 
 - **octet** = on-wire 8-bit byte; **word** = C28x 16-bit unit. This file uses octet throughout.
 - Multi-octet integers are always **little-endian (LE)**; `f32` = the LE bit pattern of IEEE-754 single precision.
-- Strings = ASCII fixed-length, NUL-padded (NUL termination not guaranteed).
+- Strings are printable ASCII. Unless a field explicitly carries `name_len`,
+  strings are fixed-length and NUL-padded (NUL termination not guaranteed).
 - In the offset tables, `off:sz` is in octets.
 - SCI model: control-plane messages remain request-response, while STATUS and
   scope data are firmware-initiated push frames. The host must keep receiving
   and demuxing push frames while command responses are in flight.
 - The `value_bits` (parameter value bit pattern) convention is in `v2k_common.h`: F32 native bit pattern, I16 sign-extended / U16 zero-extended to 32 bit.
-- **The universal key for variable addressing = `(addr, type)`** (CPU1 data-space word address + type code). All addresses come from one source the host enumerates over the wire: **the descriptor table**, which holds the platform quantities (registered by L0/L1) plus the user's application variables (**baked into the table at build time from the firmware DWARF**; struct members / array elements expanded into named scalar entries; pairing guarded by build_hash). The names therefore travel with the device — the host needs no `.out`. Users/students write plain C: no registration code, no name strings, no mandated declaration style.
+- **The universal key for variable addressing = `(addr, type)`** (CPU1 data-space word address + type code). Names live only in the CPU1-owned catalog: platform/system names are firmware-owned, and user names are baked into the CPU1 Flash catalog from DWARF. CPU2 proxies ENUM requests through shared RAM but does not own or parse the dictionary. Realtime services (`CAL`, `DAQ_BIND`, Stream/Capture blocks) stay name-free.
 - **The on-wire value is the real value**: the protocol carries no `min/max/scale/offset` display or guard-rail metadata. Both the DAQ block and the CAL value interpret the bit pattern by the variable's native type; the firmware does no quantization, no conversion, no parameter range clamping or range rejection.
 
 ## 3. Frame adapter
@@ -47,7 +48,7 @@ The service semantics keep the generic vocabulary CAL/DAQ/prescaler from XCP (AS
 Pre-encoding frame ("raw frame", CRC coverage = offset 0 .. 7+n-1):
 
 off  sz  field
-0    1   ver_magic   = 0x59 (high nibble 0x5 fixed magic, low nibble = V2K_WIRE_VER)
+0    1   ver_magic   = 0x5A (high nibble 0x5 fixed magic, low nibble = V2K_WIRE_VER)
 1    1   msg_type    (§4 catalog; response = request | 0x80, or a push type)
 2    1   flags       = 0x00, reserved
 3    2   seq         request-response pairing seq, or push_frame_seq for push frames
@@ -79,7 +80,7 @@ On-wire form: COBS(raw frame) + 0x00 delimiter
 
 The timestamp is always the ISR tick in the block header, unrelated to the EtherCAT DC clock system (no DC).
 
-## 4. Message catalog v9
+## 4. Message catalog v10
 
 ### 4.0 Master table
 
@@ -114,13 +115,13 @@ off sz field
 
 ### 4.1 HELLO (0x01 / 0x81)
 
-Request payload empty. The wire v9 response is 84 octets:
+Request payload empty. The wire v10 response is 84 octets:
 
 ```
-0   2  proto_ver     = V2K_WIRE_VER (host disconnects on mismatch, hinting a firmware/host version mismatch)
+0   2  proto_ver     = V2K_WIRE_VER (=10; host disconnects on mismatch)
 2   2  contract_ver  = V2K_CONTRACT_VER
 4   4  build_hash    baker-generated final-image hash (§5.1 re-enumeration basis)
-8   2  desc_count    total descriptor count
+8   2  catalog_count total variable-catalog entry count
 10  2  reserved
 12  16 fw_name       ASCII, e.g. "viewer2000"
 28  4  tick_hz       CPU1 ISR tick frequency; the sole basis for converting block tick to seconds
@@ -147,14 +148,14 @@ Request payload empty. The wire v9 response is 84 octets:
 | 6 | NATIVE_BLOCK | native-bit-width `ScopeBlock` |
 
 The host rejects shorter HELLO responses because scope capacity and channel-count
-limits are part of the v9 connection contract.
+limits are part of the v10 connection contract.
 
 `project_name` is copied from CPU1's CCS/Eclipse `cpu1/.project` `<name>` field as-is, after only the wire-level printable-ASCII/32-character check. If the name is empty it becomes `untitled`. If it is `untitled`, the CPU1 post-link baker emits a build warning but does not fail the build. These HELLO fields are for human identification only. Machine safety and host cache invalidation still use `build_hash`.
 
 ### 4.2 STATUS (0x02 / 0x82, push 0x41)
 
 `STATUS_REQ` request payload is empty and returns `STATUS_RESP`. Firmware also
-pushes `STATUS_PUSH` at about 4 Hz after a valid v9 host frame is observed.
+pushes `STATUS_PUSH` at about 4 Hz after a valid v10 host frame is observed.
 Both response and push carry the same 96-octet payload:
 
 ```
@@ -217,24 +218,29 @@ Detailed current-source bits are available through the enumerated
 
 ### 4.3 ENUM (0x03 / 0x83)
 
-The enumeration object = the descriptor table = the platform quantities L1/L0 register (physical quantities/duty/state/platform parameters) plus the user's application variables baked in at build time from the firmware DWARF, so a host with no `.out` still enumerates everything by name.
+The enumeration object is CPU1's catalog: platform quantities registered by L1/L0 plus user application variables baked into CPU1 Flash from the firmware DWARF. CPU2 is only a stable proxy. After the initial v10 CPU2 upgrade, user catalog changes require rebuilding/flashing CPU1 only.
 
 Request (4 octets): `{0:2 start_idx, 2:1 max_count(≤8), 3:1 reserved}`
-Response (6 + 28×count octets):
+Response (6 + variable entries, up to `V2K_WIRE_MAX_PAYLOAD` octets):
 
 ```
-0  2  total_count    (= desc_count)
+0  2  total_count    (= catalog_count)
 2  2  start_idx      echoed
 4  1  count          actual entries this page
 5  1  reserved
-6  …  count × descriptor entry (28 octets, field-mirroring the current v2k_desc_entry_t):
-      0:16 name | 16:2 type | 18:2 kind | 20:4 addr | 24:2 prescaler | 26:2 reserved
+6  …  count × variable-length catalog entry:
+      0:4 addr | 4:2 type | 6:2 kind | 8:2 prescaler | 10:1 name_len | 11:1 reserved | 12:name_len name_octets
       kind bit0=PARAM, bit1=SCOPE, bit2=USER (build-time-baked user origin;
       clear for platform/system descriptors); bits3..15 reserved
       prescaler is the default-sampling-division suggestion; the runtime actual rate is per DAQ_CTRL
 ```
 
 `start_idx ≥ total_count` → `count=0` (a legal "done reading" signal).
+Because names are variable length, `count` may be less than `max_count` before
+the end of the catalog when the next complete entry would exceed the payload
+limit. The host must advance by `count` and stop only when
+`start_idx + count >= total_count` or when it explicitly requests
+`start_idx ≥ total_count`.
 
 Scope2000 presents USER entries in its main `All Variables` tree and keeps
 platform/system entries in a separate diagnostics tree; both still use the
@@ -252,7 +258,7 @@ same `(addr,type)` CAL/DAQ services.
 
 Semantics: CPU2 writes into the parameter-plane shadow stage **but doesn't publish**; multi-frame accumulation, **the same addr overwrites the staged entry** (the basis for resend idempotency); over the limit returns ACK(BAD_PARAM). `CAL_COMMIT` (payload empty) → CPU2 fills count then writes `commit_seq+1` last (publish), returns ACK(OK, data=commit_seq). The applied result is reconciled via STATUS's `applied_seq/cal_result` (§5.2).
 
-Commit semantics: CPU1 does only a mechanical-consistency check per write — type legal, address in a CPU1 data region allowed for writing, 32-bit-type address aligned; when addr hits the descriptor table it additionally requires `kind&PARAM` and a matching type. **No min/max range check, no clamp, no scale/offset back-calculation.** If any item in the batch fails the mechanical check the whole batch is rejected; after the check passes, the whole batch is written on the same tick at the ISR safe point.
+Commit semantics: CPU1 does only a mechanical-consistency check per write — type legal, address in a CPU1 data region allowed for writing, 32-bit-type address aligned; when addr hits the CPU1 catalog it additionally requires `kind&PARAM` and a matching type. **No min/max range check, no clamp, no scale/offset back-calculation.** If any item in the batch fails the mechanical check the whole batch is rejected; after the check passes, the whole batch is written on the same tick at the ISR safe point.
 
 `CAL_READ` request (2 + 8k octets):
 
@@ -303,7 +309,7 @@ CPU2 writes cfg and publishes `cfg_seq`, waits for CPU1's `cfg_ack_seq/cfg_resul
       0:4 addr | 4:2 type | 6:2 reserved
 ```
 
-Semantics: addr comes from the descriptor table (platform quantities + build-time-baked user variables, §2); samples are losslessly direct-copied at **native width** (I16/U16→2 octets, I32/U32/F32→4 octets, bit pattern verbatim, firmware zero-conversion zero-quantization — accuracy first). Physical-quantity conversion (e.g. ADC count→ampere) is pure host-side display metadata, not on the wire, not in the firmware. **Bindable only when scope mode==OFF.** CPU2 writes the bind region and publishes `bind_seq`, then briefly waits (≤1 ms) for CPU1's `bind_ack_seq/bind_result`, putting the final result into the ACK: OK / BAD_STATE (not OFF, DAQ_CTRL(OFF) first) / BAD_PARAM (n_ch or type illegal), data=bind_seq; a timeout returns INTERNAL (CPU1 ISR not running).
+Semantics: addr comes from the CPU1 catalog (platform quantities + build-time-baked user variables, §2); samples are losslessly direct-copied at **native width** (I16/U16→2 octets, I32/U32/F32→4 octets, bit pattern verbatim, firmware zero-conversion zero-quantization — accuracy first). Physical-quantity conversion (e.g. ADC count→ampere) is pure host-side display metadata, not on the wire, not in the firmware. **Bindable only when scope mode==OFF.** CPU2 writes the bind region and publishes `bind_seq`, then briefly waits (≤1 ms) for CPU1's `bind_ack_seq/bind_result`, putting the final result into the ACK: OK / BAD_STATE (not OFF, DAQ_CTRL(OFF) first) / BAD_PARAM (n_ch or type illegal), data=bind_seq; a timeout returns INTERNAL (CPU1 ISR not running).
 
 ### 4.6 Stream and Capture Push (0x42 / 0x45 / 0x21)
 
@@ -362,7 +368,7 @@ around `trigger_tick`, and sends `DAQ_CTRL(CAPTURE_ARMED,
 ack_capture_id=capture_id)` to release/re-arm. CPU2 keeps the frozen ring valid
 until CPU1 leaves `CAPTURE_FROZEN` through `DAQ_CTRL(OFF/STREAM/CAPTURE_ARMED)`.
 
-`CAPTURE_REPLAY_REQ` reuses message id `0x21` in v9:
+`CAPTURE_REPLAY_REQ` uses message id `0x21` in v10:
 
 ```
 0  2  capture_id
@@ -401,9 +407,9 @@ host                                                     firmware(CPU2)
  │ (then receive STATUS_PUSH, SCOPE_BLOCK_PUSH, CAPTURE_BATCH_PUSH) │
 ```
 
-The host caches the descriptor table, keyed by `build_hash`. The descriptor baker computes this value from the final ELF with the patch section normalized, plus the generated descriptor records. It therefore changes when linked code, addresses, or the baked variable set changes, including dirty-tree builds. At any time (in HELLO or STATUS), detecting a `build_hash` change means **invalidate the entire cache and re-enumerate**. This prevents reading new firmware with an old table.
+The host caches the variable catalog, keyed by `build_hash`. The descriptor baker computes this value from the final ELF with the patch section normalized, plus the generated catalog records. It therefore changes when linked code, addresses, or the baked variable set changes, including dirty-tree builds. At any time (in HELLO or STATUS), detecting a `build_hash` change means **invalidate the entire cache and re-enumerate**. This prevents reading new firmware with an old catalog.
 
-User application-variable discovery: a build tool reads the firmware `.out` DWARF and bakes each user variable's `name→addr→type` into the descriptor table (struct members / array elements expanded into named scalar entries). The host enumerates them over ENUM like any platform quantity — no `.out` on the host, no stale-ELF risk (the addresses come from the same build that is flashed; build_hash still guards the host cache). The student writes plain C.
+User application-variable discovery: a build tool reads the CPU1 firmware `.out` DWARF and bakes each user variable's `name→addr→type` into the CPU1 Flash catalog (struct members / array elements expanded into named scalar entries). The host enumerates them over ENUM like any platform quantity — no `.out` on the host, no stale-ELF risk. CPU2 remains unchanged across CPU1-only user catalog rebuilds as long as the shared contract version is unchanged.
 
 ### 5.2 Parameter transaction (two-stage + async reconcile)
 
@@ -478,7 +484,7 @@ The "watch window" of an application variable = after selecting variables, run S
 | Candidate | Reason not chosen |
 |---|---|
 | **XCP** (the industry standard in this field) | the domain model fits perfectly (CAL/DAQ are the parameter/scope planes), but its variable description relies on offline A2L (ELF-generated), the opposite of the runtime-enumeration idea — after adding private enum extensions an off-the-shelf master (CANape etc.) can't use it, shrinking most of the ecosystem advantage; a minimal-subset implementation is still ~2–3k lines of hand-written 16-bit-char; DAQ's one DTO header per event is 20–30% overhead at 100 kHz, worse than a block amortizing one header over 50 ticks; the EtherCAT phase has no standard XCP binding. **Kept**: the semantic-vocabulary alignment + the fallback of later adding an XCP facade on CPU2. |
-| MAVLink | the parameter microservice is a flat float table, can't hold runtime-enum metadata like type/kind/prescaler → the descriptor table still needs custom messages; payload ≤255 octets → an 800B block needs 4-piece reassembly; the official C generated code = packed struct + memcpy, on C28x that means rewriting the generator backend. All that's kept is the heartbeat and the XML format. |
+| MAVLink | the parameter microservice is a flat float table, can't hold runtime-enum metadata like type/kind/prescaler → the variable catalog still needs custom messages; payload ≤255 octets → an 800B block needs 4-piece reassembly; the official C generated code = packed struct + memcpy, on C28x that means rewriting the generator backend. All that's kept is the heartbeat and the XML format. |
 | nanopb / protobuf | the official explicitly doesn't support CHAR_BIT≠8 platforms (self-maintained private fork); varint makes golden vectors not human-checkable; .proto can't express the shared-RAM layout, so the shared struct still needs hand-written alignment — the second-data-model cost is paid anyway. |
 | CBOR (control plane) | there's the Zephyr MCUmgr precedent, field-evolution friendly; but the firmware needs ~400 lines of self-written 16-bit-char-safe codec subset (building a more general wheel), one protocol with two encodings, and the vectors need pinned deterministic encoding. The evolution need is already covered cheaply by "field append + length discrimination + re-enumeration mechanism". |
 
@@ -488,7 +494,7 @@ The "watch window" of an application variable = after selecting variables, run S
 
 ### ADR-2: variable-discovery architecture (finalized 2026-06-11)
 
-**Decision (revised 2026-06-19)**: the descriptor table carries platform quantities (registered by L0/L1) **plus user application variables baked in at build time from the firmware DWARF** — so the names travel with the device and the host needs no `.out`. Discovery is over ENUM; scoping via DAQ_BIND, parameter writing via CAL_WRITE, both keyed by (addr,type).
+**Decision (revised 2026-06-30)**: CPU1 owns the Flash catalog carrying platform quantities plus user application variables baked at build time from DWARF. Names travel with the device, but not in realtime traffic and not as a persistent CPU2-owned dictionary. Discovery is over ENUM; scoping via DAQ_BIND and parameter writing via CAL_WRITE are both keyed by `(addr,type)`.
 
 **Rejected forms**: ① L2-component init self-registration (`pi_init(&pi, "vel")`) and ② user-side stringified registration macros — both force a second name string or a mandated declaration style; the C symbol is the only acceptable name source. ③ **Host-side runtime `.out`/DWARF parsing** (the original 2026-06-11 plan) — rejected 2026-06-19 because it ties Scope2000 to the project directory and risks a stale/wrong ELF writing to the wrong address. The C symbol is still the only name source, but it is harvested **at build time** and baked into the device.
 

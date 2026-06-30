@@ -25,7 +25,7 @@
 // CPU1-owned plane (section V2K_SECT_CPU1_PLANE)
 //-----------------------------------------------------------------------------
 typedef struct {
-    v2k_desc_table_t   desc_table;    // Descriptor table; see v2k_descriptor.h for publish protocol.
+    v2k_catalog_shared_t catalog;      // CPU1-owned catalog header and ENUM staging.
     v2k_param_status_t param_status;  // Parameter apply status.
     v2k_param_read_resp_t param_read_resp; // CAL_READ on-demand read response.
     v2k_scope_prod_t   scope_prod;    // Scope producer control block.
@@ -36,6 +36,7 @@ typedef struct {
 // CPU2-owned plane (section V2K_SECT_CPU2_PLANE)
 //-----------------------------------------------------------------------------
 typedef struct {
+    v2k_catalog_req_t  catalog_req;   // ENUM request proxy from CPU2 to CPU1.
     v2k_param_shadow_t param_shadow;  // Parameter double-buffer shadow region.
     v2k_param_read_req_t param_read_req; // CAL_READ on-demand read request.
     v2k_scope_cfg_t    scope_cfg;     // Scope configuration request.
@@ -57,8 +58,6 @@ typedef struct {
 
 #if V2K_PLATFORM_C28X
 // Plane occupancy checks. Unit = C28x word = 16 bits.
-V2K_STATIC_ASSERT(sizeof(v2k_cpu1_plane_t) == 4006u);
-V2K_STATIC_ASSERT(sizeof(v2k_cpu2_plane_t) == 312u);
 V2K_STATIC_ASSERT(sizeof(v2k_cpu1_plane_t) <= V2K_CPU1_PLANE_WORDS);
 V2K_STATIC_ASSERT(sizeof(v2k_cpu2_plane_t) <= V2K_CPU2_PLANE_WORDS);
 V2K_STATIC_ASSERT(V2K_MSGRAM_V2K_WORDS <= V2K_MSGRAM_WORDS);

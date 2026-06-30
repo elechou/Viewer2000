@@ -5,7 +5,7 @@
 Phase 2 proved a bare time base (ePWM→ADC→EOC ISR) and a pure-hardware protection chain. Phase 3 **grows the platform's real job** on top of that time base:
 
 - **Executor** — a fixed-order control ISR (`acquire → parameter commit → user_step → apply → scope sample → trigger evaluation → tick++`). The user owns only the one `user_step` slot; every other step belongs to L1. This is the mechanization, in the time dimension, of rule 7 (observability day 0) and rule 4 (L3 sees only completed results / physical quantities, touches no configuration): **there is no un-sampled control path**.
-- **Observability** — of the four shared interfaces frozen in Phase 0, this phase lands the producer side of three: the descriptor table (runtime enumeration), the parameter double-buffer (host→control), and the Stream/Capture shared RAM scope (control→host, Stream continuous flow + Capture trigger-freeze). The command/status plane was landed in Phase 2.
+- **Observability** — of the four shared interfaces frozen in Phase 0, this phase lands the producer side of three: the variable catalog (runtime enumeration), the parameter double-buffer (host→control), and the Stream/Capture shared RAM scope (control→host, Stream continuous flow + Capture trigger-freeze). The command/status plane was landed in Phase 2.
 
 > **2026-06-17 Scope contract update**: the scope keeps the two entries Stream/Capture, but no longer exposes a fixed 8-channel group. CPU1 has only one `scope_prod`, CPU2 has only one `scope_cfg/scope_bind/scope_cons`. `STREAM` is a continuous flow, `CAPTURE_ARMED` is the Capture entry enabling trigger-freeze, and after `CAPTURE_FROZEN` you can drain via the CCS view or `BLOCK_REQ`.
 
@@ -20,11 +20,11 @@ The division of labor follows Phase 2 and extrapolates: **SysConfig owns static 
 | `cpu1/v2k_executor.c/.h` | fixed-order control ISR; down-counter-divided multi-rate scheduling (1 kHz / 100 Hz / parameter-commit, three slots phase-staggered); CPUTIMER1 self-timed stopwatch segmenting control/scope/total cycles; ADC overflow and ISR budget counters |
 | `cpu1/app/v2k_platform.h` | historical compatibility include for the user-facing API, removed after the `v2k.h` boundary became the only main entry |
 | `cpu1/v2k_user.c` | the default L3 example (**weak symbol**, an application may override with a strong definition): passes `pwm1_duty_cmd` straight to the output, no internal state |
-| `cpu1/v2k_registry.c/.h` | descriptor-table registration; background mechanical validation of parameter batches + ISR-safe-point atomic commit; CAL_READ on-demand read service |
+| `cpu1/v2k_registry.c/.h` | CPU1 catalog registration; background mechanical validation of parameter batches + ISR-safe-point atomic commit; CAL_READ on-demand read service |
 | `cpu1/v2k_scope_runtime.c/.h` | Stream/Capture shared scope producer; background config/bind sequence handshake and capacity calculation; post-freeze CCS view de-interleave |
 | `common/v2k_scope_consumer.h` | the SPSC consumer API for CPU2 / unit tests (peek/release/begin_frozen), inline read-only |
 | `cpu1/runtime/v2k_main.c` | background super-loop: services the four shared planes by `g_v2k_tick` deadline, without blocking on the comms core |
-| Phase 4.5 baker | post-link computes the final-image hash and patches it into the user-descriptor blob; CPU1 publishes it in the descriptor-table header |
+| Phase 4.5 baker | post-link computes the final-image hash and patches it into the user catalog blob; CPU1 publishes it in the catalog header |
 
 ## Key decisions (finalized)
 
@@ -33,7 +33,7 @@ The division of labor follows Phase 2 and extrapolates: **SysConfig owns static 
 - **Multi-rate scheduling = down-counter division + phase stagger.** The three slots — 1 kHz, 100 Hz, parameter commit — each have their own phase offset and **never fall on the same tick** — slow loops don't bunch onto the same `k%N==0` tick, so WCET is flattened. The stagger relations are pinned by compile-time `V2K_STATIC_ASSERT` (parameter phase `= 3/4 period`, 100 Hz phase `= 1/2 period`, mutually distinct and in range), so a phase collision when changing frequency fails the compile outright.
 - **CPUTIMER1 is the ISR's self-timed stopwatch.** 32-bit free-run down-counter, no interrupt (the only SysConfig static instance Phase 3 adds). The ISR uses it to measure three segments: the **control segment** of acquire→apply, the **scope segment** of the scope epilogue, and the **total duration** of the whole ISR, each recording a max. It is not the same thing as the ePWM TBCTR — TBCTR wraps every period and only serves as a proxy for interrupt latency; CPUTIMER1 gives the absolute cycle account. Its config also goes into `v2k_tb_check` read-back backstop.
 - **The scope defaults to `OFF`.** Phase 3 originally installed an eight-channel boot binding; Phase 4 removed it, so the host now binds 1..`V2K_SCOPE_MAX_CH=16` `(addr,type)` channels on demand while in `OFF`. The `prescaler` in the descriptor is only a GUI default-sampling suggestion; the actual sampling division is decided by the global `prescaler` of `DAQ_CTRL`. When not sampling, the ISR scope path is just one active check. Changing channels must go through `OFF` first (no mixing two channel layouts in one ring).
-- **The parameter commit does only mechanical validation.** Each write is handled by `(addr,type)`: the type must be legal, the address must be in a CPU1 data region allowed for writing, and a 32-bit type must be aligned; if it hits the descriptor table, it additionally requires `kind&PARAM` and a matching type. The firmware does no `min/max` range check, no clamp, no `scale/offset` back-calculation. **The batch is atomic**: if any item is mechanically illegal the whole batch is not written, and `fail_idx` points at the first illegal entry.
+- **The parameter commit does only mechanical validation.** Each write is handled by `(addr,type)`: the type must be legal, the address must be in a CPU1 data region allowed for writing, and a 32-bit type must be aligned; if it hits the CPU1 catalog, it additionally requires `kind&PARAM` and a matching type. The firmware does no `min/max` range check, no clamp, no `scale/offset` back-calculation. **The batch is atomic**: if any item is mechanically illegal the whole batch is not written, and `fail_idx` points at the first illegal entry.
 - **Cross-core handshake uses a uniform sequence-number scheme, no dual-writer flags.** Shared-RAM write protection makes "the other side clearing my flag" impossible where the target provides it, so every request/response is: the requester **writes `xxx_seq` last** in its own owner region (the publish action), and the responder writes `xxx_ack_seq` + a result code in reply. CCS poking the shadow region to tune also obeys the same protocol (fill fields first, increment seq last).
 
 ## 1. SysConfig and pre-build prerequisites
@@ -52,7 +52,7 @@ Done only with the CCS Project/SysConfig tools; manually editing project metadat
    | Interrupt | disabled |
    | Register Interrupt Handler | disabled |
 
-3. Phase 4.5 supersedes the original Git-HEAD pre-build hash. The post-link baker hashes the normalized final ELF plus the generated descriptor records, patches that value into the reserved blob, and `v2k_registry_init` publishes it in the descriptor-table header. When the host reconnects and finds the hash changed, it forces re-enumeration, preventing an old table from reading new firmware.
+3. Phase 4.5 supersedes the original Git-HEAD pre-build hash. The post-link baker hashes the normalized final ELF plus the generated catalog records, patches that value into the reserved blob, and `v2k_registry_init` publishes it in the catalog header. When the host reconnects and finds the hash changed, it forces re-enumeration, preventing an old catalog from reading new firmware.
 
 `cpu1/f28p65x_dbgier.asm` is taken from C2000Ware 26.01; CPU1 startup calls `SetDBGIER(INTERRUPT_CPU_INT1)`, marking PIE Group 1 (where ADCA1 lives) as **time-critical** — when the background is halted by CCS, the control ISR and tick keep executing (the precondition of real-time mode, see Phase 2 FREE_RUN decision layer ③).
 
@@ -64,12 +64,12 @@ Done only with the CCS Project/SysConfig tools; manually editing project metadat
 
 | Region | Address | Use |
 |---|---|---|
-| GS0 first half | `0x10000..0x10FFF` | descriptor table + parameter status + the single scope-producer control block |
+| GS0 first half | `0x10000..0x10FFF` | catalog ENUM staging + parameter status + the single scope-producer control block |
 | GS0 second half + GS1–GS3 | `0x11000..0x17FFF` | Stream/Capture shared scope ring (`0x7000` words) |
 | GS4 first `0x200` words | `0x18000..` | parameter shadow + scope cfg/bind/cons (**CPU2 owner**) |
 | RAMD2 | `0x1A000..` | post-freeze CCS view: de-interleaved contiguous `float data[2048]` |
 
-Default tier: the first 8 platform observables are bound, prescaler=1, internal `block_n_ticks=10`, mode=`OFF`. The low-rate health/protection quantities are still in the descriptor table; the host can rebind and sample them with a larger prescaler.
+Default tier: the first 8 platform observables are bound, prescaler=1, internal `block_n_ticks=10`, mode=`OFF`. The low-rate health/protection quantities are still in the catalog; the host can rebind and sample them with a larger prescaler.
 
 CPU1's background is a bare-metal event loop with no fixed `Delay`: roughly one poll point per ms checks the `seq` changes of parameter/scope/command/CCS view; heartbeat, CPU2 health check, and the LED each compute a deadline from `g_v2k_tick`. **The tick only provides time**; periodic tasks still run in the background and can be preempted by the next control ISR; if the deadline hasn't arrived, it doesn't touch CPU2-plane/MSGRAM data.
 
@@ -142,7 +142,7 @@ The CPU1 session keeps Expressions resident (enable Continuous Refresh):
 
 | Session | Root symbol (typed directly into Expressions) | Content | Use |
 |---|---|---|---|
-| **CPU1** | `g_v2k_cpu1_plane` | `desc_table` / `param_status` / `scope_prod` | read-only reference (all acks/result codes seen here) |
+| **CPU1** | `g_v2k_cpu1_plane` | `catalog` / `param_status` / `scope_prod` | read-only reference (all acks/result codes seen here) |
 | **CPU1** | `g_v2k_ccs_view` | trigger-freeze de-interleave buffer; **the request is also issued from the CPU1 session** (it is CPU1-owned, not part of the CPU2 plane) | read + write request |
 | **CPU1** | `g_v2k_tick` / `g_v2k_due_mask` / `g_v2k_isr_cycles`(`_max`) / `g_v2k_control_cycles`(`_max`) / `g_v2k_scope_cycles`(`_max`) / `g_v2k_isr_ovf_cnt` / `g_v2k_isr_budget_violation_cnt` / `g_v2k_scope_overrun_total` | executor scalars (listed in the §4 table) | read-only |
 | **CPU2** | `g_v2k_cpu2_plane` | `param_shadow` / `scope_cfg` / `scope_bind` / `scope_cons` | all parameter / scope **writes** |
@@ -162,7 +162,7 @@ STREAM drain additionally watches: producer `g_v2k_cpu1_plane.scope_prod.wr_idx`
 
 **The full path for filling fields** (paste into Expressions):
 
-- **Parameter** (CPU2 session): `g_v2k_cpu2_plane.param_shadow.count`, `.writes[0].addr`, `.writes[0].value_bits`, `.writes[0].type`, then `.commit_seq` last. `writes[].addr` comes from the descriptor table (CPU1 session, look at `g_v2k_cpu1_plane.desc_table`) or CPU1's `.map`; `value_bits` is the 32-bit bit pattern — to type a physical value directly for an F32 parameter, right-click the expression → Number Format → **Float** then enter a value like `0.5` (otherwise you'd type the IEEE-754 hex).
+- **Parameter** (CPU2 session): `g_v2k_cpu2_plane.param_shadow.count`, `.writes[0].addr`, `.writes[0].value_bits`, `.writes[0].type`, then `.commit_seq` last. `writes[].addr` comes from the CPU1 catalog (enumerated by the host) or CPU1's `.map`; `value_bits` is the 32-bit bit pattern — to type a physical value directly for an F32 parameter, right-click the expression → Number Format → **Float** then enter a value like `0.5` (otherwise you'd type the IEEE-754 hex).
 - **Bind** (CPU2 session): `g_v2k_cpu2_plane.scope_bind.n_ch`, `.ch[0].addr`, `.ch[0].type` (one addr / type group per channel), then `.bind_seq` last.
 - **Config** (CPU2 session): `g_v2k_cpu2_plane.scope_cfg.mode_req` (`0`=OFF / `1`=STREAM / `2`=CAPTURE_ARMED), `.trig_ch_slot`, `.trig_level`, `.trig_edge`, `.pre_trig_pct`, then `.cfg_seq` last.
 
@@ -229,7 +229,7 @@ Operate case by case (writing per §4.2, all in the **CPU2 session**):
 
 **What can be plotted as a waveform in CCS is the frozen window.** After freezing, CPU1's background `v2k_scope_ccs_view_service` de-interleaves the **interleaved multi-channel block in the ring** into a single-channel contiguous `float` array `g_v2k_ccs_view.data[]`, which Graph reads directly. **STREAM produces no plottable array** (the ring holds native-width interleaved binary blocks, and the de-interleaver only recognizes FROZEN, see §8) — to "see a waveform" go through this section.
 
-At power-up 8 platform fast channels are already bound, **no need to re-BIND**; the channel slot = descriptor-table registration order:
+When a host binding is active, the channel slot follows the ENUM/catalog order used by `DAQ_BIND`; for the historical Phase 3 default binding, the first 8 platform fast channels were:
 
 | Default slot | Channel | Type |
 |---:|---|---|

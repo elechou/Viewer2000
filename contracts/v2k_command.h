@@ -14,7 +14,7 @@
 //
 // ---- Startup handshake ----
 // After CPU1 boots CPU2, CPU2 checks cpu1_status.contract_ver against its own
-// V2K_CONTRACT_VER and waits for the descriptor-table magic before advancing
+// V2K_CONTRACT_VER and waits for the CPU1 catalog magic before advancing
 // its heartbeat. A version mismatch leaves CPU2 in a failure state reported by
 // STATUS, preventing operation with mismatched CPU1/CPU2 images.
 //=============================================================================
@@ -35,7 +35,7 @@
 //-----------------------------------------------------------------------------
 // Platform state machine (cpu1_status.sys_state; L1-owned)
 //-----------------------------------------------------------------------------
-#define V2K_STATE_INIT    0u   // Power-on initialization; table not published
+#define V2K_STATE_INIT    0u   // Power-on initialization; catalog not published
 #define V2K_STATE_IDLE    1u   // Ready with PWM outputs locked
 #define V2K_STATE_RUNNING 2u   // Control is running
 #define V2K_STATE_FAULT   3u   // Hardware trip latched; awaiting CLEAR_FAULT

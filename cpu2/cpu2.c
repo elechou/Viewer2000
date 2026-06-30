@@ -2,7 +2,7 @@
 // cpu2.c - CPU2 communications core
 //
 // Current responsibilities:
-//   1. Rendezvous with CPU1 through IPC_sync, wait for descriptor magic, then
+//   1. Rendezvous with CPU1 through IPC_sync, wait for catalog magic, then
 //      verify the contract version handshake (v2k_command.h).
 //   2. Own the CPU2 plane and CPU2->CPU1 MSGRAM; service the parameter, scope,
 //      and command planes.
@@ -61,11 +61,11 @@ void main(void)
     v2k_cpu2_board_boot_sync();
 
     //
-    // Wait for descriptor publication. Single-writer publish protocol: the
-    // table is readable only after magic appears.
+    // Wait for catalog publication. Single-writer publish protocol: the
+    // catalog proxy is readable only after magic appears.
     //
     g_handshake_state = 1u;
-    while (V2K_CPU1_PLANE_RO->desc_table.hdr.magic != V2K_DESC_MAGIC) { }
+    while (V2K_CPU1_PLANE_RO->catalog.hdr.magic != V2K_CATALOG_MAGIC) { }
 
     //
     // Contract version handshake. A mismatch means CPU1/CPU2 were flashed from
@@ -73,7 +73,7 @@ void main(void)
     // diagnosable failure state.
     //
     if ((V2K_MSG_1TO2_RO->cpu1_status.contract_ver != V2K_CONTRACT_VER) ||
-        (V2K_CPU1_PLANE_RO->desc_table.hdr.contract_ver   != V2K_CONTRACT_VER))
+        (V2K_CPU1_PLANE_RO->catalog.hdr.contract_ver != V2K_CONTRACT_VER))
     {
         g_handshake_state = 2u;
         v2k_cpu2_board_panic_halt();

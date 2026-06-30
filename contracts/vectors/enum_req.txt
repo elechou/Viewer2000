@@ -2,5 +2,5 @@
 # ENUM_REQ: request 8 entries starting at index 0
 # raw  = frame before COBS (ver|type|flags|seq|len|payload|crc32c, all LE)
 # wire = COBS(raw) + 0x00 delimiter, the actual SCI-link octets
-raw: 590300030004000000080071931313
-wire: 0359030203020401010208057193131300
+raw: 5a03000300040000000800c3fd6daf
+wire: 035a03020302040101020805c3fd6daf00
