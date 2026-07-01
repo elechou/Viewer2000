@@ -13,8 +13,8 @@ extern uint16_t V2K_BssOutputStart;
 extern uint16_t V2K_BssOutputEnd;
 extern uint16_t V2K_DataStart;
 extern uint16_t V2K_DataEnd;
-extern uint16_t V2K_UserDataStart;
-extern uint16_t V2K_UserDataEnd;
+extern uint16_t V2K_UserDataRunStart;
+extern uint16_t V2K_UserDataRunEnd;
 extern uint16_t V2K_UserBssStart;
 extern uint16_t V2K_UserBssEnd;
 extern uint16_t V2K_UserConstStart;
@@ -92,7 +92,8 @@ static uint16_t v2k_scope_addr_valid(uint32_t addr, uint16_t type)
         v2k_addr_in_range(addr, words, &V2K_BssStart, &V2K_BssEnd) ||
         v2k_addr_in_range(addr, words, &V2K_BssOutputStart, &V2K_BssOutputEnd) ||
         v2k_addr_in_range(addr, words, &V2K_DataStart, &V2K_DataEnd) ||
-        v2k_addr_in_range(addr, words, &V2K_UserDataStart, &V2K_UserDataEnd) ||
+        v2k_addr_in_range(addr, words,
+                          &V2K_UserDataRunStart, &V2K_UserDataRunEnd) ||
         v2k_addr_in_range(addr, words, &V2K_UserBssStart, &V2K_UserBssEnd) ||
         v2k_addr_in_range(addr, words, &V2K_UserConstStart, &V2K_UserConstEnd));
 }

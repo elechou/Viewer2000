@@ -120,6 +120,8 @@ static uint16_t v2k_user_crc_record(uint32_t load_start,
                                     uint32_t data_words,
                                     uint32_t *expected)
 {
+    const volatile CRC_TABLE * volatile table =
+        (const volatile CRC_TABLE *)&V2K_UserDataCrcTable;
     uint32_t crc_present = V2K_LINKER_VALUE(V2K_UserDataCrcPresent);
 
     if (data_words == 0uL)
@@ -134,16 +136,16 @@ static uint16_t v2k_user_crc_record(uint32_t load_start,
     }
 
     if ((crc_present != 1uL) ||
-        (V2K_UserDataCrcTable.num_recs != 1u) ||
-        (V2K_UserDataCrcTable.rec_size != sizeof(CRC_RECORD)) ||
-        (V2K_UserDataCrcTable.recs[0].crc_alg_ID != CRC32_PRIME) ||
-        (V2K_UserDataCrcTable.recs[0].addr != load_start) ||
-        (V2K_UserDataCrcTable.recs[0].size != data_words))
+        (table->num_recs != 1u) ||
+        (table->rec_size != sizeof(CRC_RECORD)) ||
+        (table->recs[0].crc_alg_ID != CRC32_PRIME) ||
+        (table->recs[0].addr != load_start) ||
+        (table->recs[0].size != data_words))
     {
         g_v2k_user_reset_error = V2K_USER_RESET_ERR_CRC_TABLE;
         return 0u;
     }
-    *expected = V2K_UserDataCrcTable.recs[0].crc_value;
+    *expected = table->recs[0].crc_value;
     return 1u;
 }
 

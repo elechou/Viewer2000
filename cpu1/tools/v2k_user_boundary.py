@@ -257,6 +257,7 @@ def render_fragment(objects: list[ObjectInfo], config: str) -> tuple[str, bool]:
         # multiple FLASH regions. Keep user const in one CPU1-owned bank so
         # the verifier and descriptor baker receive an authoritative range.
         const_place = "> FLASH_BANK1, ALIGN(8)"
+        # Keep the reset golden image with the other user-owned flash assets.
         data_load = "FLASH_BANK1"
 
     def body(kind: str) -> str:
@@ -395,6 +396,28 @@ def in_area(start: int, size: int, area: tuple[int, int]) -> bool:
     return start >= origin and start + size <= origin + length
 
 
+def logical_group_ranges(root: ET.Element) -> dict[str, tuple[int, int]]:
+    result: dict[str, tuple[int, int]] = {}
+    for group in root.findall("./logical_group_list/logical_group"):
+        name = child_text(group, "name")
+        address = child_text(group, "load_address")
+        size = child_text(group, "size")
+        if name and address and size:
+            result[name] = (parse_int(address), parse_int(size))
+    return result
+
+
+def ranges_overlap(first: tuple[int, int], second: tuple[int, int]) -> bool:
+    first_start, first_size = first
+    second_start, second_size = second
+    return (
+        first_size > 0
+        and second_size > 0
+        and first_start < second_start + second_size
+        and second_start < first_start + first_size
+    )
+
+
 def component_outputs(root: ET.Element) -> tuple[dict[str, str], dict[str, dict[str, str]]]:
     components: dict[str, dict[str, str]] = {}
     for component in root.findall("./object_component_list/object_component"):
@@ -498,6 +521,7 @@ def verify_layout(root: ET.Element, manifest: dict, map_text: str) -> list[str]:
     errors: list[str] = []
     symbols = link_symbols(root)
     areas = memory_areas(root)
+    groups = logical_group_ranges(root)
     required = (
         "V2K_UserDataLoadStart",
         "V2K_UserDataLoadEnd",
@@ -582,6 +606,32 @@ def verify_layout(root: ET.Element, manifest: dict, map_text: str) -> list[str]:
                 errors.append("linker CRC record does not match user data LOAD")
     elif crc_tables:
         errors.append("zero-length user data unexpectedly has a CRC table")
+
+    if config == "FLASH":
+        flash_area_name = "FLASH_BANK1"
+        flash_area = areas.get(flash_area_name, (0, 0))
+        protected_ranges = {"user data golden": (load_start, load_size)}
+        for group_name, label in (
+            ("v2k_user_desc", "user descriptor blob"),
+            (".TI.crctab", "user CRC table"),
+        ):
+            group_range = groups.get(group_name)
+            if group_range is None:
+                errors.append(f"missing {label} load range")
+            else:
+                protected_ranges[label] = group_range
+                if not in_area(group_range[0], group_range[1], flash_area):
+                    errors.append(f"{label} lies outside {flash_area_name}")
+        crc_range = groups.get(".TI.crctab")
+        if crc_range is not None and symbols.get("V2K_UserDataCrcTable") != crc_range[0]:
+            errors.append("user CRC table symbol does not match its load range")
+        labels = tuple(protected_ranges)
+        for index, first_label in enumerate(labels):
+            for second_label in labels[index + 1 :]:
+                if ranges_overlap(
+                    protected_ranges[first_label], protected_ranges[second_label]
+                ):
+                    errors.append(f"{first_label} overlaps {second_label}")
     if re.search(r"\.cinit\.v2k_user_(data|bss)\.load", map_text):
         errors.append("user data/BSS is still initialized through .cinit")
     return errors

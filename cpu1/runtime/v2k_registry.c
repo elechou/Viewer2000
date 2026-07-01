@@ -18,8 +18,8 @@ extern uint16_t V2K_BssOutputStart;
 extern uint16_t V2K_BssOutputEnd;
 extern uint16_t V2K_DataStart;
 extern uint16_t V2K_DataEnd;
-extern uint16_t V2K_UserDataStart;
-extern uint16_t V2K_UserDataEnd;
+extern uint16_t V2K_UserDataRunStart;
+extern uint16_t V2K_UserDataRunEnd;
 extern uint16_t V2K_UserBssStart;
 extern uint16_t V2K_UserBssEnd;
 extern uint16_t V2K_UserConstStart;
@@ -60,7 +60,7 @@ volatile uint16_t g_v2k_desc_error;
 
 // Fixed-size post-link patch target; its initialized header is validated before baking.
 #pragma DATA_SECTION(g_v2k_user_desc_blob, "v2k_user_desc")
-const v2k_user_desc_blob_t g_v2k_user_desc_blob = {
+const volatile v2k_user_desc_blob_t g_v2k_user_desc_blob = {
     V2K_USER_DESC_MAGIC,
     V2K_USER_DESC_VERSION,
     0u,
@@ -114,7 +114,8 @@ static uint16_t v2k_addr_is_writable(uint32_t addr, uint16_t type)
         v2k_addr_in_range(addr, words, &V2K_BssStart, &V2K_BssEnd) ||
         v2k_addr_in_range(addr, words, &V2K_BssOutputStart, &V2K_BssOutputEnd) ||
         v2k_addr_in_range(addr, words, &V2K_DataStart, &V2K_DataEnd) ||
-        v2k_addr_in_range(addr, words, &V2K_UserDataStart, &V2K_UserDataEnd) ||
+        v2k_addr_in_range(addr, words,
+                          &V2K_UserDataRunStart, &V2K_UserDataRunEnd) ||
         v2k_addr_in_range(addr, words, &V2K_UserBssStart, &V2K_UserBssEnd));
 }
 
@@ -169,7 +170,8 @@ static uint16_t v2k_name_len(const char *name, uint16_t max_len,
     return 0u;
 }
 
-static uint16_t v2k_project_name_valid(const char name[V2K_PROJECT_NAME_LEN])
+static uint16_t v2k_project_name_valid(
+    const volatile char name[V2K_PROJECT_NAME_LEN])
 {
     uint16_t i;
 
@@ -203,11 +205,18 @@ static void v2k_default_project_name(char dst[V2K_PROJECT_NAME_LEN])
 static void v2k_publish_firmware_info(void)
 {
     v2k_firmware_info_t *info = &g_v2k_cpu1_plane.firmware_info;
+    uint16_t i;
 
     memset(info, 0, sizeof(*info));
     if (v2k_project_name_valid(g_v2k_user_desc_blob.firmware_info.project_name))
     {
-        *info = g_v2k_user_desc_blob.firmware_info;
+        for (i = 0u; i < V2K_PROJECT_NAME_LEN; i++)
+        {
+            info->project_name[i] =
+                g_v2k_user_desc_blob.firmware_info.project_name[i];
+        }
+        info->build_time_utc =
+            g_v2k_user_desc_blob.firmware_info.build_time_utc;
     }
     else
     {
@@ -253,7 +262,7 @@ void v2k_registry_add(const char *name, uint16_t type, uint16_t kind,
 
 static uint16_t v2k_user_desc_blob_valid(void)
 {
-    const v2k_user_desc_blob_t *blob = &g_v2k_user_desc_blob;
+    const volatile v2k_user_desc_blob_t *blob = &g_v2k_user_desc_blob;
 
     return (uint16_t)(
         (blob->magic == V2K_USER_DESC_MAGIC) &&
@@ -280,11 +289,12 @@ static uint16_t v2k_user_name_octet(uint32_t offset)
     return (word >> 8u) & 0xFFu;
 }
 
-static uint16_t v2k_user_desc_entry_valid(const v2k_user_desc_entry_t *entry)
+static uint16_t v2k_user_desc_entry_valid(
+    const volatile v2k_user_desc_entry_t *entry)
 {
     uint16_t i;
     uint16_t words;
-    const v2k_desc_entry_t *desc = &entry->desc;
+    const volatile v2k_desc_entry_t *desc = &entry->desc;
 
     words = v2k_type_words(desc->type);
     if ((words == 0u) ||
@@ -313,7 +323,7 @@ static uint16_t v2k_user_desc_entry_valid(const v2k_user_desc_entry_t *entry)
     {
         return (uint16_t)(
             v2k_addr_in_range(desc->addr, words,
-                              &V2K_UserDataStart, &V2K_UserDataEnd) ||
+                              &V2K_UserDataRunStart, &V2K_UserDataRunEnd) ||
             v2k_addr_in_range(desc->addr, words,
                               &V2K_UserBssStart, &V2K_UserBssEnd));
     }
@@ -327,7 +337,7 @@ static uint16_t v2k_user_desc_entry_valid(const v2k_user_desc_entry_t *entry)
 
 static void v2k_registry_validate_baked_user(void)
 {
-    const v2k_user_desc_blob_t *blob = &g_v2k_user_desc_blob;
+    const volatile v2k_user_desc_blob_t *blob = &g_v2k_user_desc_blob;
     uint16_t i;
 
     s_user_catalog_valid = 0u;
@@ -462,7 +472,7 @@ void v2k_registry_init(void)
     v2k_publish_catalog_header();
 }
 
-static const v2k_desc_entry_t *v2k_catalog_desc_at(uint16_t idx)
+static const volatile v2k_desc_entry_t *v2k_catalog_desc_at(uint16_t idx)
 {
     uint16_t user_idx;
 
@@ -475,7 +485,7 @@ static const v2k_desc_entry_t *v2k_catalog_desc_at(uint16_t idx)
     {
         return &g_v2k_user_desc_blob.entries[user_idx].desc;
     }
-    return (const v2k_desc_entry_t *)0;
+    return (const volatile v2k_desc_entry_t *)0;
 }
 
 static uint16_t v2k_catalog_name_len_at(uint16_t idx)
@@ -514,11 +524,11 @@ static uint16_t v2k_catalog_name_octet_at(uint16_t idx, uint16_t name_pos)
 static uint16_t v2k_catalog_pack_entry(uint16_t idx, uint16_t *payload,
                                        uint16_t *off)
 {
-    const v2k_desc_entry_t *desc = v2k_catalog_desc_at(idx);
+    const volatile v2k_desc_entry_t *desc = v2k_catalog_desc_at(idx);
     uint16_t name_len = v2k_catalog_name_len_at(idx);
     uint16_t i;
 
-    if ((desc == (const v2k_desc_entry_t *)0) ||
+    if ((desc == (const volatile v2k_desc_entry_t *)0) ||
         ((*off + V2K_ENUM_ENTRY_FIXED_OCTETS + name_len) >
          V2K_CATALOG_PAYLOAD_OCTETS))
     {
@@ -615,27 +625,27 @@ void v2k_catalog_service(void)
     resp->ack_seq = seq_before;
 }
 
-static const v2k_desc_entry_t *v2k_desc_find(uint32_t addr)
+static const volatile v2k_desc_entry_t *v2k_desc_find(uint32_t addr)
 {
     uint16_t i;
     uint16_t total = v2k_catalog_total_count();
 
     for (i = 0u; i < total; i++)
     {
-        const v2k_desc_entry_t *entry = v2k_catalog_desc_at(i);
+        const volatile v2k_desc_entry_t *entry = v2k_catalog_desc_at(i);
 
-        if ((entry != (const v2k_desc_entry_t *)0) &&
+        if ((entry != (const volatile v2k_desc_entry_t *)0) &&
             (entry->addr == addr))
         {
             return entry;
         }
     }
-    return (const v2k_desc_entry_t *)0;
+    return (const volatile v2k_desc_entry_t *)0;
 }
 
 static uint16_t v2k_validate_write(const v2k_param_write_t *write)
 {
-    const v2k_desc_entry_t *entry;
+    const volatile v2k_desc_entry_t *entry;
 
     if (write->type >= V2K_TYPE_COUNT)
     {
@@ -647,7 +657,7 @@ static uint16_t v2k_validate_write(const v2k_param_write_t *write)
     }
 
     entry = v2k_desc_find(write->addr);
-    if (entry == (const v2k_desc_entry_t *)0)
+    if (entry == (const volatile v2k_desc_entry_t *)0)
     {
         return V2K_CAL_OK;
     }

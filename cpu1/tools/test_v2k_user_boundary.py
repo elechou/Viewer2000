@@ -63,6 +63,18 @@ def linker_xml(*, run_size: int = 0x20, crc_load_size: int = 0x20) -> ET.Element
     )
 
 
+def add_load_group(root: ET.Element, name: str, start: int, size: int) -> None:
+    groups = root.find("./logical_group_list")
+    assert groups is not None
+    groups.append(
+        ET.fromstring(
+            f"<logical_group><name>{name}</name>"
+            f"<load_address>{start:#x}</load_address><size>{size:#x}</size>"
+            "</logical_group>"
+        )
+    )
+
+
 class ClassificationTests(unittest.TestCase):
     def test_classifies_standard_allocated_sections(self) -> None:
         cases = (
@@ -134,6 +146,31 @@ class FragmentTests(unittest.TestCase):
         self.assertIn("> FLASH_BANK1, ALIGN(8)", fragment)
         self.assertNotIn(">> FLASH_BANK0 | FLASH_BANK1, ALIGN(8),\n        START", fragment)
 
+    def test_flash_data_load_uses_user_flash_bank(self) -> None:
+        obj = boundary.ObjectInfo(
+            selector="app/user.obj",
+            path=Path("app/user.obj"),
+            sections=(
+                boundary.InputSection(".data:value", "data", 4),
+            ),
+        )
+        fragment, _ = boundary.render_fragment([obj], "FLASH")
+        self.assertIn("LOAD = FLASH_BANK1", fragment)
+        self.assertNotIn("LOAD = FLASH_BANK0", fragment)
+
+
+class LinkerScriptTests(unittest.TestCase):
+    def test_user_descriptor_catalog_uses_user_flash_bank(self) -> None:
+        linker_script = (
+            Path(__file__).resolve().parents[1]
+            / "28p65x_generic_flash_lnk_cpu1.cmd"
+        )
+        text = linker_script.read_text(encoding="ascii")
+        self.assertIn(".TI.crctab       : > FLASH_BANK1", text)
+        self.assertNotIn(".TI.crctab       : > FLASH_BANK0", text)
+        self.assertIn("v2k_user_desc   : > FLASH_BANK1", text)
+        self.assertNotIn("v2k_user_desc   : > FLASH_BANK0", text)
+
 
 class LayoutTests(unittest.TestCase):
     manifest = {"configuration": "RAM", "has_user_data": True}
@@ -173,6 +210,47 @@ class LayoutTests(unittest.TestCase):
             "user data RUN and BSS overlap",
             boundary.verify_layout(root, manifest, ".cinit platform only"),
         )
+
+    def test_flash_layout_accepts_user_bank_data_load(self) -> None:
+        root = linker_xml()
+        manifest = {"configuration": "FLASH", "has_user_data": True}
+        placement = root.find("./placement_map")
+        assert placement is not None
+        placement.append(
+            ET.fromstring(
+                "<memory_area><name>FLASH_BANK1</name>"
+                "<origin>0x20000</origin><length>0x800</length></memory_area>"
+            )
+        )
+        root.find("./crc_table_list/crc_table/crc_rec/load_address").text = "0x20000"
+        root.find("./symbol_table/symbol[name='V2K_UserDataCrcTable']/value").text = (
+            "0x20200"
+        )
+        add_load_group(root, "v2k_user_desc", 0x20100, 0x80)
+        add_load_group(root, ".TI.crctab", 0x20200, 0x0A)
+        self.assertEqual(
+            boundary.verify_layout(root, manifest, ".cinit platform only"),
+            [],
+        )
+
+    def test_flash_layout_rejects_post_link_range_overlap(self) -> None:
+        root = linker_xml()
+        manifest = {"configuration": "FLASH", "has_user_data": True}
+        placement = root.find("./placement_map")
+        assert placement is not None
+        placement.append(
+            ET.fromstring(
+                "<memory_area><name>FLASH_BANK1</name>"
+                "<origin>0x20000</origin><length>0x800</length></memory_area>"
+            )
+        )
+        root.find("./symbol_table/symbol[name='V2K_UserDataCrcTable']/value").text = (
+            "0x20200"
+        )
+        add_load_group(root, "v2k_user_desc", 0x20010, 0x80)
+        add_load_group(root, ".TI.crctab", 0x20200, 0x0A)
+        errors = boundary.verify_layout(root, manifest, ".cinit platform only")
+        self.assertIn("user data golden overlaps user descriptor blob", errors)
 
 
 class OwnershipTests(unittest.TestCase):

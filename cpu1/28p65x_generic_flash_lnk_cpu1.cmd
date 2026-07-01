@@ -75,7 +75,7 @@ SECTIONS
 	   .const           : > FLASH_BANK0, ALIGN(8)
 	   .data            : > RAMLS5, START(V2K_DataStart), END(V2K_DataEnd)
 	   .sysmem          : > RAMLS4
-	   .TI.crctab       : > FLASH_BANK0, ALIGN(8)
+	   .TI.crctab       : > FLASH_BANK1, ALIGN(8)
 	   dclfuncs         : > FLASH_BANK0, ALIGN(8)
 #else
 	   .pinit           : > FLASH_BANK0, ALIGN(8)
@@ -88,6 +88,7 @@ SECTIONS
    v2k_cpu1_plane   : > RAMGS0_PLANE, type=NOINIT /* catalog proxy + param status + scope producer block */
    v2k_scope_ring : > RAMGS_SCOPE, type=NOINIT  /* Stream/Capture shared scope ring */
    v2k_ccs_view    : > RAMD2, type=NOINIT        /* post-freeze float[2048] de-interleaved view */
+   /* Keep Scope's user-variable catalog with the user-owned flash assets. */
    v2k_user_desc   : > FLASH_BANK1, ALIGN(8)     /* Phase 4.5 post-link baked user descriptor blob */
 
    v2k_msg_1to2 : > CPU1TOCPU2RAM_V2K, type=NOINIT
