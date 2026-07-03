@@ -260,10 +260,22 @@ static void v2k_cpu2_board_scia_tx_update_interrupt(void)
 
 static void v2k_cpu2_board_scia_tx_kick(void)
 {
+    //
+    // Mask the TX ISR at the PIE level for the whole refill, not only at the
+    // peripheral level: a TXFF event that already latched into PIEIFR still
+    // fires after TXFFIENA is cleared (same latched-PIEIFR behavior as the TZ
+    // notes in cpu1/runtime/v2k_fault.c). If that ISR lands between this
+    // refill's slot->pos read and write-back, one octet is duplicated into the
+    // FIFO or a freed slot keeps transmitting, and the frame fails CRC at the
+    // host. With PIEIER masked the latched request is simply delivered after
+    // the re-enable below and runs one harmless extra refill.
+    //
+    Interrupt_disable(INT_SCIA_TX);
     SCI_disableInterrupt(SCIA_BASE, SCI_INT_TXFF);
     g_v2k_sci_tx_refill_kick++;
     v2k_cpu2_board_scia_tx_refill();
     v2k_cpu2_board_scia_tx_update_interrupt();
+    Interrupt_enable(INT_SCIA_TX);
 }
 
 static __interrupt void v2k_cpu2_board_scia_tx_isr(void)
