@@ -164,7 +164,12 @@ static uint16_t v2k_scope_layout(uint16_t n_ticks, uint16_t stride_words,
     return V2K_SCOPE_RESULT_OK;
 }
 
-static void v2k_scope_transition(v2k_scope_prod_t *prod, uint16_t mode)
+// All producer-block accesses below go through volatile pointers: CPU2 reads
+// this struct concurrently (busy-polling cfg/bind acks and consuming wr_idx),
+// so the "data first, index/ack/seq last" publish order must bind the
+// compiler, not just the source order.
+static void v2k_scope_transition(volatile v2k_scope_prod_t *prod,
+                                 uint16_t mode)
 {
     if (prod->mode != mode)
     {
@@ -175,7 +180,7 @@ static void v2k_scope_transition(v2k_scope_prod_t *prod, uint16_t mode)
 
 void v2k_scope_init(void)
 {
-    v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
+    volatile v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
 
     memset((void *)g_v2k_scope_ring, 0, sizeof(g_v2k_scope_ring));
     memset(&s_scope, 0, sizeof(s_scope));
@@ -186,7 +191,7 @@ void v2k_scope_init(void)
     memset((void *)&s_cons_rd_cache, 0, sizeof(s_cons_rd_cache));
     memset(&g_v2k_ccs_view, 0, sizeof(g_v2k_ccs_view));
 
-    memset(prod, 0, sizeof(*prod));
+    memset((void *)prod, 0, sizeof(g_v2k_cpu1_plane.scope_prod));
     prod->mode = V2K_SCOPE_OFF;
     prod->block_n_ticks = V2K_BLOCK_NTICKS_SCI;
     prod->prescaler = 1u;
@@ -225,7 +230,7 @@ static uint16_t v2k_validate_bind(const v2k_scope_bind_t *bind)
 
 static uint16_t v2k_validate_cfg(const v2k_scope_cfg_t *cfg)
 {
-    const v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
+    const volatile v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
     uint16_t prescaler;
     uint16_t slot_words;
     uint16_t capacity;
@@ -295,7 +300,7 @@ static uint32_t v2k_capture_target_blocks(uint32_t total,
     return blocks + 1u;
 }
 
-static void v2k_prepare_capture_window(v2k_scope_prod_t *prod,
+static void v2k_prepare_capture_window(const volatile v2k_scope_prod_t *prod,
                                        const v2k_scope_cfg_t *cfg)
 {
     uint32_t total = cfg->record_points;
@@ -357,7 +362,7 @@ void v2k_scope_service(void)
 
 static void v2k_apply_bind(void)
 {
-    v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
+    volatile v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
     uint16_t result = s_bind_pending.result;
     uint16_t slot_words = 0u;
     uint16_t capacity = 0u;
@@ -395,7 +400,7 @@ static void v2k_apply_bind(void)
 
 static void v2k_apply_cfg(void)
 {
-    v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
+    volatile v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
     uint16_t result = s_cfg_pending.result;
     uint16_t prescaler;
     uint16_t slot_words = 0u;
@@ -484,7 +489,7 @@ void v2k_scope_apply_ready(void)
 
 static volatile uint16_t *v2k_block_words(uint16_t wr_idx)
 {
-    v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
+    const volatile v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
     return (volatile uint16_t *)prod->ring_base +
            ((uint32_t)(wr_idx & (prod->ring_capacity - 1u)) *
             prod->block_slot_words);
@@ -515,7 +520,8 @@ static float v2k_source_float(const v2k_scope_ch_bind_t *bind)
     }
 }
 
-static uint16_t v2k_capture_trigger_ready(const v2k_scope_prod_t *prod)
+static uint16_t v2k_capture_trigger_ready(
+    const volatile v2k_scope_prod_t *prod)
 {
     uint32_t total = s_scope.capture_total_samples;
     uint32_t required_pre = s_scope.capture_required_pre;
@@ -549,7 +555,7 @@ static void v2k_copy_sample(volatile uint16_t *dst)
 
 static void v2k_publish_block(uint16_t n_ticks)
 {
-    v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
+    volatile v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
     volatile v2k_block_hdr_t *hdr =
         (volatile v2k_block_hdr_t *)v2k_block_words(prod->wr_idx);
 
@@ -565,7 +571,7 @@ static void v2k_publish_block(uint16_t n_ticks)
 
 static void v2k_freeze(void)
 {
-    v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
+    volatile v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
     uint16_t frozen_count;
     if (s_scope.sample_in_block != 0u)
     {
@@ -585,7 +591,7 @@ static void v2k_freeze(void)
 
 static void v2k_scope_sample_one(v2k_tick_t tick)
 {
-    v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
+    volatile v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
     uint16_t mode_before = prod->mode;
     volatile uint16_t *block;
     volatile v2k_block_hdr_t *hdr;
@@ -747,7 +753,7 @@ void v2k_scope_ccs_view_service(void)
 {
     uint16_t slot = g_v2k_ccs_view.channel_slot;
     uint16_t request = g_v2k_ccs_view.request_seq;
-    const v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
+    const volatile v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
     uint16_t idx;
     uint16_t end;
     uint16_t offset = 0u;

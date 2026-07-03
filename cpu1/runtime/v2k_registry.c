@@ -136,13 +136,16 @@ static uint16_t v2k_addr_is_readable(uint32_t addr, uint16_t type)
         v2k_addr_in_range(addr, words, &V2K_UserConstStart, &V2K_UserConstEnd));
 }
 
-static void v2k_put_u16(uint16_t *buf, uint16_t off, uint16_t value)
+// Wire staging writes go through volatile pointers: the ENUM response lives
+// in the CPU1 plane that CPU2 busy-polls, and volatile keeps the payload
+// stores ordered before the ack_seq publish below.
+static void v2k_put_u16(volatile uint16_t *buf, uint16_t off, uint16_t value)
 {
     buf[off] = value & 0xFFu;
     buf[(uint16_t)(off + 1u)] = (value >> 8u) & 0xFFu;
 }
 
-static void v2k_put_u32(uint16_t *buf, uint16_t off, uint32_t value)
+static void v2k_put_u32(volatile uint16_t *buf, uint16_t off, uint32_t value)
 {
     v2k_put_u16(buf, off, (uint16_t)value);
     v2k_put_u16(buf, (uint16_t)(off + 2u), (uint16_t)(value >> 16u));
@@ -374,7 +377,9 @@ static uint16_t v2k_catalog_total_count(void)
 
 static void v2k_publish_catalog_header(void)
 {
-    v2k_catalog_hdr_t *hdr = &g_v2k_cpu1_plane.catalog.hdr;
+    // Volatile publish: CPU2 gates its startup on hdr->magic, so the field
+    // fills must not be reorderable past the magic store below.
+    volatile v2k_catalog_hdr_t *hdr = &g_v2k_cpu1_plane.catalog.hdr;
 
     hdr->build_hash = s_user_catalog_valid ?
         g_v2k_user_desc_blob.build_hash : 0uL;
@@ -521,7 +526,8 @@ static uint16_t v2k_catalog_name_octet_at(uint16_t idx, uint16_t name_pos)
     return 0u;
 }
 
-static uint16_t v2k_catalog_pack_entry(uint16_t idx, uint16_t *payload,
+static uint16_t v2k_catalog_pack_entry(uint16_t idx,
+                                       volatile uint16_t *payload,
                                        uint16_t *off)
 {
     const volatile v2k_desc_entry_t *desc = v2k_catalog_desc_at(idx);
@@ -552,7 +558,9 @@ static uint16_t v2k_catalog_pack_entry(uint16_t idx, uint16_t *payload,
 void v2k_catalog_service(void)
 {
     const volatile v2k_catalog_req_t *req = &V2K_CPU2_PLANE_RO->catalog_req;
-    v2k_catalog_resp_t *resp = &g_v2k_cpu1_plane.catalog.enum_resp;
+    // Volatile response pointer: CPU2 busy-polls ack_seq at microsecond
+    // granularity, so payload/result stores must be ordered before it.
+    volatile v2k_catalog_resp_t *resp = &g_v2k_cpu1_plane.catalog.enum_resp;
     uint16_t seq_before = req->req_seq;
     uint16_t seq_after;
     uint16_t start;
@@ -675,6 +683,9 @@ static uint16_t v2k_validate_write(const v2k_param_write_t *write)
 void v2k_param_service(void)
 {
     const volatile v2k_param_shadow_t *shadow = &V2K_CPU2_PLANE_RO->param_shadow;
+    // Volatile status pointer: CPU2 reads applied_seq to gate the next
+    // CAL_WRITE/COMMIT, so result/fail_idx must be ordered before it.
+    volatile v2k_param_status_t *status = &g_v2k_cpu1_plane.param_status;
     v2k_param_ready_t candidate;
     uint32_t seq_before;
     uint32_t seq_after;
@@ -687,7 +698,7 @@ void v2k_param_service(void)
     }
     seq_before = shadow->commit_seq;
     if ((seq_before == s_shadow_seen) ||
-        (seq_before == g_v2k_cpu1_plane.param_status.applied_seq))
+        (seq_before == status->applied_seq))
     {
         return;
     }
@@ -727,9 +738,9 @@ void v2k_param_service(void)
 
     if (result != V2K_CAL_OK)
     {
-        g_v2k_cpu1_plane.param_status.result = result;
-        g_v2k_cpu1_plane.param_status.fail_idx = i;
-        g_v2k_cpu1_plane.param_status.applied_seq = candidate.seq;
+        status->result = result;
+        status->fail_idx = i;
+        status->applied_seq = candidate.seq;
         return;
     }
 
@@ -754,6 +765,7 @@ static void v2k_write_value(const v2k_param_write_t *write)
 
 void v2k_param_apply_ready(void)
 {
+    volatile v2k_param_status_t *status = &g_v2k_cpu1_plane.param_status;
     uint16_t i;
 
     if (!s_ready_valid)
@@ -764,9 +776,9 @@ void v2k_param_apply_ready(void)
     {
         v2k_write_value(&s_ready.writes[i]);
     }
-    g_v2k_cpu1_plane.param_status.result = V2K_CAL_OK;
-    g_v2k_cpu1_plane.param_status.fail_idx = 0u;
-    g_v2k_cpu1_plane.param_status.applied_seq = s_ready.seq;
+    status->result = V2K_CAL_OK;
+    status->fail_idx = 0u;
+    status->applied_seq = s_ready.seq;
     s_ready_valid = 0u;
 }
 
@@ -802,6 +814,9 @@ static uint32_t v2k_read_addr(uint32_t addr, uint16_t type)
 void v2k_param_read_service(void)
 {
     const volatile v2k_param_read_req_t *req = &V2K_CPU2_PLANE_RO->param_read_req;
+    // Volatile response pointer: CPU2 busy-polls ack_seq, so result/count/
+    // value stores must be ordered before the ack publish.
+    volatile v2k_param_read_resp_t *resp = &g_v2k_cpu1_plane.param_read_resp;
     uint32_t seq_before;
     uint32_t seq_after;
     uint16_t i;
@@ -809,7 +824,7 @@ void v2k_param_read_service(void)
     uint16_t result = V2K_CAL_OK;
 
     seq_before = req->read_seq;
-    if (seq_before == g_v2k_cpu1_plane.param_read_resp.ack_seq)
+    if (seq_before == resp->ack_seq)
     {
         return;
     }
@@ -844,16 +859,15 @@ void v2k_param_read_service(void)
         }
     }
 
-    g_v2k_cpu1_plane.param_read_resp.result = result;
-    g_v2k_cpu1_plane.param_read_resp.count =
-        (result == V2K_CAL_OK) ? count : 0u;
+    resp->result = result;
+    resp->count = (result == V2K_CAL_OK) ? count : 0u;
     if (result == V2K_CAL_OK)
     {
         for (i = 0u; i < count; i++)
         {
-            g_v2k_cpu1_plane.param_read_resp.value_bits[i] =
+            resp->value_bits[i] =
                 v2k_read_addr(s_read_refs[i].addr, s_read_refs[i].type);
         }
     }
-    g_v2k_cpu1_plane.param_read_resp.ack_seq = seq_before;
+    resp->ack_seq = seq_before;
 }

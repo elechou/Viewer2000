@@ -302,6 +302,10 @@ static int16_t v2k_find_staged(uint32_t addr)
 static void v2k_handle_cal_write(uint16_t seq, const uint16_t *payload,
                                  uint16_t payload_len)
 {
+    // Volatile shadow pointer: CPU1 copies this region when commit_seq
+    // advances, so the staged writes must be ordered before that publish
+    // (the commit itself is in v2k_handle_cal_commit).
+    volatile v2k_param_shadow_t *shadow = &g_v2k_cpu2_plane.param_shadow;
     uint16_t count;
     uint16_t i;
     if (payload_len < 2u)
@@ -309,16 +313,16 @@ static void v2k_handle_cal_write(uint16_t seq, const uint16_t *payload,
         v2k_protocol_send_ack(V2K_MSG_CAL_WRITE, seq, V2K_ACK_BAD_PARAM, 0uL);
         return;
     }
-    if (g_v2k_cpu2_plane.param_shadow.commit_seq !=
+    if (shadow->commit_seq !=
         V2K_CPU1_PLANE_RO->param_status.applied_seq)
     {
         v2k_protocol_send_ack(V2K_MSG_CAL_WRITE, seq, V2K_ACK_BUSY, 0uL);
         return;
     }
-    if (s_cal_staged_commit_seq != g_v2k_cpu2_plane.param_shadow.commit_seq)
+    if (s_cal_staged_commit_seq != shadow->commit_seq)
     {
-        g_v2k_cpu2_plane.param_shadow.count = 0u;
-        s_cal_staged_commit_seq = g_v2k_cpu2_plane.param_shadow.commit_seq;
+        shadow->count = 0u;
+        s_cal_staged_commit_seq = shadow->commit_seq;
     }
     count = payload[0] & 0xFFu;
     if ((count == 0u) || (payload_len != (uint16_t)(2u + 12u * count)))
@@ -338,40 +342,41 @@ static void v2k_handle_cal_write(uint16_t seq, const uint16_t *payload,
         }
         else
         {
-            if (g_v2k_cpu2_plane.param_shadow.count >= V2K_PARAM_BATCH_MAX)
+            if (shadow->count >= V2K_PARAM_BATCH_MAX)
             {
                 v2k_protocol_send_ack(V2K_MSG_CAL_WRITE, seq,
                              V2K_ACK_BAD_PARAM, 0uL);
                 return;
             }
-            dst = g_v2k_cpu2_plane.param_shadow.count++;
+            dst = shadow->count++;
         }
-        g_v2k_cpu2_plane.param_shadow.writes[dst].addr = addr;
-        g_v2k_cpu2_plane.param_shadow.writes[dst].value_bits =
+        shadow->writes[dst].addr = addr;
+        shadow->writes[dst].value_bits =
             v2k_message_get_u32(payload, (uint16_t)(in + 4u));
-        g_v2k_cpu2_plane.param_shadow.writes[dst].type =
+        shadow->writes[dst].type =
             v2k_message_get_u16(payload, (uint16_t)(in + 8u));
-        g_v2k_cpu2_plane.param_shadow.writes[dst].reserved = 0u;
+        shadow->writes[dst].reserved = 0u;
     }
     v2k_protocol_send_ack(V2K_MSG_CAL_WRITE, seq, V2K_ACK_OK, 0uL);
 }
 
 static void v2k_handle_cal_commit(uint16_t seq, uint16_t payload_len)
 {
+    volatile v2k_param_shadow_t *shadow = &g_v2k_cpu2_plane.param_shadow;
     uint32_t commit_seq;
-    if ((payload_len != 0u) || (g_v2k_cpu2_plane.param_shadow.count == 0u))
+    if ((payload_len != 0u) || (shadow->count == 0u))
     {
         v2k_protocol_send_ack(V2K_MSG_CAL_COMMIT, seq, V2K_ACK_BAD_PARAM, 0uL);
         return;
     }
-    if (g_v2k_cpu2_plane.param_shadow.commit_seq !=
+    if (shadow->commit_seq !=
         V2K_CPU1_PLANE_RO->param_status.applied_seq)
     {
         v2k_protocol_send_ack(V2K_MSG_CAL_COMMIT, seq, V2K_ACK_BUSY, 0uL);
         return;
     }
-    commit_seq = g_v2k_cpu2_plane.param_shadow.commit_seq + 1uL;
-    g_v2k_cpu2_plane.param_shadow.commit_seq = commit_seq;
+    commit_seq = shadow->commit_seq + 1uL;
+    shadow->commit_seq = commit_seq;
     v2k_protocol_send_ack(V2K_MSG_CAL_COMMIT, seq, V2K_ACK_OK, commit_seq);
 }
 
@@ -451,23 +456,26 @@ static void v2k_handle_cal_read(uint16_t seq, const uint16_t *payload,
 static void v2k_handle_cmd(uint16_t seq, const uint16_t *payload,
                            uint16_t payload_len)
 {
+    // Volatile request pointer: cmd_seq is the publish, so the code/arg
+    // stores must not be reorderable past it (CPU1 polls at 1 kHz and would
+    // execute a command with stale arguments).
+    volatile v2k_cmd_req_t *req = &g_v2k_msg_2to1.cmd_req;
     uint32_t cmd_seq;
     if (payload_len != 8u)
     {
         v2k_protocol_send_ack(V2K_MSG_CMD, seq, V2K_ACK_BAD_PARAM, 0uL);
         return;
     }
-    if (g_v2k_msg_2to1.cmd_req.cmd_seq !=
-        V2K_MSG_1TO2_RO->cpu1_status.ack_seq)
+    if (req->cmd_seq != V2K_MSG_1TO2_RO->cpu1_status.ack_seq)
     {
         v2k_protocol_send_ack(V2K_MSG_CMD, seq, V2K_ACK_BUSY, 0uL);
         return;
     }
-    cmd_seq = g_v2k_msg_2to1.cmd_req.cmd_seq + 1uL;
-    g_v2k_msg_2to1.cmd_req.cmd_code = v2k_message_get_u16(payload, 0u);
-    g_v2k_msg_2to1.cmd_req.arg0 = v2k_message_get_u16(payload, 2u);
-    g_v2k_msg_2to1.cmd_req.arg1 = v2k_message_get_u32(payload, 4u);
-    g_v2k_msg_2to1.cmd_req.cmd_seq = cmd_seq;
+    cmd_seq = req->cmd_seq + 1uL;
+    req->cmd_code = v2k_message_get_u16(payload, 0u);
+    req->arg0 = v2k_message_get_u16(payload, 2u);
+    req->arg1 = v2k_message_get_u32(payload, 4u);
+    req->cmd_seq = cmd_seq;
     v2k_protocol_send_ack(V2K_MSG_CMD, seq, V2K_ACK_OK, cmd_seq);
 }
 
