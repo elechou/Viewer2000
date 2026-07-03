@@ -19,6 +19,9 @@ static inline uint16_t v2k_scope_consumer_peek(
 {
     uint16_t end;
     uint16_t idx = cons->rd_idx;
+    uint16_t n_ticks;
+    uint16_t stride_octets;
+    uint32_t word_count;
     const volatile v2k_block_hdr_t *hdr;
 
     if ((prod->ring_capacity == 0u) || (prod->block_slot_words == 0u))
@@ -36,8 +39,25 @@ static inline uint16_t v2k_scope_consumer_peek(
                   ((uint32_t)(idx & (prod->ring_capacity - 1u)) *
                    prod->block_slot_words);
     hdr = (const volatile v2k_block_hdr_t *)view->words;
-    view->word_count = (uint16_t)(8u +
-        ((uint32_t)hdr->n_ticks * ((uint32_t)hdr->stride_octets / 2u)));
+    // Never trust ring geometry read back from shared RAM. After an index
+    // desync (a reconfigure racing the producer) this "header" can be sample
+    // data or a torn write, and an oversized count would defeat the payload
+    // bound checks downstream once truncated to 16 bits. Validate a single
+    // snapshot of the geometry fields: no block published by
+    // v2k_publish_block can exceed its own slot, so treat a misfit header as
+    // desync, drop up to the producer's published index, and resync.
+    n_ticks = hdr->n_ticks;
+    stride_octets = hdr->stride_octets;
+    word_count = 8u + ((uint32_t)n_ticks * ((uint32_t)stride_octets / 2u));
+    if ((n_ticks == 0u) ||
+        (n_ticks > prod->block_n_ticks) ||
+        (stride_octets == 0u) ||
+        (word_count > prod->block_slot_words))
+    {
+        cons->rd_idx = end;
+        return 0u;
+    }
+    view->word_count = (uint16_t)word_count;
     return 1u;
 }
 

@@ -152,6 +152,9 @@ static uint16_t v2k_scope_frozen_block_view(
     v2k_scope_block_view_t *view)
 {
     uint16_t ring_index;
+    uint16_t n_ticks;
+    uint16_t stride_octets;
+    uint32_t word_count;
     const volatile v2k_block_hdr_t *hdr;
 
     if ((prod->mode != V2K_SCOPE_CAPTURE_FROZEN) ||
@@ -168,8 +171,20 @@ static uint16_t v2k_scope_frozen_block_view(
                   ((uint32_t)(ring_index & (prod->ring_capacity - 1u)) *
                    prod->block_slot_words);
     hdr = (const volatile v2k_block_hdr_t *)view->words;
-    view->word_count = (uint16_t)(8u +
-        ((uint32_t)hdr->n_ticks * ((uint32_t)hdr->stride_octets / 2u)));
+    // Same header-geometry guard as v2k_scope_consumer_peek: a block that
+    // does not fit its own slot was never produced by v2k_publish_block, so
+    // refuse the view instead of forwarding an oversized count downstream.
+    n_ticks = hdr->n_ticks;
+    stride_octets = hdr->stride_octets;
+    word_count = 8u + ((uint32_t)n_ticks * ((uint32_t)stride_octets / 2u));
+    if ((n_ticks == 0u) ||
+        (n_ticks > prod->block_n_ticks) ||
+        (stride_octets == 0u) ||
+        (word_count > prod->block_slot_words))
+    {
+        return 0u;
+    }
+    view->word_count = (uint16_t)word_count;
     return 1u;
 }
 
@@ -200,14 +215,16 @@ static uint16_t v2k_write_stream_batch_payload(
     while ((uint32_t)(off - 7u) < V2K_MAX_PAYLOAD)
     {
         v2k_scope_block_view_t view;
-        uint16_t block_octets;
+        uint32_t block_octets;
         uint16_t word;
         if (!v2k_scope_consumer_peek(prod, cons, &view))
         {
             break;
         }
-        block_octets = (uint16_t)(view.word_count * 2u);
-        if ((uint32_t)(off - 7u) + block_octets > V2K_MAX_PAYLOAD)
+        // 32-bit size math: a 16-bit product would wrap for a corrupt
+        // word_count and slip past this payload bound check.
+        block_octets = (uint32_t)view.word_count * 2u;
+        if (((uint32_t)(off - 7u) + block_octets) > V2K_MAX_PAYLOAD)
         {
             break;
         }
@@ -262,14 +279,16 @@ static uint16_t v2k_write_capture_batch_payload(
            ((uint32_t)(off - 7u) < V2K_MAX_PAYLOAD))
     {
         v2k_scope_block_view_t view;
-        uint16_t block_octets;
+        uint32_t block_octets;
         uint16_t word;
         if (!v2k_scope_frozen_block_view(prod, index, &view))
         {
             break;
         }
-        block_octets = (uint16_t)(view.word_count * 2u);
-        if ((uint32_t)(off - 7u) + block_octets > V2K_MAX_PAYLOAD)
+        // 32-bit size math: a 16-bit product would wrap for a corrupt
+        // word_count and slip past this payload bound check.
+        block_octets = (uint32_t)view.word_count * 2u;
+        if (((uint32_t)(off - 7u) + block_octets) > V2K_MAX_PAYLOAD)
         {
             break;
         }
