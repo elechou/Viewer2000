@@ -12,6 +12,7 @@
 #include "v2k_protocol.h"
 #include "v2k_protocol_internal.h"
 #include "v2k_scope_protocol.h"
+#include "v2k_sci_service.h"
 
 #define V2K_STATUS_PUSH_PERIOD_MS 250uL
 #define V2K_CPU1_STALE_TIMEOUT_MS 1000uL
@@ -172,7 +173,27 @@ static uint16_t v2k_write_status_payload(uint16_t off)
     v2k_message_put_u32(s_message, (uint16_t)(off + 88u), prod->trig_tick);
     v2k_message_put_u16(s_message, (uint16_t)(off + 92u), prod->bind_ack_seq);
     v2k_message_put_u16(s_message, (uint16_t)(off + 94u), 0u);
-    return 96u;
+    // CPU2 SCI link counters (contract v16). Their deltas across a bench run
+    // locate frame loss without JTAG: resp_replays counts ACKs that left the
+    // device but never reached the host application; req_dropped counts
+    // requests refused while the previous response was still queued.
+    v2k_message_put_u32(s_message, (uint16_t)(off + 96u), g_v2k_sci_rx_octets);
+    v2k_message_put_u32(s_message, (uint16_t)(off + 100u), g_v2k_sci_tx_octets);
+    v2k_message_put_u32(s_message, (uint16_t)(off + 104u), g_v2k_sci_rx_errors);
+    v2k_message_put_u32(s_message, (uint16_t)(off + 108u),
+                        g_v2k_sci_rx_overflow);
+    v2k_message_put_u32(s_message, (uint16_t)(off + 112u),
+                        g_v2k_sci_bad_frames);
+    v2k_message_put_u32(s_message, (uint16_t)(off + 116u),
+                        g_v2k_sci_good_frames);
+    v2k_message_put_u32(s_message, (uint16_t)(off + 120u), g_v2k_sci_tx_frames);
+    v2k_message_put_u32(s_message, (uint16_t)(off + 124u),
+                        g_v2k_sci_tx_queue_full);
+    v2k_message_put_u32(s_message, (uint16_t)(off + 128u),
+                        g_v2k_sci_req_dropped);
+    v2k_message_put_u32(s_message, (uint16_t)(off + 132u),
+                        g_v2k_sci_resp_replays);
+    return 136u;
 }
 
 static void v2k_handle_status(uint16_t seq)

@@ -183,7 +183,18 @@ def build_cases():
                       4,           # scope_frozen_count
                       1234,        # scope_trigger_tick
                       3,           # scope_bind_seq
-                      0))          # reserved
+                      0)           # reserved
+        + struct.pack("<10I",
+                      510000,      # link_rx_octets
+                      48000000,    # link_tx_octets
+                      1,           # link_rx_errors
+                      0,           # link_rx_overflow
+                      2,           # link_bad_frames
+                      13800,       # link_good_frames
+                      52100,       # link_tx_frames
+                      6,           # link_tx_queue_full
+                      1,           # link_req_dropped
+                      3))          # link_resp_replays
     add("status_req", "STATUS_REQ: empty payload, optional explicit status read", 0x02, 0x0002, b"")
     add("status_resp",
         "STATUS_RESP: RUNNING state, Scope mode STREAM",

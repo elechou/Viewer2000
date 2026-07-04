@@ -156,7 +156,7 @@ limits are part of the v10 connection contract.
 
 `STATUS_REQ` request payload is empty and returns `STATUS_RESP`. Firmware also
 pushes `STATUS_PUSH` at about 4 Hz after a valid v10 host frame is observed.
-Both response and push carry the same 96-octet payload:
+Both response and push carry the same 136-octet payload:
 
 ```
 0   2  sys_state      V2K_STATE_* (v2k_command.h)
@@ -191,7 +191,25 @@ Both response and push carry the same 96-octet payload:
 88  4  scope_trigger_tick trigger-hit ISR tick for the current frozen capture
 92  2  scope_bind_seq active binding sequence acknowledged by CPU1
 94  2  reserved
+96  4  link_rx_octets   lifetime octets accepted into the CPU2 SCI RX ring
+100 4  link_tx_octets   lifetime octets written to the CPU2 SCI TX FIFO
+104 4  link_rx_errors   SCI receiver error recoveries (framing/parity; SWRESET path)
+108 4  link_rx_overflow RX hardware-FIFO or software-ring overflow drops
+112 4  link_bad_frames  received frames dropped by COBS/CRC/oversize validation
+116 4  link_good_frames received frames that passed validation
+120 4  link_tx_frames   fully transmitted TX frames
+124 4  link_tx_queue_full TX submissions refused because no slot was free
+128 4  link_req_dropped requests dropped while the previous response was still queued
+132 4  link_resp_replays cached-response replays served to host retries
 ```
+
+The `link_*` counters (added in contract v16) are CPU2 lifetime totals for the
+SCI transport. Their deltas across a run classify frame loss without JTAG: a
+`link_resp_replays` delta means the original request reached the device and
+its response left, so the loss was on the device-to-host leg; a
+`link_good_frames` delta smaller than the host's request count means requests
+never survived the host-to-device leg; `link_req_dropped` exposes the
+response-pending request-drop path in the frame adapter.
 
 The host accepts profiler fields only when `prof_seq != 0` and
 `prof_seq == prof_seq_end`. A mismatch means CPU1 was publishing a new snapshot

@@ -42,6 +42,8 @@ volatile uint32_t g_v2k_sci_tx_queue_full;
 volatile uint32_t g_v2k_sci_tx_refill_isr;
 volatile uint32_t g_v2k_sci_tx_refill_kick;
 volatile uint32_t g_v2k_sci_tx_fifo_empty_refills;
+volatile uint32_t g_v2k_sci_req_dropped;
+volatile uint32_t g_v2k_sci_resp_replays;
 
 static uint16_t v2k_sci_board_prio(uint16_t protocol_prio,
                                    uint16_t *board_prio)
@@ -156,12 +158,19 @@ static void v2k_sci_process_encoded_frame(uint16_t *frame,
         (seq == s_last_response_seq))
     {
         // A host timeout retry reuses the original response without executing
-        // COMMIT/CMD-style services a second time.
+        // COMMIT/CMD-style services a second time. A nonzero replay count
+        // means the original response left the device but never reached the
+        // host application.
+        g_v2k_sci_resp_replays++;
         s_response_pending = 1u;
         return;
     }
     if (s_response_pending)
     {
+        // A new request while the previous response is still queued is
+        // dropped; the host recovers by retrying. Count it so an endurance
+        // run can tell this drop apart from wire-level frame loss.
+        g_v2k_sci_req_dropped++;
         return;
     }
     if (v2k_protocol_handle_request(

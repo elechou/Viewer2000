@@ -18,6 +18,8 @@ extern volatile uint32_t g_v2k_sci_tx_queue_full;
 extern volatile uint32_t g_v2k_sci_tx_refill_isr;
 extern volatile uint32_t g_v2k_sci_tx_refill_kick;
 extern volatile uint32_t g_v2k_sci_tx_fifo_empty_refills;
+extern volatile uint32_t g_v2k_sci_req_dropped;
+extern volatile uint32_t g_v2k_sci_resp_replays;
 
 void v2k_sci_init(void);
 void v2k_sci_poll(void);
