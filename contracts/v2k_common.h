@@ -85,7 +85,10 @@ V2K_ASSERT_SIZE_BITS(float, 32);
 // Shared-memory layout version. Increment for any shared-struct field change.
 // CPU1/CPU2 handshake checks this when firmware images are flashed out of sync.
 // See the handshake flow in v2k_command.h.
-#define V2K_CONTRACT_VER    14u
+// Version 15 was used by a downstream board extension and was never part of
+// the public contract. Keep the number reserved so public/private images and
+// host diagnostics retain an unambiguous version history.
+#define V2K_CONTRACT_VER    16u
 
 //-----------------------------------------------------------------------------
 // Public MCU family identifiers reported by HELLO. These identify only the MCU

@@ -34,9 +34,17 @@ static inline uint16_t v2k_scope_consumer_peek(
     {
         return 0u;
     }
+    // A rd_idx outside [0, 2*ring_capacity) is stale state from an older ring
+    // geometry; treat it as a desync and resync to the producer's index
+    // instead of deriving an out-of-ring block address from it.
+    if (idx >= (uint16_t)(prod->ring_capacity << 1u))
+    {
+        cons->rd_idx = end;
+        return 0u;
+    }
     view->block_index = idx;
     view->words = (const volatile uint16_t *)prod->ring_base +
-                  ((uint32_t)(idx & (prod->ring_capacity - 1u)) *
+                  ((uint32_t)v2k_ring_pos(idx, prod->ring_capacity) *
                    prod->block_slot_words);
     hdr = (const volatile v2k_block_hdr_t *)view->words;
     // Never trust ring geometry read back from shared RAM. After an index
@@ -62,16 +70,18 @@ static inline uint16_t v2k_scope_consumer_peek(
 }
 
 static inline void v2k_scope_consumer_release(
+    const volatile v2k_scope_prod_t *prod,
     volatile v2k_scope_cons_t *cons)
 {
-    cons->rd_idx++;
+    cons->rd_idx = v2k_ring_next(cons->rd_idx, prod->ring_capacity);
 }
 
 static inline void v2k_scope_consumer_begin_frozen(
     const volatile v2k_scope_prod_t *prod,
     volatile v2k_scope_cons_t *cons)
 {
-    cons->rd_idx = (uint16_t)(prod->frozen_end_idx - prod->frozen_count);
+    cons->rd_idx = v2k_ring_back(prod->frozen_end_idx, prod->frozen_count,
+                                 prod->ring_capacity);
 }
 
 #endif // V2K_SCOPE_CONSUMER_H

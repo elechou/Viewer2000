@@ -143,7 +143,7 @@ static uint16_t v2k_stream_remaining(
     const volatile v2k_scope_prod_t *prod,
     const volatile v2k_scope_cons_t *cons)
 {
-    return (uint16_t)(prod->wr_idx - cons->rd_idx);
+    return v2k_ring_dist(prod->wr_idx, cons->rd_idx, prod->ring_capacity);
 }
 
 static uint16_t v2k_scope_frozen_block_view(
@@ -164,11 +164,13 @@ static uint16_t v2k_scope_frozen_block_view(
     {
         return 0u;
     }
-    ring_index = (uint16_t)(prod->frozen_end_idx - prod->frozen_count +
-                            block_index);
+    ring_index = v2k_ring_add(
+        v2k_ring_back(prod->frozen_end_idx, prod->frozen_count,
+                      prod->ring_capacity),
+        block_index, prod->ring_capacity);
     view->block_index = block_index;
     view->words = (const volatile uint16_t *)prod->ring_base +
-                  ((uint32_t)(ring_index & (prod->ring_capacity - 1u)) *
+                  ((uint32_t)v2k_ring_pos(ring_index, prod->ring_capacity) *
                    prod->block_slot_words);
     hdr = (const volatile v2k_block_hdr_t *)view->words;
     // Same header-geometry guard as v2k_scope_consumer_peek: a block that
@@ -234,7 +236,7 @@ static uint16_t v2k_write_stream_batch_payload(
             g_v2k_protocol_message[off++] = value & 0xFFu;
             g_v2k_protocol_message[off++] = (value >> 8u) & 0xFFu;
         }
-        v2k_scope_consumer_release(cons);
+        v2k_scope_consumer_release(prod, cons);
         count++;
     }
     g_v2k_protocol_message[count_off] = count;

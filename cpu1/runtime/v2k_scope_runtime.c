@@ -98,23 +98,6 @@ static uint16_t v2k_scope_addr_valid(uint32_t addr, uint16_t type)
         v2k_addr_in_range(addr, words, &V2K_UserConstStart, &V2K_UserConstEnd));
 }
 
-static uint16_t v2k_floor_pow2(uint32_t value)
-{
-    uint16_t result;
-    uint16_t next = 1u;
-    if (value == 0u)
-    {
-        return 0u;
-    }
-    result = 1u;
-    while (((uint32_t)next << 1u) <= value)
-    {
-        next = (uint16_t)(next << 1u);
-        result = next;
-    }
-    return result;
-}
-
 static uint16_t v2k_stride_words(const v2k_scope_ch_bind_t *bind,
                                  uint16_t n_ch)
 {
@@ -154,7 +137,7 @@ static uint16_t v2k_scope_layout(uint16_t n_ticks, uint16_t stride_words,
     {
         return V2K_SCOPE_RESULT_NO_CAPACITY;
     }
-    cap = v2k_floor_pow2(V2K_SCOPE_RING_WORDS / slot);
+    cap = (uint16_t)(V2K_SCOPE_RING_WORDS / slot);
     if (cap == 0u)
     {
         return V2K_SCOPE_RESULT_NO_CAPACITY;
@@ -459,7 +442,11 @@ static void v2k_apply_cfg(void)
         s_active_cfg.prescaler = prescaler;
         if (s_cfg_pending.cfg.mode_req == V2K_SCOPE_STREAM)
         {
-            prod->wr_idx = s_cons_rd_cache;
+            // Start empty at CPU2's read position. A rd_idx left over from an
+            // older geometry can sit outside [0, 2*capacity); fall back to 0
+            // then -- CPU2 resyncs rd_idx = wr_idx on the state_seq change.
+            prod->wr_idx = (s_cons_rd_cache < (uint16_t)(capacity << 1u)) ?
+                           s_cons_rd_cache : 0u;
         }
         else if (s_cfg_pending.cfg.mode_req == V2K_SCOPE_CAPTURE_ARMED)
         {
@@ -491,7 +478,7 @@ static volatile uint16_t *v2k_block_words(uint16_t wr_idx)
 {
     const volatile v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
     return (volatile uint16_t *)prod->ring_base +
-           ((uint32_t)(wr_idx & (prod->ring_capacity - 1u)) *
+           ((uint32_t)v2k_ring_pos(wr_idx, prod->ring_capacity) *
             prod->block_slot_words);
 }
 
@@ -560,7 +547,7 @@ static void v2k_publish_block(uint16_t n_ticks)
         (volatile v2k_block_hdr_t *)v2k_block_words(prod->wr_idx);
 
     hdr->n_ticks = n_ticks;
-    prod->wr_idx++;
+    prod->wr_idx = v2k_ring_next(prod->wr_idx, prod->ring_capacity);
     s_scope.block_seq++;
     if (s_scope.published_count < prod->ring_capacity)
     {
@@ -608,8 +595,8 @@ static void v2k_scope_sample_one(v2k_tick_t tick)
     {
         s_scope.drop_block = 0u;
         if ((prod->mode == V2K_SCOPE_STREAM) &&
-            ((uint16_t)(prod->wr_idx - s_cons_rd_cache) >=
-             prod->ring_capacity))
+            (v2k_ring_dist(prod->wr_idx, s_cons_rd_cache,
+                           prod->ring_capacity) >= prod->ring_capacity))
         {
             s_scope.drop_block = 1u;
         }
@@ -778,7 +765,8 @@ void v2k_scope_ccs_view_service(void)
               (s_scope.bind[ch].type == V2K_TYPE_U16)) ? 1u : 2u));
     }
 
-    idx = (uint16_t)(prod->frozen_end_idx - prod->frozen_count);
+    idx = v2k_ring_back(prod->frozen_end_idx, prod->frozen_count,
+                        prod->ring_capacity);
     end = prod->frozen_end_idx;
     while ((idx != end) && (count < V2K_CCS_VIEW_SAMPLES))
     {
@@ -799,7 +787,7 @@ void v2k_scope_ccs_view_service(void)
             g_v2k_ccs_view.data[count++] =
                 v2k_words_float(src, s_scope.bind[slot].type);
         }
-        idx++;
+        idx = v2k_ring_next(idx, prod->ring_capacity);
     }
     g_v2k_ccs_view.count = count;
     g_v2k_ccs_view.result = V2K_SCOPE_RESULT_OK;

@@ -56,9 +56,11 @@
 //   not via rd_idx. Once received, the host re-ARMs or switches back to STREAM.
 //
 // ---- SPSC index protocol ----
-// wr_idx/rd_idx are free-running uint16, addressed modulo ring_capacity (a power
-// of two):
-//   empty: wr_idx == rd_idx     full: (uint16_t)(wr_idx - rd_idx) == ring_capacity
+// ring_capacity is the exact block count that fits the ring (no power-of-two
+// rounding). wr_idx/rd_idx/frozen_end_idx travel in [0, 2*ring_capacity) so
+// that empty and full stay distinguishable for any capacity:
+//   empty: wr_idx == rd_idx     full: v2k_ring_dist(wr, rd) == ring_capacity
+//   slot:  v2k_ring_pos(idx) = idx modulo ring_capacity
 // wr_idx is written only by CPU1 (write the block data first, then publish
 // wr_idx); rd_idx is written only by CPU2, and both live in their own core's
 // owned RAM region (see v2k_memmap.h) — single writer means lock-free.
@@ -127,17 +129,17 @@ V2K_ASSERT_SIZE_BITS(v2k_block_hdr_t, 128u);
 typedef struct {
     uint16_t mode;            // V2K_SCOPE_* (CPU1 writes; transitions after handling a cfg request)
     uint16_t flags;           // Reserved, set to 0
-    uint16_t ring_capacity;   // Ring capacity (in blocks, a power of two)
+    uint16_t ring_capacity;   // Ring capacity (in blocks, exact ring fit)
     uint16_t block_n_ticks;   // Currently effective N
     uint16_t n_ch;            // Currently effective M (= channel count of the applied binding)
     uint16_t prescaler;       // Currently effective scope sampling decimation
     uint16_t cfg_ack_seq;     // Processed cfg_seq (acknowledge side of the sequence handshake)
     uint16_t cfg_result;      // V2K_SCOPE_RESULT_* (for cfg_ack_seq)
     uint32_t ring_base;       // Base address of the ring data area (CPU1 data-space word address)
-    uint16_t wr_idx;          // Free-running write index (in blocks); published after the data is ready
+    uint16_t wr_idx;          // Write index in [0, 2*ring_capacity); published after the data is ready
     uint16_t overrun_cnt;     // Cumulative STREAM ring-full block drops
     v2k_tick_t trig_tick;     // Trigger-hit tick (valid in CAPTURE_FROZEN)
-    uint16_t frozen_end_idx;  // CAPTURE_FROZEN: index just past the last written block (free-running value)
+    uint16_t frozen_end_idx;  // CAPTURE_FROZEN: index just past the last written block, in [0, 2*ring_capacity)
     uint16_t frozen_count;    // CAPTURE_FROZEN: number of valid blocks (≤ ring_capacity)
     uint16_t state_seq;       // Bumped by 1 on each mode transition (CPU2/host detect state changes)
     uint16_t bind_ack_seq;    // Processed bind_seq (acknowledge side of the sequence handshake)
@@ -151,7 +153,7 @@ V2K_ASSERT_SIZE_BITS(v2k_scope_prod_t, 320u);
 // Consumer control block (CPU2-owned region, CPU1 read-only)
 //-----------------------------------------------------------------------------
 typedef struct {
-    uint16_t rd_idx;          // Free-running read index used by STREAM only.
+    uint16_t rd_idx;          // Read index in [0, 2*ring_capacity), used by STREAM only.
     uint16_t reserved;
 } v2k_scope_cons_t;
 
@@ -210,5 +212,48 @@ V2K_ASSERT_SIZE_BITS(v2k_scope_bind_t, 32u + 64u * V2K_SCOPE_MAX_CH);
 // On-wire octets of one block
 #define V2K_BLOCK_OCTETS(n_ticks, stride_octets) \
     (V2K_BLOCK_HDR_OCTETS + (uint32_t)(n_ticks) * (stride_octets))
+
+//-----------------------------------------------------------------------------
+// Ring index helpers (see "SPSC index protocol" above)
+//
+// All published indices stay in [0, 2*capacity). The uint16 arithmetic below
+// is exact because capacity is bounded by ring_words / min_slot_words
+// (min slot = 8 + n_ticks words), far below 0x4000 on any supported target.
+//-----------------------------------------------------------------------------
+static inline uint16_t v2k_ring_pos(uint16_t idx, uint16_t capacity)
+{
+    return (idx >= capacity) ? (uint16_t)(idx - capacity) : idx;
+}
+
+static inline uint16_t v2k_ring_next(uint16_t idx, uint16_t capacity)
+{
+    uint16_t wrap = (uint16_t)(capacity << 1u);
+    idx++;
+    return (idx >= wrap) ? 0u : idx;
+}
+
+static inline uint16_t v2k_ring_dist(uint16_t wr, uint16_t rd,
+                                     uint16_t capacity)
+{
+    uint16_t wrap = (uint16_t)(capacity << 1u);
+    return (wr >= rd) ? (uint16_t)(wr - rd)
+                      : (uint16_t)((uint16_t)(wr + wrap) - rd);
+}
+
+static inline uint16_t v2k_ring_back(uint16_t idx, uint16_t n,
+                                     uint16_t capacity)
+{
+    uint16_t wrap = (uint16_t)(capacity << 1u);
+    return (idx >= n) ? (uint16_t)(idx - n)
+                      : (uint16_t)((uint16_t)(idx + wrap) - n);
+}
+
+static inline uint16_t v2k_ring_add(uint16_t idx, uint16_t n,
+                                    uint16_t capacity)
+{
+    uint16_t wrap = (uint16_t)(capacity << 1u);
+    uint32_t sum = (uint32_t)idx + n;
+    return (sum >= wrap) ? (uint16_t)(sum - wrap) : (uint16_t)sum;
+}
 
 #endif // V2K_SCOPE_H

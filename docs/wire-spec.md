@@ -451,7 +451,10 @@ lands in the middle of a block still contains enough samples for the host to
 trim an exact `record_points` window around `trigger_tick`. Therefore the host's
 maximum submitted record count is `(capacity_blocks - 1) * scope_block_ticks`
 for the active binding, where `capacity_blocks =
-floor_pow2(scope_ring_words / aligned_slot_words)`.
+floor(scope_ring_words / aligned_slot_words)` (exact fit; the former
+power-of-two rounding was removed together with the free-running ring
+indices -- firmware ring indices now wrap at `2 * capacity_blocks`, which
+stays invisible on the wire).
 
 The "watch window" of an application variable = after selecting variables, run STREAM with a larger `prescaler` — it carries tick timestamps and is lossless native bit pattern, replacing independent poll-style monitoring. When you need a per-tick waveform set prescaler to 1; when you need to reduce link pressure increase prescaler, reduce channels, or lower the block frequency.
 

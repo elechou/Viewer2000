@@ -38,7 +38,7 @@
 // Scope ring sizing, native sample width, f32 8ch = 16 words/tick:
 //   28K words ~= 1792 ticks of jitter absorption
 //   89.6 ms @20 kHz / 17.9 ms @100 kHz
-//   N=50 f32 8ch block = 808 words, rounded capacity = 32 blocks.
+//   N=50 f32 8ch block = 808 words, exact capacity = 35 blocks.
 //=============================================================================
 #ifndef V2K_MEMMAP_H
 #define V2K_MEMMAP_H

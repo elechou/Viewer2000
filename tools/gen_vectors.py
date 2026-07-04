@@ -145,7 +145,7 @@ def build_cases():
     add("hello_req", "HELLO_REQ: empty payload", 0x01, 0x0001, b"")
     add("hello_resp", "HELLO_RESP: versions, build_hash, firmware name, tick_hz, capabilities, project metadata, MCU model, and Scope resources",
         0x81, 0x0001,
-        struct.pack("<HHIHH16sII32sIHHHHI", 10, 14, BUILD_HASH, 10, 0,
+        struct.pack("<HHIHH16sII32sIHHHHI", 10, 16, BUILD_HASH, 10, 0,
                     b"viewer2000", 20000, 0x7F,
                     b"phase4-demo", BUILD_TIME_UTC,
                     1, 16, 10, 0, 0x7000))
