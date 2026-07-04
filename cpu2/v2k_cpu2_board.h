@@ -24,6 +24,8 @@ uint16_t v2k_cpu2_board_ipc_pong_ack(void);
 
 void v2k_cpu2_board_pipe_init(void);
 void v2k_cpu2_board_pipe_service(void);
+uint16_t v2k_cpu2_board_pipe_recovery_seq(void);
+uint16_t v2k_cpu2_board_pipe_discard_rx(void);
 uint16_t v2k_cpu2_board_pipe_read_octet(uint16_t *octet);
 
 #define V2K_CPU2_BOARD_PIPE_TX_PRIO_NORMAL 0u

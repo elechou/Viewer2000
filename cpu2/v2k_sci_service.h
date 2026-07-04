@@ -10,6 +10,7 @@
 extern volatile uint32_t g_v2k_sci_rx_octets;
 extern volatile uint32_t g_v2k_sci_tx_octets;
 extern volatile uint32_t g_v2k_sci_rx_overflow;
+extern volatile uint32_t g_v2k_sci_rx_errors;
 extern volatile uint32_t g_v2k_sci_bad_frames;
 extern volatile uint32_t g_v2k_sci_good_frames;
 extern volatile uint32_t g_v2k_sci_tx_frames;

@@ -29,6 +29,7 @@
 extern volatile uint32_t g_v2k_sci_rx_octets;
 extern volatile uint32_t g_v2k_sci_tx_octets;
 extern volatile uint32_t g_v2k_sci_rx_overflow;
+extern volatile uint32_t g_v2k_sci_rx_errors;
 extern volatile uint32_t g_v2k_sci_tx_frames;
 extern volatile uint32_t g_v2k_sci_tx_queue_full;
 extern volatile uint32_t g_v2k_sci_tx_refill_isr;
@@ -47,6 +48,7 @@ typedef struct {
 static volatile uint16_t s_pipe_rx_ring[V2K_CPU2_PIPE_RX_RING_WORDS];
 static volatile uint16_t s_pipe_rx_wr;
 static volatile uint16_t s_pipe_rx_rd;
+static volatile uint16_t s_pipe_recovery_seq;
 static v2k_cpu2_pipe_tx_slot_t s_pipe_tx_slots[V2K_CPU2_PIPE_TX_FRAME_SLOTS];
 static volatile uint16_t s_pipe_tx_active;
 static uint32_t s_pipe_tx_submit_order;
@@ -286,8 +288,36 @@ static __interrupt void v2k_cpu2_board_scia_tx_isr(void)
     Interrupt_clearACKGroup(INTERRUPT_ACK_GROUP9);
 }
 
+static void v2k_cpu2_board_scia_recover_rx(uint16_t rx_error,
+                                           uint16_t fifo_overflow)
+{
+    if (rx_error != 0u)
+    {
+        // DriverLib SWRESET clears break/framing/parity/overrun receiver
+        // status without changing the configured baud or frame format.
+        SCI_performSoftwareReset(SCIA_BASE);
+        g_v2k_sci_rx_errors++;
+    }
+    if (fifo_overflow != 0u)
+    {
+        SCI_clearOverflowStatus(SCIA_BASE);
+        g_v2k_sci_rx_overflow++;
+    }
+    SCI_resetRxFIFO(SCIA_BASE);
+    s_pipe_recovery_seq++;
+}
+
 static __interrupt void v2k_cpu2_board_scia_rx_isr(void)
 {
+    uint16_t rx_error =
+        (SCI_getRxStatus(SCIA_BASE) & SCI_RXSTATUS_ERROR) != 0u;
+    uint16_t fifo_overflow = SCI_getOverflowStatus(SCIA_BASE) ? 1u : 0u;
+
+    if ((rx_error != 0u) || (fifo_overflow != 0u))
+    {
+        v2k_cpu2_board_scia_recover_rx(rx_error, fifo_overflow);
+    }
+
     while (SCI_getRxFIFOStatus(SCIA_BASE) != SCI_FIFO_RX0)
     {
         uint16_t value = SCI_readCharNonBlocking(SCIA_BASE) & 0xFFu;
@@ -296,6 +326,7 @@ static __interrupt void v2k_cpu2_board_scia_rx_isr(void)
 
         if (next == s_pipe_rx_rd)
         {
+            s_pipe_recovery_seq++;
             g_v2k_sci_rx_overflow++;
         }
         else
@@ -305,11 +336,11 @@ static __interrupt void v2k_cpu2_board_scia_rx_isr(void)
             g_v2k_sci_rx_octets++;
         }
     }
-    if (SCI_getOverflowStatus(SCIA_BASE))
+    rx_error = (SCI_getRxStatus(SCIA_BASE) & SCI_RXSTATUS_ERROR) != 0u;
+    fifo_overflow = SCI_getOverflowStatus(SCIA_BASE) ? 1u : 0u;
+    if ((rx_error != 0u) || (fifo_overflow != 0u))
     {
-        SCI_clearOverflowStatus(SCIA_BASE);
-        SCI_resetRxFIFO(SCIA_BASE);
-        g_v2k_sci_rx_overflow++;
+        v2k_cpu2_board_scia_recover_rx(rx_error, fifo_overflow);
     }
     SCI_clearInterruptStatus(SCIA_BASE, SCI_INT_RXFF);
     Interrupt_clearACKGroup(INTERRUPT_ACK_GROUP9);
@@ -391,6 +422,7 @@ void v2k_cpu2_board_pipe_init(void)
 
     s_pipe_rx_wr = 0u;
     s_pipe_rx_rd = 0u;
+    s_pipe_recovery_seq = 0u;
     s_pipe_tx_active = V2K_CPU2_PIPE_TX_SLOT_INVALID;
     s_pipe_tx_submit_order = 0uL;
     for (i = 0u; i < V2K_CPU2_PIPE_TX_FRAME_SLOTS; i++)
@@ -418,12 +450,32 @@ void v2k_cpu2_board_pipe_init(void)
 
 void v2k_cpu2_board_pipe_service(void)
 {
-    if (SCI_getOverflowStatus(SCIA_BASE))
+    uint16_t rx_error =
+        (SCI_getRxStatus(SCIA_BASE) & SCI_RXSTATUS_ERROR) != 0u;
+    uint16_t fifo_overflow = SCI_getOverflowStatus(SCIA_BASE) ? 1u : 0u;
+
+    if ((rx_error != 0u) || (fifo_overflow != 0u))
     {
-        SCI_clearOverflowStatus(SCIA_BASE);
-        SCI_resetRxFIFO(SCIA_BASE);
-        g_v2k_sci_rx_overflow++;
+        v2k_cpu2_board_scia_recover_rx(rx_error, fifo_overflow);
     }
+}
+
+uint16_t v2k_cpu2_board_pipe_recovery_seq(void)
+{
+    return s_pipe_recovery_seq;
+}
+
+uint16_t v2k_cpu2_board_pipe_discard_rx(void)
+{
+    uint16_t recovery_seq;
+
+    // Keep the ISR as the sole ring producer and the foreground as the sole
+    // consumer. Briefly mask RX while the consumer catches up to the producer.
+    Interrupt_disable(INT_SCIA_RX);
+    s_pipe_rx_rd = s_pipe_rx_wr;
+    recovery_seq = s_pipe_recovery_seq;
+    Interrupt_enable(INT_SCIA_RX);
+    return recovery_seq;
 }
 
 uint16_t v2k_cpu2_board_pipe_read_octet(uint16_t *octet)

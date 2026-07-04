@@ -22,6 +22,7 @@ extern v2k_msg_2to1_t g_v2k_msg_2to1;
 static uint16_t s_rx_frame[V2K_SCI_RX_FRAME_WORDS];
 static uint16_t s_rx_frame_len;
 static uint16_t s_rx_discard;
+static uint16_t s_pipe_recovery_seen;
 static uint16_t s_tx_frame[V2K_SCI_FRAME_WIRE_MAX];
 static uint16_t s_response_frame[V2K_SCI_FRAME_WIRE_MAX];
 static uint16_t s_response_len;
@@ -33,6 +34,7 @@ static uint16_t s_have_last_response;
 volatile uint32_t g_v2k_sci_rx_octets;
 volatile uint32_t g_v2k_sci_tx_octets;
 volatile uint32_t g_v2k_sci_rx_overflow;
+volatile uint32_t g_v2k_sci_rx_errors;
 volatile uint32_t g_v2k_sci_bad_frames;
 volatile uint32_t g_v2k_sci_good_frames;
 volatile uint32_t g_v2k_sci_tx_frames;
@@ -201,6 +203,25 @@ static void v2k_sci_rx_service(void)
     }
 }
 
+static void v2k_sci_resync_recovered_pipe(void)
+{
+    uint16_t recovery_seq = v2k_cpu2_board_pipe_recovery_seq();
+
+    if (recovery_seq == s_pipe_recovery_seen)
+    {
+        return;
+    }
+
+    // A physical-line error invalidates queued octets, any partial COBS frame,
+    // and the previous host session's duplicate-response cache.
+    s_pipe_recovery_seen = v2k_cpu2_board_pipe_discard_rx();
+    s_rx_frame_len = 0u;
+    s_rx_discard = 0u;
+    s_response_pending = 0u;
+    s_have_last_response = 0u;
+    g_v2k_msg_2to1.cpu2_status.link_state = 0u;
+}
+
 void v2k_sci_init(void)
 {
     memset(s_rx_frame, 0, sizeof(s_rx_frame));
@@ -208,17 +229,20 @@ void v2k_sci_init(void)
     memset(s_response_frame, 0, sizeof(s_response_frame));
     s_rx_frame_len = 0u;
     s_rx_discard = 0u;
+    s_pipe_recovery_seen = 0u;
     s_response_len = 0u;
     s_response_pending = 0u;
     s_last_response_req_type = 0u;
     s_last_response_seq = 0u;
     s_have_last_response = 0u;
     v2k_cpu2_board_pipe_init();
+    s_pipe_recovery_seen = v2k_cpu2_board_pipe_recovery_seq();
 }
 
 void v2k_sci_poll(void)
 {
     v2k_cpu2_board_pipe_service();
+    v2k_sci_resync_recovered_pipe();
     v2k_sci_start_pending_response();
     v2k_sci_rx_service();
 }
@@ -227,6 +251,7 @@ void v2k_sci_flush(void)
 {
     v2k_sci_start_pending_response();
     v2k_cpu2_board_pipe_service();
+    v2k_sci_resync_recovered_pipe();
 }
 
 uint16_t v2k_sci_response_pending(void)
