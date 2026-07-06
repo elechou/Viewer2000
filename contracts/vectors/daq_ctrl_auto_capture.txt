@@ -1,0 +1,6 @@
+# vector: daq_ctrl_auto_capture
+# DAQ_CTRL: enter CAPTURE_ARMED with threshold evaluation disabled; CAPTURE_FORCE_REQ supplies the trigger
+# raw  = frame before COBS (ver|type|flags|seq|len|payload|crc32c, all LE)
+# wire = COBS(raw) + 0x00 delimiter, the actual SCI-link octets
+raw: 5a200011001800020000000000000000000000000032000100e803ffff0100f6f8ce7c
+wire: 035a200211021802020101010101010101010101010232020106e803ffff0105f6f8ce7c00

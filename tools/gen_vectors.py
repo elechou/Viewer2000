@@ -145,8 +145,8 @@ def build_cases():
     add("hello_req", "HELLO_REQ: empty payload", 0x01, 0x0001, b"")
     add("hello_resp", "HELLO_RESP: versions, build_hash, firmware name, tick_hz, capabilities, project metadata, MCU model, and Scope resources",
         0x81, 0x0001,
-        struct.pack("<HHIHH16sII32sIHHHHI", 10, 16, BUILD_HASH, 10, 0,
-                    b"viewer2000", 20000, 0x7F,
+        struct.pack("<HHIHH16sII32sIHHHHI", 10, 17, BUILD_HASH, 10, 0,
+                    b"viewer2000", 20000, 0x27F,
                     b"phase4-demo", BUILD_TIME_UTC,
                     1, 16, 10, 0, 0x7000))
 
@@ -250,6 +250,11 @@ def build_cases():
         0x20, 0x000D,
         struct.pack("<HHffHHHHHH", 1, 0, 0.0, 0.0, 0, 0, 1, 0,
                     0xFFFF, 0))
+    add("daq_ctrl_auto_capture",
+        "DAQ_CTRL: enter CAPTURE_ARMED with threshold evaluation disabled; CAPTURE_FORCE_REQ supplies the trigger",
+        0x20, 0x0011,
+        struct.pack("<HHffHHHHHH", 2, 0, 0.0, 0.0, 0, 50, 1, 1000,
+                    0xFFFF, 1))
     add("daq_bind_2ch",
         "DAQ_BIND: bind 2 channels: 0xA044 I16 native 2 octets, 0xC120 F32 native 4 octets; addresses came from ENUM",
         0x22, 0x000C,
@@ -261,6 +266,21 @@ def build_cases():
     add("ack_daq_bind_badstate",
         "ACK(DAQ_BIND) negative semantics: scope not OFF gives BAD_STATE; send DAQ_CTRL(OFF) first",
         0xA2, 0x000D, struct.pack("<BBHI", 3, 0x22, 0, 4))
+    add("capture_force_req",
+        "CAPTURE_FORCE_REQ: empty payload requests a synthetic trigger for the current armed Capture",
+        0x23, 0x0012, b"")
+    add("ack_capture_force_req",
+        "ACK(CAPTURE_FORCE_REQ): OK, data=current armed Capture state_seq=7",
+        0xA3, 0x0012, struct.pack("<BBHI", 0, 0x23, 0, 7))
+    add("capture_force_badparam",
+        "CAPTURE_FORCE_REQ negative request: non-empty payload is invalid",
+        0x23, 0x0013, b"\x00")
+    add("ack_capture_force_badparam",
+        "ACK(CAPTURE_FORCE_REQ): BAD_PARAM for a non-empty payload",
+        0xA3, 0x0013, struct.pack("<BBHI", 1, 0x23, 0, 0))
+    add("ack_capture_force_badstate",
+        "ACK(CAPTURE_FORCE_REQ): BAD_STATE when Capture is not armed",
+        0xA3, 0x0014, struct.pack("<BBHI", 3, 0x23, 0, 8))
 
     # ---- 4.6 SCOPE stream push / capture batch push / capture replay ----
     add("capture_replay_req",

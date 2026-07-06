@@ -96,6 +96,11 @@
 #define V2K_TRIG_RISE 0u
 #define V2K_TRIG_FALL 1u
 
+// DAQ_CTRL flags. TRIGGER_DISABLED arms Capture without evaluating a source;
+// CAPTURE_FORCE_REQ supplies the synthetic trigger once pre-history is ready.
+#define V2K_SCOPE_CFG_TRIGGER_DISABLED 0x0001u
+#define V2K_SCOPE_CFG_FLAGS_MASK       V2K_SCOPE_CFG_TRIGGER_DISABLED
+
 // Config and bind result codes (prod.cfg_result / prod.bind_result)
 #define V2K_SCOPE_RESULT_OK          0u
 #define V2K_SCOPE_RESULT_BAD_STATE   1u
@@ -125,6 +130,7 @@ V2K_ASSERT_SIZE_BITS(v2k_block_hdr_t, 128u);
 // C28x word offsets: mode@0 flags@1 cap@2 n_ticks@3 n_ch@4 prescaler@5
 //   cfg_ack@6 cfg_result@7 ring_base@8 wr_idx@10 overrun@11 trig_tick@12
 //   frz_end@14 frz_cnt@15 state_seq@16 bind_ack@17 bind_result@18 slot_words@19
+//   force_ack@20 force_result@21
 //-----------------------------------------------------------------------------
 typedef struct {
     uint16_t mode;            // V2K_SCOPE_* (CPU1 writes; transitions after handling a cfg request)
@@ -145,9 +151,11 @@ typedef struct {
     uint16_t bind_ack_seq;    // Processed bind_seq (acknowledge side of the sequence handshake)
     uint16_t bind_result;     // V2K_SCOPE_RESULT_* (for bind_ack_seq)
     uint16_t block_slot_words;// Words per block slot in the ring = 8 + n_ticks×stride_words
+    uint16_t force_ack_seq;   // Processed force_seq (acknowledge side of the force handshake)
+    uint16_t force_result;    // V2K_SCOPE_RESULT_* (for force_ack_seq)
 } v2k_scope_prod_t;
 
-V2K_ASSERT_SIZE_BITS(v2k_scope_prod_t, 320u);
+V2K_ASSERT_SIZE_BITS(v2k_scope_prod_t, 352u);
 
 //-----------------------------------------------------------------------------
 // Consumer control block (CPU2-owned region, CPU1 read-only)
@@ -176,11 +184,23 @@ typedef struct {
     uint16_t pre_trig_pct;    // Pre-trigger as a percentage of ring depth, 0..100
     uint16_t prescaler;       // Scope rate override (0 = keep the current value)
     uint16_t record_points;   // Capture target sample-point count; ignored for STREAM/OFF
-    uint16_t reserved;        // Set to 0
+    uint16_t flags;           // V2K_SCOPE_CFG_*; unknown bits are rejected
     uint16_t cfg_seq;         // CPU2 writes this last (publish); the ack is in prod.cfg_ack_seq
 } v2k_scope_cfg_t;
 
 V2K_ASSERT_SIZE_BITS(v2k_scope_cfg_t, 192u);
+
+//-----------------------------------------------------------------------------
+// Force-capture request (CPU2-owned region, CPU1 applies without reconfiguring
+// or resetting the capture ring). capture_state_seq prevents a delayed request
+// from forcing a later re-arm generation.
+//-----------------------------------------------------------------------------
+typedef struct {
+    uint16_t capture_state_seq;
+    uint16_t force_seq;       // CPU2 writes this last; ack is prod.force_ack_seq
+} v2k_scope_force_t;
+
+V2K_ASSERT_SIZE_BITS(v2k_scope_force_t, 32u);
 
 //-----------------------------------------------------------------------------
 // Channel bind request (CPU2-owned region = host writes via DAQ_BIND, CPU1 applies)

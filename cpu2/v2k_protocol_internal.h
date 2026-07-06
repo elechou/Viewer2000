@@ -16,6 +16,7 @@
 #define V2K_MSG_DAQ_CTRL           0x20u
 #define V2K_MSG_CAPTURE_REPLAY_REQ 0x21u
 #define V2K_MSG_DAQ_BIND           0x22u
+#define V2K_MSG_CAPTURE_FORCE_REQ  0x23u
 #define V2K_MSG_CMD                0x30u
 #define V2K_MSG_STATUS_PUSH        0x41u
 #define V2K_MSG_SCOPE_BLOCK_PUSH   0x42u

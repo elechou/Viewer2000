@@ -44,7 +44,7 @@ void v2k_scope_protocol_handle_daq_ctrl(uint16_t seq, const uint16_t *payload,
     }
     ack_capture_id = v2k_message_get_u16(payload, 20u);
     flags = v2k_message_get_u16(payload, 22u);
-    if (flags != 0u)
+    if ((flags & (uint16_t)~V2K_SCOPE_CFG_FLAGS_MASK) != 0u)
     {
         v2k_protocol_send_ack(V2K_MSG_DAQ_CTRL, seq, V2K_ACK_BAD_PARAM, 0uL);
         return;
@@ -68,7 +68,7 @@ void v2k_scope_protocol_handle_daq_ctrl(uint16_t seq, const uint16_t *payload,
     cfg->pre_trig_pct = v2k_message_get_u16(payload, 14u);
     cfg->prescaler = v2k_message_get_u16(payload, 16u);
     cfg->record_points = v2k_message_get_u16(payload, 18u);
-    cfg->reserved = 0u;
+    cfg->flags = flags;
     cfg->cfg_seq = cfg_seq;
     for (i = 0u; i < 3000u; i++)
     {
@@ -85,6 +85,51 @@ void v2k_scope_protocol_handle_daq_ctrl(uint16_t seq, const uint16_t *payload,
         v2k_cpu2_board_delay_us(1u);
     }
     v2k_protocol_send_ack(V2K_MSG_DAQ_CTRL, seq, V2K_ACK_INTERNAL, cfg_seq);
+}
+
+void v2k_scope_protocol_handle_capture_force(uint16_t seq,
+                                             uint16_t payload_len)
+{
+    const volatile v2k_scope_prod_t *prod = &V2K_CPU1_PLANE_RO->scope_prod;
+    volatile v2k_scope_force_t *force = &g_v2k_cpu2_plane.scope_force;
+    uint16_t capture_state_seq;
+    uint16_t force_seq;
+    uint16_t i;
+
+    if (payload_len != 0u)
+    {
+        v2k_protocol_send_ack(V2K_MSG_CAPTURE_FORCE_REQ, seq,
+                              V2K_ACK_BAD_PARAM, 0uL);
+        return;
+    }
+    if (prod->mode != V2K_SCOPE_CAPTURE_ARMED)
+    {
+        v2k_protocol_send_ack(V2K_MSG_CAPTURE_FORCE_REQ, seq,
+                              V2K_ACK_BAD_STATE, prod->state_seq);
+        return;
+    }
+
+    capture_state_seq = prod->state_seq;
+    force_seq = (uint16_t)(force->force_seq + 1u);
+    force->capture_state_seq = capture_state_seq;
+    force->force_seq = force_seq;
+    for (i = 0u; i < 3000u; i++)
+    {
+        if (prod->force_ack_seq == force_seq)
+        {
+            uint16_t result = prod->force_result;
+            uint16_t ack = (result == V2K_SCOPE_RESULT_OK) ?
+                           V2K_ACK_OK :
+                           ((result == V2K_SCOPE_RESULT_BAD_STATE) ?
+                            V2K_ACK_BAD_STATE : V2K_ACK_BAD_PARAM);
+            v2k_protocol_send_ack(V2K_MSG_CAPTURE_FORCE_REQ, seq, ack,
+                                  capture_state_seq);
+            return;
+        }
+        v2k_cpu2_board_delay_us(1u);
+    }
+    v2k_protocol_send_ack(V2K_MSG_CAPTURE_FORCE_REQ, seq,
+                          V2K_ACK_INTERNAL, capture_state_seq);
 }
 
 void v2k_scope_protocol_handle_daq_bind(uint16_t seq, const uint16_t *payload,

@@ -18,6 +18,8 @@ void v2k_scope_protocol_handle_capture_replay(
     uint16_t seq,
     const uint16_t *payload,
     uint16_t payload_len);
+void v2k_scope_protocol_handle_capture_force(uint16_t seq,
+                                             uint16_t payload_len);
 uint16_t v2k_scope_protocol_start_capture_push(uint16_t replay);
 uint16_t v2k_scope_protocol_start_stream_push(void);
 

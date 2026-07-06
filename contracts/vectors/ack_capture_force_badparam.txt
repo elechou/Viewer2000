@@ -1,0 +1,6 @@
+# vector: ack_capture_force_badparam
+# ACK(CAPTURE_FORCE_REQ): BAD_PARAM for a non-empty payload
+# raw  = frame before COBS (ver|type|flags|seq|len|payload|crc32c, all LE)
+# wire = COBS(raw) + 0x00 delimiter, the actual SCI-link octets
+raw: 5aa300130008000123000000000000b3bbe55f
+wire: 035aa302130208030123010101010105b3bbe55f00

@@ -40,6 +40,7 @@ typedef struct {
     v2k_param_shadow_t param_shadow;  // Parameter double-buffer shadow region.
     v2k_param_read_req_t param_read_req; // CAL_READ on-demand read request.
     v2k_scope_cfg_t    scope_cfg;     // Scope configuration request.
+    v2k_scope_force_t  scope_force;   // Synthetic Capture trigger request.
     v2k_scope_bind_t   scope_bind;    // Channel binding request.
     v2k_scope_cons_t   scope_cons;    // Consumer read index.
 } v2k_cpu2_plane_t;

@@ -36,6 +36,7 @@ typedef struct {
     uint16_t active_bind_seq;
     uint16_t drop_block;
     uint16_t trigger_armed;
+    uint16_t force_pending;
     uint32_t post_remaining;
     uint32_t capture_total_samples;
     uint32_t capture_post_samples;
@@ -56,12 +57,19 @@ typedef struct {
     uint16_t result;
 } v2k_scope_bind_pending_t;
 
+typedef struct {
+    v2k_scope_force_t force;
+    uint16_t pending;
+} v2k_scope_force_pending_t;
+
 static v2k_scope_runtime_t s_scope;
 static v2k_scope_cfg_t s_active_cfg;
 static v2k_scope_cfg_pending_t s_cfg_pending;
 static v2k_scope_bind_pending_t s_bind_pending;
+static v2k_scope_force_pending_t s_force_pending;
 static uint16_t s_cfg_seen;
 static uint16_t s_bind_seen;
+static uint16_t s_force_seen;
 static volatile uint16_t s_scope_active;
 static volatile uint16_t s_cons_rd_cache;
 
@@ -170,6 +178,7 @@ void v2k_scope_init(void)
     memset(&s_active_cfg, 0, sizeof(s_active_cfg));
     memset(&s_cfg_pending, 0, sizeof(s_cfg_pending));
     memset(&s_bind_pending, 0, sizeof(s_bind_pending));
+    memset(&s_force_pending, 0, sizeof(s_force_pending));
     memset((void *)&s_scope_active, 0, sizeof(s_scope_active));
     memset((void *)&s_cons_rd_cache, 0, sizeof(s_cons_rd_cache));
     memset(&g_v2k_ccs_view, 0, sizeof(g_v2k_ccs_view));
@@ -181,6 +190,7 @@ void v2k_scope_init(void)
     prod->ring_base = (uint32_t)g_v2k_scope_ring;
     prod->cfg_result = V2K_SCOPE_RESULT_OK;
     prod->bind_result = V2K_SCOPE_RESULT_OK;
+    prod->force_result = V2K_SCOPE_RESULT_OK;
     s_active_cfg.trig_edge = V2K_TRIG_RISE;
 }
 
@@ -224,7 +234,12 @@ static uint16_t v2k_validate_cfg(const v2k_scope_cfg_t *cfg)
     {
         return V2K_SCOPE_RESULT_BAD_PARAM;
     }
-    if (cfg->reserved != 0u)
+    if ((cfg->flags & (uint16_t)~V2K_SCOPE_CFG_FLAGS_MASK) != 0u)
+    {
+        return V2K_SCOPE_RESULT_BAD_PARAM;
+    }
+    if ((cfg->mode_req != V2K_SCOPE_CAPTURE_ARMED) &&
+        (cfg->flags != 0u))
     {
         return V2K_SCOPE_RESULT_BAD_PARAM;
     }
@@ -298,6 +313,8 @@ static void v2k_prepare_capture_window(const volatile v2k_scope_prod_t *prod,
 void v2k_scope_service(void)
 {
     const volatile v2k_scope_cfg_t *cfg = &V2K_CPU2_PLANE_RO->scope_cfg;
+    const volatile v2k_scope_force_t *force =
+        &V2K_CPU2_PLANE_RO->scope_force;
     const volatile v2k_scope_bind_t *bind = &V2K_CPU2_PLANE_RO->scope_bind;
     uint16_t seq_before;
     uint16_t seq_after;
@@ -338,6 +355,22 @@ void v2k_scope_service(void)
                 s_bind_pending.result =
                     v2k_validate_bind(&s_bind_pending.bind);
                 s_bind_pending.pending = 1u;
+            }
+        }
+    }
+
+    if (!s_force_pending.pending)
+    {
+        seq_before = force->force_seq;
+        if ((seq_before != s_force_seen) &&
+            (seq_before != g_v2k_cpu1_plane.scope_prod.force_ack_seq))
+        {
+            s_force_pending.force = *force;
+            seq_after = force->force_seq;
+            if (seq_before == seq_after)
+            {
+                s_force_seen = seq_after;
+                s_force_pending.pending = 1u;
             }
         }
     }
@@ -402,6 +435,7 @@ static void v2k_apply_cfg(void)
         s_scope.sample_in_block = 0u;
         s_scope.drop_block = 0u;
         s_scope.trigger_armed = 0u;
+        s_scope.force_pending = 0u;
         s_scope.post_remaining = 0u;
         s_scope.capture_total_samples = 0u;
         s_scope.capture_post_samples = 0u;
@@ -430,6 +464,7 @@ static void v2k_apply_cfg(void)
         s_scope.drop_block = 0u;
         s_scope.prescale_count = 1u;
         s_scope.trigger_armed = 0u;
+        s_scope.force_pending = 0u;
         s_scope.post_remaining = 0u;
         s_scope.capture_total_samples = 0u;
         s_scope.capture_post_samples = 0u;
@@ -462,6 +497,25 @@ static void v2k_apply_cfg(void)
     s_cfg_pending.pending = 0u;
 }
 
+static void v2k_apply_force(void)
+{
+    volatile v2k_scope_prod_t *prod = &g_v2k_cpu1_plane.scope_prod;
+    uint16_t result = V2K_SCOPE_RESULT_OK;
+
+    if ((prod->mode != V2K_SCOPE_CAPTURE_ARMED) ||
+        (s_force_pending.force.capture_state_seq != prod->state_seq))
+    {
+        result = V2K_SCOPE_RESULT_BAD_STATE;
+    }
+    else
+    {
+        s_scope.force_pending = 1u;
+    }
+    prod->force_result = result;
+    prod->force_ack_seq = s_force_pending.force.force_seq;
+    s_force_pending.pending = 0u;
+}
+
 void v2k_scope_apply_ready(void)
 {
     if (s_bind_pending.pending)
@@ -471,6 +525,10 @@ void v2k_scope_apply_ready(void)
     if (s_cfg_pending.pending)
     {
         v2k_apply_cfg();
+    }
+    if (s_force_pending.pending)
+    {
+        v2k_apply_force();
     }
 }
 
@@ -625,39 +683,49 @@ static void v2k_scope_sample_one(v2k_tick_t tick)
     if (mode_before == V2K_SCOPE_CAPTURE_ARMED)
     {
         const v2k_scope_cfg_t *cfg = &s_active_cfg;
-        float current = v2k_source_float(&s_scope.bind[cfg->trig_ch_slot]);
-        float lower = cfg->trig_level - cfg->trig_hysteresis;
-        float upper = cfg->trig_level + cfg->trig_hysteresis;
         if (v2k_capture_trigger_ready(prod))
         {
-            if (cfg->trig_edge == V2K_TRIG_RISE)
+            if (s_scope.force_pending)
             {
-                if (!s_scope.trigger_armed)
-                {
-                    if (current <= lower)
-                    {
-                        s_scope.trigger_armed = 1u;
-                    }
-                }
-                else if (current >= upper)
-                {
-                    hit = 1u;
-                    s_scope.trigger_armed = 0u;
-                }
+                hit = 1u;
+                s_scope.force_pending = 0u;
+                s_scope.trigger_armed = 0u;
             }
-            else
+            else if ((cfg->flags & V2K_SCOPE_CFG_TRIGGER_DISABLED) == 0u)
             {
-                if (!s_scope.trigger_armed)
+                float current =
+                    v2k_source_float(&s_scope.bind[cfg->trig_ch_slot]);
+                float lower = cfg->trig_level - cfg->trig_hysteresis;
+                float upper = cfg->trig_level + cfg->trig_hysteresis;
+                if (cfg->trig_edge == V2K_TRIG_RISE)
                 {
-                    if (current >= upper)
+                    if (!s_scope.trigger_armed)
                     {
-                        s_scope.trigger_armed = 1u;
+                        if (current <= lower)
+                        {
+                            s_scope.trigger_armed = 1u;
+                        }
+                    }
+                    else if (current >= upper)
+                    {
+                        hit = 1u;
+                        s_scope.trigger_armed = 0u;
                     }
                 }
-                else if (current <= lower)
+                else
                 {
-                    hit = 1u;
-                    s_scope.trigger_armed = 0u;
+                    if (!s_scope.trigger_armed)
+                    {
+                        if (current >= upper)
+                        {
+                            s_scope.trigger_armed = 1u;
+                        }
+                    }
+                    else if (current <= lower)
+                    {
+                        hit = 1u;
+                        s_scope.trigger_armed = 0u;
+                    }
                 }
             }
         }

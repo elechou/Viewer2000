@@ -88,7 +88,7 @@ V2K_ASSERT_SIZE_BITS(float, 32);
 // Version 15 was used by a downstream board extension and was never part of
 // the public contract. Keep the number reserved so public/private images and
 // host diagnostics retain an unambiguous version history.
-#define V2K_CONTRACT_VER    16u
+#define V2K_CONTRACT_VER    17u
 
 //-----------------------------------------------------------------------------
 // Public MCU family identifiers reported by HELLO. These identify only the MCU
@@ -108,11 +108,12 @@ V2K_ASSERT_SIZE_BITS(float, 32);
 #define V2K_CAP_PRE_TRIGGER   (1uL << 4)
 #define V2K_CAP_SYSTEM_CMD    (1uL << 5)
 #define V2K_CAP_NATIVE_BLOCK  (1uL << 6)
+#define V2K_CAP_CAPTURE_FORCE (1uL << 9)
 
 #define V2K_CAPABILITIES_NATIVE \
     (V2K_CAP_ENUM | V2K_CAP_CAL | V2K_CAP_SCOPE_STREAM | \
      V2K_CAP_SCOPE_CAPTURE | V2K_CAP_PRE_TRIGGER | \
-     V2K_CAP_SYSTEM_CMD | V2K_CAP_NATIVE_BLOCK)
+     V2K_CAP_SYSTEM_CMD | V2K_CAP_NATIVE_BLOCK | V2K_CAP_CAPTURE_FORCE)
 
 //-----------------------------------------------------------------------------
 // Shared platform types

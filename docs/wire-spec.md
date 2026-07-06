@@ -95,6 +95,7 @@ The timestamp is always the ISR tick in the block header, unrelated to the Ether
 | 0x20 | DAQ_CTRL | H→F | 24 | 0xA0 ACK |
 | 0x21 | CAPTURE_REPLAY_REQ | H→F | 8 | 0xA1 ACK |
 | 0x22 | DAQ_BIND | H→F | 2+8k | 0xA2 ACK (data=bind_seq) |
+| 0x23 | CAPTURE_FORCE_REQ | H→F | 0 | 0xA3 ACK (data=Capture state_seq) |
 | 0x30 | CMD | H→F | 8 | 0xB0 ACK (data=ack_seq) |
 | 0x41 | STATUS_PUSH | F→H | 96 | none |
 | 0x42 | SCOPE_BLOCK_PUSH | F→H | 8+Σblock | none |
@@ -146,6 +147,7 @@ Request payload empty. The wire v10 response is 84 octets:
 | 4 | PRE_TRIGGER | the trigger-freeze pre-trigger ring history |
 | 5 | SYSTEM_CMD | Start / Stop / Clear Fault |
 | 6 | NATIVE_BLOCK | native-bit-width `ScopeBlock` |
+| 9 | CAPTURE_FORCE | synthetic trigger for an armed Capture |
 
 The host rejects shorter HELLO responses because scope capacity and channel-count
 limits are part of the v10 connection contract.
@@ -313,10 +315,14 @@ Response (8 + 4×count):
 16 2  prescaler     0 = keep the current value
 18 2  record_points Capture target sample count; set 0 and ignored in STREAM/OFF
 20 2  ack_capture_id completed capture id being released while re-arming; set 0xFFFF for manual fresh starts
-22 2  flags         reserved, set 0
+22 2  flags         bit0=TRIGGER_DISABLED; all other bits reserved and set 0
 ```
 
 CPU2 writes cfg and publishes `cfg_seq`, waits for CPU1's `cfg_ack_seq/cfg_result` then returns ACK: OK=config applied; BAD_PARAM=field illegal or record_points exceeds the exact Capture capacity under the current binding; BAD_STATE=the current state doesn't accept this config. The mode can also be re-checked via STATUS's `scope_mode`.
+
+`TRIGGER_DISABLED` is valid only for `CAPTURE_ARMED`. CPU1 still fills the
+pre-trigger ring but does not evaluate `trig_ch_slot`, level, hysteresis, or
+edge. A later `CAPTURE_FORCE_REQ` provides the synthetic trigger.
 
 `DAQ_BIND` request (2 + 8k octets) — **select channels at runtime, no reflash**:
 
@@ -329,7 +335,7 @@ CPU2 writes cfg and publishes `cfg_seq`, waits for CPU1's `cfg_ack_seq/cfg_resul
 
 Semantics: addr comes from the CPU1 catalog (platform quantities + build-time-baked user variables, §2); samples are losslessly direct-copied at **native width** (I16/U16→2 octets, I32/U32/F32→4 octets, bit pattern verbatim, firmware zero-conversion zero-quantization — accuracy first). Physical-quantity conversion (e.g. ADC count→ampere) is pure host-side display metadata, not on the wire, not in the firmware. **Bindable only when scope mode==OFF.** CPU2 writes the bind region and publishes `bind_seq`, then briefly waits (≤1 ms) for CPU1's `bind_ack_seq/bind_result`, putting the final result into the ACK: OK / BAD_STATE (not OFF, DAQ_CTRL(OFF) first) / BAD_PARAM (n_ch or type illegal), data=bind_seq; a timeout returns INTERNAL (CPU1 ISR not running).
 
-### 4.6 Stream and Capture Push (0x42 / 0x45 / 0x21)
+### 4.6 Stream and Capture Push / Force (0x42 / 0x45 / 0x21 / 0x23)
 
 CPU2 pushes stream and capture data whenever no command response is pending.
 `SCOPE_BLOCK_PUSH` is stream-only. Capture uses `CAPTURE_BATCH_PUSH`, where the
@@ -401,6 +407,16 @@ or stale capture id returns `BAD_STATE`; an out-of-range block index or zero
 `max_blocks` returns `BAD_PARAM`. Replay uses a separate replay cursor/range and
 does not mutate the frozen initial-push cursor or the stream consumer cursor.
 
+`CAPTURE_FORCE_REQ` (`0x23`) has an empty payload. It is valid only while the
+current Capture generation is `CAPTURE_ARMED`. CPU2 publishes the armed
+`state_seq` with a force request sequence; CPU1 rejects a stale generation,
+otherwise queues a synthetic hit. The ISR waits until the requested pre-trigger
+history exists, records the actual sampled tick as `trig_tick`, then uses the
+normal `CAPTURE_POST` and `CAPTURE_FROZEN` path. ACK data is the armed
+`state_seq`; a non-empty request returns `BAD_PARAM`, a stale or non-armed
+request returns `BAD_STATE`, and a CPU1 acknowledgement timeout returns
+`INTERNAL`.
+
 Bandwidth reference (ISR period 20-100 kHz TBD): 20 kHz x 8 ch x f32 = 640 KB/s; 100 kHz x 8 ch x f32 = 3.2 MB/s. Both are within EtherCAT practical throughput, so the physical-layer conclusion is unchanged. The EtherCAT-tier N is fixed by the single-frame process-data ceiling, about 1486 octets.
 
 ### 4.7 CMD (0x30)
@@ -463,6 +479,12 @@ and selective replay.
 **Stream entry**: `DAQ_CTRL(mode=STREAM, prescaler, record_points=0)` -> CPU2 pushes `SCOPE_BLOCK_PUSH` frames whenever complete blocks are available. When the ring fills the producer drops new blocks + overrun_cnt++, the flow doesn't stop, and the host draws a gap by block_seq.
 
 **Capture entry**: under the same channel binding, send `DAQ_CTRL(mode=CAPTURE_ARMED, trig…, pre_trig_pct, prescaler, record_points, ack_capture_id=0xFFFF)` -> CPU1 overwrites the ring in the same block format and evaluates the trigger each tick -> after a hit it enters CAPTURE_POST to capture the post segment (depth = record_points×(100-pre_trig_pct)%) -> CAPTURE_FROZEN (visible in STATUS.scope_mode and STATUS.scope_state_seq) -> CPU2 pushes all frozen blocks once via `CAPTURE_BATCH_PUSH` -> the host fills a capture bitmap, selectively requests missing ranges with `CAPTURE_REPLAY_REQ`, renders when the bitmap is complete, then re-arms with `DAQ_CTRL(CAPTURE_ARMED, ack_capture_id=capture_id)` or switches to STREAM/OFF. The pre-trigger history is naturally preserved by the ring structure; the host reconstructs block order by capture index.
+
+**Auto Capture entry**: send the same `CAPTURE_ARMED` configuration with
+`TRIGGER_DISABLED`, then send `CAPTURE_FORCE_REQ` after the DAQ ACK. This
+produces the next complete frame without reading or inventing a threshold. On
+re-arm the host repeats the force request, so Auto continuously refreshes one
+finite Capture frame at a time.
 
 Capture freezes complete block slots plus one guard block so a trigger that
 lands in the middle of a block still contains enough samples for the host to

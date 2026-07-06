@@ -534,6 +534,9 @@ static void v2k_dispatch(uint16_t msg_type, uint16_t seq,
         case V2K_MSG_DAQ_BIND:
             v2k_scope_protocol_handle_daq_bind(seq, payload, payload_len);
             break;
+        case V2K_MSG_CAPTURE_FORCE_REQ:
+            v2k_scope_protocol_handle_capture_force(seq, payload_len);
+            break;
         case V2K_MSG_CMD:
             v2k_handle_cmd(seq, payload, payload_len);
             break;

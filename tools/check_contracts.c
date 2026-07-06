@@ -28,7 +28,7 @@
 
 // ---- Aggregate plane sizes. The CPU1 plane contains char[] fields, so PC and
 // C28x char width differences prevent a cross-platform total-size assertion. ----
-V2K_ASSERT_SIZE_BITS(v2k_cpu2_plane_t, 316u * 16u);
+V2K_ASSERT_SIZE_BITS(v2k_cpu2_plane_t, 318u * 16u);
 
 // ---- Compact catalog metadata and staging. ----
 V2K_ASSERT_OFFSET_BITS(v2k_desc_entry_t, type,      32u);
@@ -59,10 +59,13 @@ V2K_ASSERT_OFFSET_BITS(v2k_scope_prod_t, ring_base, 128u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_prod_t, wr_idx,   160u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_prod_t, trig_tick, 192u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_prod_t, bind_ack_seq, 272u);
+V2K_ASSERT_OFFSET_BITS(v2k_scope_prod_t, force_ack_seq, 320u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_cfg_t,  trig_level, 32u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_cfg_t,  trig_hysteresis, 64u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_cfg_t,  record_points, 144u);
+V2K_ASSERT_OFFSET_BITS(v2k_scope_cfg_t,  flags, 160u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_cfg_t,  cfg_seq, 176u);
+V2K_ASSERT_OFFSET_BITS(v2k_scope_force_t, force_seq, 16u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_ch_bind_t, type,    32u);
 V2K_ASSERT_OFFSET_BITS(v2k_scope_bind_t,  ch,        32u);
 
