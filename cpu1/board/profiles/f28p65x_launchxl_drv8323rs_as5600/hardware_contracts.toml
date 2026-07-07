@@ -1,0 +1,128 @@
+# Public F28P65x LaunchPad CPU1 hardware contract.
+#
+# SysConfig remains the hardware configuration source. This profile-owned file
+# pins protection-chain and control-time invariants only. It deliberately does
+# not contain sensor calibration, encoder zero/direction policy, motor data, or
+# application commissioning state.
+
+schema = "viewer2000.hardware-contract.v1"
+profile = "f28p65x_launchxl_drv8323rs_as5600"
+
+[sysconfig]
+file = "cpu1/sysconfig_cpu1.syscfg"
+
+[sysconfig.instance_counts]
+adc = 3
+cmpss = 2
+epwm = 3
+epwmxbar = 1
+inputxbar_input = 1
+i2c = 1
+spi = 1
+
+[sysconfig.required]
+# Control clock and ADC -> EOC interrupt boundary.
+"divider8.divideValue" = 1
+"adc1.interruptPulseMode" = "ADC_PULSE_END_OF_CONV"
+"adc1.enableInterrupt1" = true
+"adc1.interrupt1SOCSource" = "ADC_INT_TRIGGER_EOC3"
+"adc1.soc0Trigger" = "ADC_TRIGGER_EPWM1_SOCA"
+"adc1.soc1Trigger" = "ADC_TRIGGER_EPWM1_SOCA"
+"adc1.soc2Trigger" = "ADC_TRIGGER_EPWM1_SOCA"
+"adc1.soc3Trigger" = "ADC_TRIGGER_EPWM1_SOCA"
+"adc2.soc0Trigger" = "ADC_TRIGGER_EPWM1_SOCA"
+"adc2.soc1Trigger" = "ADC_TRIGGER_EPWM1_SOCA"
+"adc3.soc0Trigger" = "ADC_TRIGGER_EPWM1_SOCA"
+
+# Public LaunchPad acquisition map and PPB hardware-trip window.
+"adc1.soc0Channel" = "ADC_CH_ADCIN15"
+"adc1.soc1Channel" = "ADC_CH_ADCIN8"
+"adc1.soc2Channel" = "ADC_CH_ADCIN10"
+"adc1.soc3Channel" = "ADC_CH_ADCIN5"
+"adc2.soc0Channel" = "ADC_CH_ADCIN3"
+"adc2.soc1Channel" = "ADC_CH_ADCIN6"
+"adc3.soc0Channel" = "ADC_CH_ADCIN5"
+"adc3.enabledPPBs" = ["ADC_PPB_NUMBER1"]
+"adc3.ppb1EventEnable" = ["ADC_EVT_TRIPHI", "ADC_EVT_TRIPLO"]
+"adc3.ppb1HighTripLimit" = 3584
+"adc3.ppb1LowTripLimit" = 512
+"adc3.ppb1EnablePPBEventCBCClear" = true
+
+# Three synchronized up/down PWM channels with debugger-free-run behavior,
+# dead-band, hardware trip actions, and EPWM1 SOCA sampling.
+"epwm*.epwmTimebase_counterMode" = "EPWM_COUNTER_MODE_UP_DOWN"
+"epwm*.epwmTimebase_clockDiv" = "EPWM_CLOCK_DIVIDER_1"
+"epwm*.epwmTimebase_hsClockDiv" = "EPWM_HSCLOCK_DIVIDER_1"
+"epwm*.epwmTimebase_emulationMode" = "EPWM_EMULATION_FREE_RUN"
+"epwm*.epwmTimebase_period" = 5000
+"epwm*.epwmDeadband_enableRED" = true
+"epwm*.epwmDeadband_enableFED" = true
+"epwm*.epwmDeadband_polarityFED" = "EPWM_DB_POLARITY_ACTIVE_LOW"
+"epwm*.epwmDeadband_delayRED" = 200
+"epwm*.epwmDeadband_delayFED" = 200
+"epwm*.epwmDeadband_redShadowMode" = true
+"epwm*.epwmDeadband_fedShadowMode" = true
+"epwm*.epwmActionQualifier_EPWM_AQ_OUTPUT_A_ON_TIMEBASE_UP_CMPA" = "EPWM_AQ_OUTPUT_HIGH"
+"epwm*.epwmActionQualifier_EPWM_AQ_OUTPUT_A_ON_TIMEBASE_DOWN_CMPA" = "EPWM_AQ_OUTPUT_LOW"
+"epwm*.epwmTripZone_EPWM_TZ_ACTION_EVENT_TZA" = "EPWM_TZ_ACTION_LOW"
+"epwm*.epwmTripZone_EPWM_TZ_ACTION_EVENT_TZB" = "EPWM_TZ_ACTION_LOW"
+"epwm*.epwmTripZone_oneShotSource" = ["EPWM_TZ_SIGNAL_OSHT1"]
+"epwm*.epwmTripZone_cbcSource" = ["EPWM_TZ_SIGNAL_CBC6"]
+"epwm*.epwmDigitalCompare_EPWM_DC_TYPE_DCAH" = "EPWM_DC_TRIP_TRIPIN7"
+"epwm*.epwmDigitalCompare_EPWM_DC_TYPE_DCBH" = "EPWM_DC_TRIP_TRIPIN7"
+"epwm*.epwmDigitalCompare_EPWM_TZ_DC_OUTPUT_A1" = "EPWM_TZ_EVENT_DCXH_HIGH"
+"epwm*.epwmDigitalCompare_EPWM_TZ_DC_OUTPUT_B1" = "EPWM_TZ_EVENT_DCXH_HIGH"
+"epwm*.epwmDigitalCompare_EPWM_DC_MODULE_A_EPWM_DC_EVENT_1_eventSync" = "EPWM_DC_EVENT_INPUT_NOT_SYNCED"
+"epwm*.epwmDigitalCompare_EPWM_DC_MODULE_B_EPWM_DC_EVENT_1_eventSync" = "EPWM_DC_EVENT_INPUT_NOT_SYNCED"
+"epwm1.epwmEventTrigger_EPWM_SOC_A_triggerEnable" = true
+"epwm1.epwmEventTrigger_EPWM_SOC_A_triggerSource" = "EPWM_SOC_TBCTR_ZERO"
+"epwm1.epwmEventTrigger_EPWM_SOC_A_triggerEventPrescalar" = "1"
+"epwm1.epwmTimebase_syncOutPulseMode" = ["EPWM_SYNC_OUT_PULSE_ON_CNTR_ZERO"]
+"epwm2.epwmTimebase_phaseEnable" = true
+"epwm3.epwmTimebase_phaseEnable" = true
+"epwm2.epwmTimebase_counterModeAfterSync" = "EPWM_COUNT_MODE_UP_AFTER_SYNC"
+"epwm3.epwmTimebase_counterModeAfterSync" = "EPWM_COUNT_MODE_UP_AFTER_SYNC"
+
+# CMPSS windows and trip routing for the public three-phase profile.
+"cmpss*.enableModule" = true
+"cmpss*.highCTRIP" = "CMPSS_TRIP_FILTER"
+"cmpss*.lowCTRIP" = "CMPSS_TRIP_FILTER"
+"cmpss*.lowCompInvert" = true
+"cmpss*.dacValHigh" = 3584
+"cmpss*.dacValLow" = 512
+"cmpss*.samplePrescaleHigh" = 32
+"cmpss*.sampleWindowHigh" = 32
+"cmpss*.thresholdHigh" = 30
+"cmpss*.samplePrescaleLow" = 32
+"cmpss*.sampleWindowLow" = 32
+"cmpss*.thresholdLow" = 30
+"cmpss1.cmpssBase" = "CMPSS7_BASE"
+"cmpss2.cmpssBase" = "CMPSS8_BASE"
+"epwmxbar1.tripInput" = "XBAR_TRIP7"
+"epwmxbar1.muxesUsed" = ["XBAR_MUX01", "XBAR_MUX12", "XBAR_MUX13", "XBAR_MUX14", "XBAR_MUX15"]
+"epwmxbar1.mux1Config" = "XBAR_EPWM_MUX01_ADCCEVT1"
+"inputxbar_input1.inputxbarGpio" = "GPIO82"
+"inputxbar_input1.inputxbarLock" = true
+
+# Cross-core and public device-interface ownership.
+"sysctl.cpuSel_SCIA" = "SYSCTL_CPUSEL_CPU2"
+"spi1.spi.$assign" = "SPID"
+"i2c1.i2c.$assign" = "I2CA"
+
+[sysconfig.defaults]
+"epwm*.epwmTimebase_clockDiv" = "EPWM_CLOCK_DIVIDER_1"
+"epwm1.epwmEventTrigger_EPWM_SOC_A_triggerSource" = "EPWM_SOC_TBCTR_ZERO"
+
+[linker.required]
+"cpu1/28p65x_generic_flash_lnk_cpu1.cmd" = [
+  'v2k_cpu1_plane\s*:\s*>\s*RAMGS0_PLANE',
+  'v2k_scope_ring\s*:\s*>\s*RAMGS_SCOPE',
+  'v2k_user_desc\s*:\s*>\s*FLASH_BANK1',
+  '\.TI\.crctab\s*:\s*>\s*FLASH_BANK1',
+]
+
+[linker.forbidden]
+"cpu1/28p65x_generic_flash_lnk_cpu1.cmd" = [
+  'v2k_user_desc\s*:\s*>\s*FLASH_BANK0',
+  '\.TI\.crctab\s*:\s*>\s*FLASH_BANK0',
+]

@@ -8,6 +8,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+from check_hardware_contracts import check_contract
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -49,6 +51,8 @@ REQUIRED_MANIFEST_FIELDS = {
     "cpu_topology",
     "device",
     "board",
+    "path_base",
+    "hardware_contract",
     "profile_header",
     "memory_map_header",
     "capabilities",
@@ -118,7 +122,7 @@ def check_manifest(path: Path, errors: list[str]) -> None:
         errors.append(f"{path.relative_to(ROOT)}: missing fields: {', '.join(missing)}")
         return
 
-    if data["schema"] != "viewer2000.board-profile.v1":
+    if data["schema"] != "viewer2000.board-profile.v2":
         errors.append(f"{path.relative_to(ROOT)}: unsupported schema {data['schema']}")
     if data["visibility"] != "public":
         errors.append(f"{path.relative_to(ROOT)}: public mainline profiles must be public")
@@ -126,9 +130,12 @@ def check_manifest(path: Path, errors: list[str]) -> None:
         errors.append(f"{path.relative_to(ROOT)}: api_version must be 1")
     if data["core"] not in {"cpu1", "cpu2"}:
         errors.append(f"{path.relative_to(ROOT)}: core must be cpu1 or cpu2")
+    if data["path_base"] != "repository":
+        errors.append(f"{path.relative_to(ROOT)}: path_base must be repository")
 
     existing_path(data["profile_header"], path, errors)
     existing_path(data["memory_map_header"], path, errors)
+    existing_path(data["hardware_contract"], path, errors)
 
     artifacts = data["artifacts"]
     existing_path(artifacts["sysconfig"], path, errors)
@@ -144,6 +151,8 @@ def check_manifest(path: Path, errors: list[str]) -> None:
         existing_path(source, path, errors)
     for source in artifacts.get("app_sources", []):
         existing_path(source, path, errors)
+
+    errors.extend(check_contract(path, ROOT))
 
 
 def main() -> int:

@@ -1,7 +1,7 @@
 # Viewer2000 public CPU2 board profile for the LaunchPad XDS110 SCI pipe.
 # Keep physical pipe setup behind the CPU2 board seam.
 
-schema = "viewer2000.board-profile.v1"
+schema = "viewer2000.board-profile.v2"
 id = "f28p65x_launchxl_sci"
 visibility = "public"
 core = "cpu2"
@@ -9,6 +9,8 @@ api_version = 1
 cpu_topology = "dual-c28x"
 device = "TMS320F28P650DK9"
 board = "LAUNCHXL-F28P65X"
+path_base = "repository"
+hardware_contract = "cpu2/board/profiles/f28p65x_launchxl_sci/hardware_contracts.toml"
 
 profile_header = "cpu2/board/profiles/f28p65x_launchxl_sci/v2k_cpu2_board_profile.h"
 memory_map_header = "cpu1/board/v2k_board_memmap.h"

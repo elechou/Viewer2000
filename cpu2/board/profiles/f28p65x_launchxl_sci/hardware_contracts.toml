@@ -1,0 +1,28 @@
+# Public F28P65x LaunchPad CPU2 communication-pipe contract.
+
+schema = "viewer2000.hardware-contract.v1"
+profile = "f28p65x_launchxl_sci"
+
+[sysconfig]
+file = "cpu2/sysconfig_cpu2.syscfg"
+
+[sysconfig.instance_counts]
+sci = 1
+
+[sysconfig.required]
+"sci1.$hardware" = "system.deviceData.board.components.XDS_UART.subComponents.XDS_SCI_INST1"
+"sci1.$name" = "SCIA_BASE"
+"sci1.baudRates" = 3125000
+
+[sysconfig.defaults]
+
+[linker.required]
+"cpu2/28p65x_generic_flash_lnk_cpu2.cmd" = [
+  'v2k_cpu2_plane\s*:\s*>\s*RAMGS4_V2K',
+  '\.text\s*:\s*>>\s*FLASH_BANK3\s*\|\s*FLASH_BANK4',
+]
+
+[linker.forbidden]
+"cpu2/28p65x_generic_flash_lnk_cpu2.cmd" = [
+  'v2k_cpu2_plane\s*:\s*>\s*RAMGS0',
+]
