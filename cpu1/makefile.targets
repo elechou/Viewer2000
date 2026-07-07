@@ -4,6 +4,22 @@ V2K_USER_BOUNDARY_SPEC := ../tools/user_boundary.json
 V2K_USER_DESC_TOOL := ../tools/v2k_bake_user_desc.py
 V2K_PROJECT_INFO := ../.project
 V2K_BUILD_CONFIG := $(notdir $(CURDIR))
+V2K_HARDWARE_CONTRACT_TOOL := ../../tools/check_hardware_contracts.py
+V2K_BOARD_MANIFEST := ../board/profiles/f28p65x_launchxl_drv8323rs_as5600/manifest.toml
+V2K_HARDWARE_CONTRACT := ../board/profiles/f28p65x_launchxl_drv8323rs_as5600/hardware_contracts.toml
+
+.PHONY: v2k_hardware_contract
+v2k_hardware_contract: $(V2K_HARDWARE_CONTRACT_TOOL) $(V2K_BOARD_MANIFEST) \
+	$(V2K_HARDWARE_CONTRACT) ../sysconfig_cpu1.syscfg \
+	../28p65x_generic_flash_lnk_cpu1.cmd
+	@python3 "$(V2K_HARDWARE_CONTRACT_TOOL)" \
+		--manifest "$(V2K_BOARD_MANIFEST)"
+
+# Gate both incremental no-op builds and every object rebuild. The checker is
+# read-only, so it remains safe when CCS schedules independent objects in
+# parallel after this order-only prerequisite completes.
+all: v2k_hardware_contract
+$(OBJS): | v2k_hardware_contract
 
 # CCS 21 may emit the external C2000Ware startup object into runtime/ while
 # still listing it as a root-level linker input. Normalize the generated output

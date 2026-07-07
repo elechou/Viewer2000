@@ -195,6 +195,11 @@ controller gains, and application commissioning state do not belong in the
 hardware contract. Those remain profile-private calibration or application
 data, even when a downstream board uses the same contract engine.
 
+The selected CPU1 and CPU2 FLASH builds run the contract checker through their
+repository-owned `makefile.targets` hooks before object compilation and on
+incremental no-op builds. Managed CCS project metadata and `.syscfg` files stay
+under their dedicated tools; the gate is read-only and never rewrites them.
+
 ## Scope data-ring tuning and host compatibility
 
 A board with a tighter RAM budget will want to retune the scope ring. The ring

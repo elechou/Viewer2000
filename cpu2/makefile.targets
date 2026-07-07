@@ -1,0 +1,14 @@
+# Viewer2000 additions consumed by CCS generated CPU2 makefiles.
+V2K_HARDWARE_CONTRACT_TOOL := ../../tools/check_hardware_contracts.py
+V2K_BOARD_MANIFEST := ../board/profiles/f28p65x_launchxl_sci/manifest.toml
+V2K_HARDWARE_CONTRACT := ../board/profiles/f28p65x_launchxl_sci/hardware_contracts.toml
+
+.PHONY: v2k_hardware_contract
+v2k_hardware_contract: $(V2K_HARDWARE_CONTRACT_TOOL) $(V2K_BOARD_MANIFEST) \
+	$(V2K_HARDWARE_CONTRACT) ../sysconfig_cpu2.syscfg \
+	../28p65x_generic_flash_lnk_cpu2.cmd
+	@python3 "$(V2K_HARDWARE_CONTRACT_TOOL)" \
+		--manifest "$(V2K_BOARD_MANIFEST)"
+
+all: v2k_hardware_contract
+$(OBJS): | v2k_hardware_contract
