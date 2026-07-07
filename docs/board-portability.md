@@ -111,6 +111,11 @@ ePWM clock, and cycle-counter frequency. Runtime derives its period, scheduling,
 and profiling budgets from those profile values; a target port no longer edits
 `runtime/v2k_timebase.h` to replace device clock literals.
 
+The same API exposes a generic `fault_post_trip_begin` hook. A profile with a
+transactional gate driver can use it to schedule bounded diagnostics and a
+secondary disable; a profile without one implements a no-op. Runtime does not
+name SPI, driver registers, enable pins, or any particular shutdown mechanism.
+
 User code (L2/L3) may additionally read completed peripheral results through
 documented, non-blocking vendor result/status APIs after the platform-owned EOC
 boundary, but it does not configure timing, output, ownership, interrupts, or

@@ -19,7 +19,7 @@ static void v2k_fault_latch(uint16_t fault_code)
     v2k_user_disable();
     g_v2k_sm_state = V2K_STATE_FAULT;
     g_v2k_fault_code = fault_code;
-    v2k_board_fault_defer_driver_shutdown();
+    v2k_board_fault_post_trip_begin();
     v2k_board_fault_disable_irq();
 }
 
@@ -50,9 +50,10 @@ static __interrupt void v2k_tz_isr(void)
     g_v2k_tz_int_cnt++;
     v2k_fault_latch((v2k_board_fault_trip_is_current() != 0u) ?
                     V2K_FAULT_OVERCURRENT : V2K_FAULT_TZ1_EXT);
-    // Hardware TZ has already forced all PWM inputs low. Preserve DRV SPI
-    // diagnostics and defer the bounded status read + ENABLE-low transition to
-    // the foreground instead of extending the control-critical ISR.
+    // Hardware TZ has already forced all PWM inputs low. Any board-specific
+    // post-trip diagnostics or secondary shutdown work was started by the
+    // generic hook above and completes through bounded background service,
+    // without extending the control-critical ISR.
     v2k_board_fault_ack_isr();
 }
 

@@ -490,15 +490,10 @@ uint16_t v2k_board_fault_release_output_lock(void)
     return v2k_board_pwm_release_output_lock();
 }
 
-void v2k_board_fault_defer_driver_shutdown(void)
+void v2k_board_fault_post_trip_begin(void)
 {
     s_fault_shutdown_pending = 1u;
     s_fault_shutdown_complete = 0u;
-}
-
-uint16_t v2k_board_fault_driver_shutdown_is_complete(void)
-{
-    return s_fault_shutdown_complete;
 }
 
 uint16_t v2k_board_fault_output_is_locked(void)
