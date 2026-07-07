@@ -175,6 +175,26 @@ a private board memmap header. `contracts/v2k_memmap.h` keeps the shared
 interface logic portable while the downstream repository owns the concrete
 physical addresses and any retuned plane capacities.
 
+## Profile-owned hardware contracts
+
+Each buildable profile owns a `hardware_contracts.toml` referenced by its
+manifest. The manifest uses `path_base = "repository"`; profile, SysConfig,
+linker, and source paths therefore have one meaning in public and downstream
+repositories.
+
+SysConfig remains the hardware configuration source. The contract is a review
+layer over it: it pins only values that defend the protection chain or the
+control-time boundary, records reviewed defaults that SysConfig omits, and
+checks the expected number of peripheral instances. Optional linker rules pin
+target memory invariants. The checker contains no target names, peripheral
+counts, pin maps, or sensor policy; all such facts live in the selected
+profile's TOML.
+
+Calibration offsets/gains, encoder zero/direction policy, motor parameters,
+controller gains, and application commissioning state do not belong in the
+hardware contract. Those remain profile-private calibration or application
+data, even when a downstream board uses the same contract engine.
+
 ## Scope data-ring tuning and host compatibility
 
 A board with a tighter RAM budget will want to retune the scope ring. The ring
