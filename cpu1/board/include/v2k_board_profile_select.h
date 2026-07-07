@@ -21,6 +21,18 @@
 #error "Selected CPU1 board profile API version does not match v2k_board.h"
 #endif
 
+#ifndef V2K_BOARD_PROFILE_CONTROL_HZ
+#error "Selected CPU1 board profile must define V2K_BOARD_PROFILE_CONTROL_HZ"
+#endif
+
+#ifndef V2K_BOARD_PROFILE_EPWMCLK_HZ
+#error "Selected CPU1 board profile must define V2K_BOARD_PROFILE_EPWMCLK_HZ"
+#endif
+
+#ifndef V2K_BOARD_PROFILE_CYCLE_COUNTER_HZ
+#error "Selected CPU1 board profile must define V2K_BOARD_PROFILE_CYCLE_COUNTER_HZ"
+#endif
+
 #ifndef V2K_BOARD_PROFILE_ID_TEXT
 #error "Selected CPU1 board profile must define V2K_BOARD_PROFILE_ID_TEXT"
 #endif

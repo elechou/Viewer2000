@@ -6,7 +6,11 @@
 
 #include <stdint.h>
 
-#define V2K_BOARD_API_VERSION 1u
+#define V2K_BOARD_API_VERSION 2u
+
+// Every CPU1 profile publishes its control-time limits through the selected
+// profile header. Runtime derives scheduling and profiling constants from
+// these values and contains no target clock literal.
 
 #define V2K_BOARD_CPU_TOPOLOGY_DUAL_C28X 0x0001u
 

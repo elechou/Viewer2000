@@ -126,10 +126,14 @@ def check_manifest(path: Path, errors: list[str]) -> None:
         errors.append(f"{path.relative_to(ROOT)}: unsupported schema {data['schema']}")
     if data["visibility"] != "public":
         errors.append(f"{path.relative_to(ROOT)}: public mainline profiles must be public")
-    if data["api_version"] != 1:
-        errors.append(f"{path.relative_to(ROOT)}: api_version must be 1")
     if data["core"] not in {"cpu1", "cpu2"}:
         errors.append(f"{path.relative_to(ROOT)}: core must be cpu1 or cpu2")
+    expected_api = {"cpu1": 2, "cpu2": 1}.get(data["core"])
+    if data["api_version"] != expected_api:
+        errors.append(
+            f"{path.relative_to(ROOT)}: api_version must be {expected_api} "
+            f"for {data['core']}"
+        )
     if data["path_base"] != "repository":
         errors.append(f"{path.relative_to(ROOT)}: path_base must be repository")
 

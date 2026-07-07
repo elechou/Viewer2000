@@ -106,6 +106,11 @@ vendor register path directly. Those belong behind a CPU2 board seam such as
 `v2k_cpu2_board.h`, which exposes "pipe" capabilities rather than device
 registers.
 
+CPU1 board API v2 also requires each profile to publish its control frequency,
+ePWM clock, and cycle-counter frequency. Runtime derives its period, scheduling,
+and profiling budgets from those profile values; a target port no longer edits
+`runtime/v2k_timebase.h` to replace device clock literals.
+
 User code (L2/L3) may additionally read completed peripheral results through
 documented, non-blocking vendor result/status APIs after the platform-owned EOC
 boundary, but it does not configure timing, output, ownership, interrupts, or
