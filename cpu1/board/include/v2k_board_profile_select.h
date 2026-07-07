@@ -33,6 +33,10 @@
 #error "Selected CPU1 board profile must define V2K_BOARD_PROFILE_CYCLE_COUNTER_HZ"
 #endif
 
+#ifndef V2K_BOARD_PROFILE_USER_API_HEADER
+#error "Selected CPU1 board profile must define V2K_BOARD_PROFILE_USER_API_HEADER"
+#endif
+
 #ifndef V2K_BOARD_PROFILE_ID_TEXT
 #error "Selected CPU1 board profile must define V2K_BOARD_PROFILE_ID_TEXT"
 #endif

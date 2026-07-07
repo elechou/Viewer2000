@@ -10,6 +10,8 @@
 #define V2K_BOARD_PROFILE_ID_TEXT "f28p65x_launchxl_drv8323rs_as5600"
 #define V2K_BOARD_PROFILE_CPU_TOPOLOGY V2K_BOARD_CPU_TOPOLOGY_DUAL_C28X
 #define V2K_BOARD_PROFILE_MEMMAP_HEADER "../cpu1/board/v2k_board_memmap.h"
+#define V2K_BOARD_PROFILE_USER_API_HEADER \
+    "board/profiles/f28p65x_launchxl_drv8323rs_as5600/v2k_board_user_api.h"
 
 #define V2K_BOARD_PROFILE_CONTROL_HZ       20000u
 #define V2K_BOARD_PROFILE_EPWMCLK_HZ       200000000u

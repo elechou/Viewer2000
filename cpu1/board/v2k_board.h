@@ -34,8 +34,9 @@ typedef void (*v2k_board_isr_handler_t)(void);
 // Control time base and fixed ISR fast path.
 void v2k_board_timebase_init(v2k_board_isr_handler_t adc_isr);
 void v2k_board_timebase_start(void);
-void v2k_board_acquire_adc(volatile v2k_adc_t *adc);
-void v2k_board_pwm_apply_command(const volatile v2k_pwm_t *pwm);
+void v2k_board_acquire_inputs(volatile v2k_io_t *io);
+void v2k_board_user_io_neutralize(volatile v2k_io_t *io);
+void v2k_board_output_apply(const volatile v2k_io_t *io);
 uint32_t v2k_board_cycle_count(void);
 uint16_t v2k_board_pwm_counter(void);
 uint16_t v2k_board_isr_ack(void);

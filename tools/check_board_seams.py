@@ -140,6 +140,14 @@ def check_manifest(path: Path, errors: list[str]) -> None:
     existing_path(data["profile_header"], path, errors)
     existing_path(data["memory_map_header"], path, errors)
     existing_path(data["hardware_contract"], path, errors)
+    if data["core"] == "cpu1":
+        user_api = data.get("user_api_header")
+        if not isinstance(user_api, str):
+            errors.append(
+                f"{path.relative_to(ROOT)}: CPU1 profile must define user_api_header"
+            )
+        else:
+            existing_path(user_api, path, errors)
 
     artifacts = data["artifacts"]
     existing_path(artifacts["sysconfig"], path, errors)

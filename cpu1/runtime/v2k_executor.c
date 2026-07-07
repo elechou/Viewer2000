@@ -92,7 +92,7 @@ __interrupt void v2k_executor_isr(void)
     v2k_io.sys.tick = g_v2k_tick;
     v2k_io.sys.state = g_v2k_sm_state;
     v2k_io.sys.fault_code = g_v2k_fault_code;
-    v2k_board_acquire_adc(&v2k_io.adc);
+    v2k_board_acquire_inputs(&v2k_io);
     v2k_io.sys.due_mask = v2k_schedule(&param_due);
     if ((param_due != 0u) && (v2k_user_reset_is_active() == 0u))
     {

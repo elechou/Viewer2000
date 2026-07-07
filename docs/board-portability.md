@@ -116,6 +116,15 @@ transactional gate driver can use it to schedule bounded diagnostics and a
 secondary disable; a profile without one implements a no-op. Runtime does not
 name SPI, driver registers, enable pins, or any particular shutdown mechanism.
 
+Physical user I/O is profile-owned as well. `cpu1/v2k.h` keeps the stable
+`v2k_sys_t` prefix, then includes the selected profile's
+`v2k_board_user_api.h`. Runtime passes the complete `v2k_io_t` to generic
+acquire, neutralize, and output hooks and never names ADC channels, phase-count,
+PWM fields, sensors, or encoder state. The public three-phase profile preserves
+the existing `v2k_io.adc`, `v2k_io.pwm`, and `v2k_pwm_apply()` user surface;
+another profile may publish a different physical I/O surface without editing
+runtime sources.
+
 User code (L2/L3) may additionally read completed peripheral results through
 documented, non-blocking vendor result/status APIs after the platform-owned EOC
 boundary, but it does not configure timing, output, ownership, interrupts, or

@@ -203,8 +203,10 @@ void v2k_board_timebase_start(void)
     v2k_board_pwm_start_timebase();
 }
 
-void v2k_board_acquire_adc(volatile v2k_adc_t *adc)
+void v2k_board_acquire_inputs(volatile v2k_io_t *io)
 {
+    volatile v2k_adc_t *adc = &io->adc;
+
     // EPWM1 SOCA has completed this seven-channel frame before ISR entry.
     adc->va_raw = ADC_readResult(myADC0_RESULT_BASE, myADC0_SOC0);
     adc->vb_raw = ADC_readResult(myADC0_RESULT_BASE, myADC0_SOC1);
@@ -215,14 +217,31 @@ void v2k_board_acquire_adc(volatile v2k_adc_t *adc)
     adc->ic_raw = ADC_readResult(myADC2_RESULT_BASE, myADC2_SOC0);
 }
 
-void v2k_board_pwm_apply_command(const volatile v2k_pwm_t *pwm)
+void v2k_board_user_io_neutralize(volatile v2k_io_t *io)
 {
+    io->pwm.duty_a = V2K_DUTY_NEUTRAL;
+    io->pwm.duty_b = V2K_DUTY_NEUTRAL;
+    io->pwm.duty_c = V2K_DUTY_NEUTRAL;
+}
+
+void v2k_board_output_apply(const volatile v2k_io_t *io)
+{
+    const volatile v2k_pwm_t *pwm = &io->pwm;
+
     s_applied.duty_a = v2k_board_clamp_duty(pwm->duty_a);
     s_applied.duty_b = v2k_board_clamp_duty(pwm->duty_b);
     s_applied.duty_c = v2k_board_clamp_duty(pwm->duty_c);
     v2k_board_pwm_apply(s_applied.duty_a,
                    s_applied.duty_b,
                    s_applied.duty_c);
+}
+
+void v2k_pwm_apply(float duty_a, float duty_b, float duty_c)
+{
+    v2k_io.pwm.duty_a = duty_a;
+    v2k_io.pwm.duty_b = duty_b;
+    v2k_io.pwm.duty_c = duty_c;
+    v2k_board_output_apply(&v2k_io);
 }
 
 uint32_t v2k_board_cycle_count(void)
