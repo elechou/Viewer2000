@@ -47,7 +47,10 @@ typedef struct {
     v2k_desc_entry_t desc;
 } v2k_platform_catalog_entry_t;
 
-static v2k_param_ready_t s_ready;
+// The background service publishes this batch to the control ISR. Keep the
+// storage static to avoid placing a full parameter batch on the foreground
+// stack, and volatile so neither side caches fields across the ready flag.
+static volatile v2k_param_ready_t s_ready;
 static volatile uint16_t s_ready_valid;
 static uint32_t s_shadow_seen;
 static v2k_param_read_ref_t s_read_refs[V2K_CAL_READ_MAX];
@@ -651,7 +654,7 @@ static const volatile v2k_desc_entry_t *v2k_desc_find(uint32_t addr)
     return (const volatile v2k_desc_entry_t *)0;
 }
 
-static uint16_t v2k_validate_write(const v2k_param_write_t *write)
+static uint16_t v2k_validate_write(const volatile v2k_param_write_t *write)
 {
     const volatile v2k_desc_entry_t *entry;
 
@@ -686,7 +689,6 @@ void v2k_param_service(void)
     // Volatile status pointer: CPU2 reads applied_seq to gate the next
     // CAL_WRITE/COMMIT, so result/fail_idx must be ordered before it.
     volatile v2k_param_status_t *status = &g_v2k_cpu1_plane.param_status;
-    v2k_param_ready_t candidate;
     uint32_t seq_before;
     uint32_t seq_after;
     uint16_t i;
@@ -703,13 +705,16 @@ void v2k_param_service(void)
         return;
     }
 
-    candidate.seq = seq_before;
-    candidate.count = shadow->count;
-    if (candidate.count <= V2K_PARAM_BATCH_MAX)
+    s_ready.seq = seq_before;
+    s_ready.count = shadow->count;
+    if (s_ready.count <= V2K_PARAM_BATCH_MAX)
     {
-        for (i = 0u; i < candidate.count; i++)
+        for (i = 0u; i < s_ready.count; i++)
         {
-            candidate.writes[i] = shadow->writes[i];
+            s_ready.writes[i].addr = shadow->writes[i].addr;
+            s_ready.writes[i].value_bits = shadow->writes[i].value_bits;
+            s_ready.writes[i].type = shadow->writes[i].type;
+            s_ready.writes[i].reserved = shadow->writes[i].reserved;
         }
     }
     seq_after = shadow->commit_seq;
@@ -719,16 +724,16 @@ void v2k_param_service(void)
     }
     s_shadow_seen = seq_after;
 
-    if (candidate.count > V2K_PARAM_BATCH_MAX)
+    if (s_ready.count > V2K_PARAM_BATCH_MAX)
     {
         result = V2K_CAL_BAD_COUNT;
         i = 0u;
     }
     else
     {
-        for (i = 0u; i < candidate.count; i++)
+        for (i = 0u; i < s_ready.count; i++)
         {
-            result = v2k_validate_write(&candidate.writes[i]);
+            result = v2k_validate_write(&s_ready.writes[i]);
             if (result != V2K_CAL_OK)
             {
                 break;
@@ -740,15 +745,14 @@ void v2k_param_service(void)
     {
         status->result = result;
         status->fail_idx = i;
-        status->applied_seq = candidate.seq;
+        status->applied_seq = s_ready.seq;
         return;
     }
 
-    s_ready = candidate;
     s_ready_valid = 1u;
 }
 
-static void v2k_write_value(const v2k_param_write_t *write)
+static void v2k_write_value(const volatile v2k_param_write_t *write)
 {
     volatile uint16_t *dst16 = (volatile uint16_t *)write->addr;
 
