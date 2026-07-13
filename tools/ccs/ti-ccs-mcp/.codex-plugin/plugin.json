@@ -1,0 +1,33 @@
+{
+  "name": "ti-ccs-mcp",
+  "version": "0.1.0",
+  "description": "Resilient global MCP bridge for Texas Instruments Code Composer Studio.",
+  "author": {
+    "name": "SHOU",
+    "email": "qiusots@gmail.com",
+    "url": "https://github.com/elechou"
+  },
+  "homepage": "https://github.com/elechou/Viewer2000",
+  "repository": "https://github.com/elechou/Viewer2000",
+  "license": "MIT OR Apache-2.0",
+  "keywords": [
+    "texas-instruments",
+    "code-composer-studio",
+    "mcp",
+    "embedded"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "TI CCS MCP",
+    "shortDescription": "Use CCS MCP tools without startup-order failures.",
+    "longDescription": "Adds resilient global MCP entries for Code Composer Studio project, debug, SysConfig, and serial services. The bridge waits for the CCS IDE port file and reconnects without opening, closing, or restarting CCS.",
+    "developerName": "SHOU",
+    "category": "Developer Tools",
+    "capabilities": [
+      "MCP",
+      "Developer Tools"
+    ],
+    "defaultPrompt": "Use TI CCS MCP to inspect and build this CCS project."
+  },
+  "mcpServers": "./.mcp.json"
+}

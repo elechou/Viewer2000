@@ -1,0 +1,22 @@
+interface:
+  display_name: "TI CCS"
+  short_description: "Use Code Composer Studio MCP safely."
+  default_prompt: "Use $ti-ccs to inspect and build this CCS project."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "ccs-project"
+      description: "CCS project inspection and build MCP server"
+    - type: "mcp"
+      value: "ccs-sysconfig"
+      description: "CCS SysConfig MCP server"
+    - type: "mcp"
+      value: "ccs-debug"
+      description: "CCS debug MCP server"
+    - type: "mcp"
+      value: "ccs-serial"
+      description: "CCS serial MCP server"
+
+policy:
+  allow_implicit_invocation: true

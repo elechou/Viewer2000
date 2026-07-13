@@ -1,0 +1,40 @@
+{
+  "mcpServers": {
+    "ccs-project": {
+      "cwd": ".",
+      "command": "node",
+      "args": [
+        "./scripts/ccs-mcp-shim.mjs",
+        "project"
+      ],
+      "startup_timeout_sec": 120
+    },
+    "ccs-debug": {
+      "cwd": ".",
+      "command": "node",
+      "args": [
+        "./scripts/ccs-mcp-shim.mjs",
+        "debug"
+      ],
+      "startup_timeout_sec": 120
+    },
+    "ccs-sysconfig": {
+      "cwd": ".",
+      "command": "node",
+      "args": [
+        "./scripts/ccs-mcp-shim.mjs",
+        "sysconfig"
+      ],
+      "startup_timeout_sec": 120
+    },
+    "ccs-serial": {
+      "cwd": ".",
+      "command": "node",
+      "args": [
+        "./scripts/ccs-mcp-shim.mjs",
+        "serial"
+      ],
+      "startup_timeout_sec": 120
+    }
+  }
+}
